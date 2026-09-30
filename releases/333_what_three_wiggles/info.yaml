@@ -1,0 +1,130 @@
+Name: what.three.wiggles
+short-description: Three words become a patch — an FM drone, an additive voice, a random walk, a complex LFO and random gates, all seeded by a what3words address
+summary: >-
+  Type three words (a what3words address, or any three words) into the web page and send them to the
+  card over USB. Each word becomes a seed, and the seeds set up everything: a drone of three
+  operators in a feedback FM loop or ring modulated, an additive oscillator with V/oct and sample and
+  hold, a random walk V/oct line with random glides, a complex wavefolded LFO, random triggers and
+  flip-flop gates. The same words always give the same patch, and a reset replays the same phrase.
+  The words are saved on the card. A tap on the switch flips between two pages of knobs, with soft
+  takeover.
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1.0"
+Status: Prototype - not yet tested on hardware
+License: MIT
+Editor: web
+web-entry: index.html
+date-created: 2026-09-30
+repository: https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/333_what_three_wiggles
+
+tags:
+  - generative
+  - drone
+  - fm
+  - additive
+  - random
+  - lfo
+  - quantiser
+  - web-editor
+
+uf2:
+  - path: UF2/what_three_wiggles.uf2
+    name: what.three.wiggles v0.1.0 (prototype)
+
+host:
+  usb:
+    - name: Web page (Chrome, Edge or Opera)
+      role: editor
+      description: Connect the Computer to a computer by USB and open the web page to send three words to the card over WebMIDI SysEx
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: FM Depth CV
+      type: cv
+      description: Adds to the Main knob's FM depth (ring mod amount in ring mod mode); 0 to 5 V covers the full range
+    - id: CVIn1
+      name: Audio 2 V/oct
+      type: cv
+      description: Pitch for the additive oscillator, calibrated, 0 V = C4, quantised to the scale chosen with Knob X
+    - id: CVIn2
+      name: Sample & Hold Trigger
+      type: cv
+      description: A rising edge (above about 1.2 V) samples CV In 1 for Audio 2. With nothing plugged in, Audio 2 follows CV In 1 continuously
+    - id: PulseIn1
+      name: Clock
+      type: pulse
+      description: Plugging in a clock replaces the internal clock for CV 1, Pulse 1 and Pulse 2
+    - id: PulseIn2
+      name: Reset
+      type: pulse
+      description: Restarts the random walk, LFO, triggers and flip-flop from the seeds, so the same phrase plays again
+  outputs:
+    - id: AudioOut1
+      name: FM Drone
+      type: audio
+      description: Three operators, one per word, in a 1 → 2 → 3 → 1 feedback FM loop (switch middle) or ring modulated (switch up)
+    - id: AudioOut2
+      name: Additive Voice
+      type: audio
+      description: Sixteen harmonic partials; word 1 sets the low partials, word 2 the middle, word 3 the top
+    - id: CVOut1
+      name: Random Walk
+      type: cv
+      description: Calibrated V/oct wandering through the scale above C4, with random note lengths and random glides
+    - id: CVOut2
+      name: Complex LFO
+      type: cv
+      description: Three sines at word-seeded ratios, cross-modulated and wavefolded, about ±5 V
+    - id: PulseOut1
+      name: Random Triggers
+      type: pulse
+      description: 10 ms triggers on random clock ticks
+    - id: PulseOut2
+      name: Flip-Flop Gates
+      type: pulse
+      description: Changes state on every Pulse 1 trigger
+
+controls:
+  switch:
+    up:
+      name: Ring Mod
+      description: Audio 1 multiplies its three operators together; the Main knob fades from operator 1 alone to the full ring mod
+    middle:
+      name: FM Loop
+      description: Audio 1 runs its three operators in a feedback FM loop; the Main knob sets the FM depth
+    down:
+      name: Page / Reset
+      description: Tap to flip between knob pages A and B. Hold for a second to reset the random processes, like Pulse In 2
+  knobs:
+    - main:
+        name: FM Depth (page A) / CV 1 Range (page B)
+        description: Page A sets the FM depth (or ring mod amount) of Audio 1. Page B sets how far the random walk wanders, from 1 to 48 semitones
+      x:
+        name: Scale (page A) / Trigger Density (page B)
+        description: Page A picks the quantiser scale for Audio 2 and CV 1 (chromatic, major, minor, dorian, mixolydian, major and minor pentatonic, whole tone). Page B sets the trigger density; at noon it is set by the words
+      y:
+        name: Clock Rate (page A) / LFO Rate (page B)
+        description: Page A sets the internal clock from 0.25 to 20 Hz. Page B sets the LFO rate from 0.02 to 20 Hz. After a page flip, a knob does nothing until it reaches its value on the new page (soft takeover)
+  leds:
+    - display: list
+      items:
+        - id: led0
+          name: Pulse 1
+          description: Flashes with each random trigger
+        - id: led1
+          name: Pulse 2
+          description: Lit while the flip-flop gate is high
+        - id: led2
+          name: CV 1
+          description: Brightness follows the random walk
+        - id: led3
+          name: CV 2
+          description: Brightness follows the LFO
+        - id: led4
+          name: Page
+          description: Lit on knob page B
+        - id: led5
+          name: Clock / Takeover
+          description: Flashes on each clock tick; blinks steadily while a knob is waiting to catch up after a page flip. All six LEDs chase round when new words arrive

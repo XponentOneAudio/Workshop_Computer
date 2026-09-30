@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>what.three.wiggles</title>
+<meta name="description" content="Send three words to the what.three.wiggles program card for the Music Thing Workshop Computer">
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --panel: #ffffff;
+    --ink: #1d1d1b;
+    --muted: #6b6860;
+    --line: #dcd8cf;
+    --accent: #e1261c;
+    --ok: #1f7a3d;
+    --warn: #a4570b;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514;
+      --panel: #1f1f1d;
+      --ink: #eeebe4;
+      --muted: #a09c93;
+      --line: #3a3935;
+      --accent: #ff5a4f;
+      --ok: #5cc27d;
+      --warn: #e6a355;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font: 700 28px/1.2 var(--mono); letter-spacing: -0.5px; }
+  h1 span { color: var(--accent); }
+  .status { font: 13px var(--mono); color: var(--muted); }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--warn); }
+  p.lede { color: var(--muted); margin: 8px 0 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 8px; }
+  .entry { display: flex; align-items: stretch; border: 2px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+  .entry:focus-within { border-color: var(--accent); }
+  .entry .slashes { font: 700 20px var(--mono); color: var(--accent); padding: 10px 0 10px 12px; }
+  .entry input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: 20px var(--mono); padding: 10px 12px 10px 4px; outline: none; }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  button { font: 600 15px system-ui, sans-serif; background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .hint { font-size: 14px; color: var(--muted); }
+  .hint.error { color: var(--warn); }
+  .seeds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; }
+  .seed { border: 1px solid var(--line); border-radius: 6px; padding: 8px; text-align: center; min-width: 0; }
+  .seed .w { font: 600 14px var(--mono); overflow-wrap: anywhere; }
+  .seed .h { font: 12px var(--mono); color: var(--muted); }
+  .card-state { font: 15px var(--mono); overflow-wrap: anywhere; }
+  .card-state .match { color: var(--ok); }
+  .card-state .mismatch { color: var(--warn); }
+  a { color: var(--accent); }
+  details summary { cursor: pointer; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
+  td { border-top: 1px solid var(--line); padding: 6px 8px 6px 0; vertical-align: top; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  footer { font-size: 12px; color: var(--muted); margin-top: 24px; }
+</style>
+<script src="seed.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>what<span>.</span>three<span>.</span>wiggles</h1>
+    <div id="status" class="status">Looking for the card…</div>
+  </header>
+  <p class="lede">Type three words, and the card builds its oscillators, LFO, random walk and gate patterns from them. The same words always make the same patch.</p>
+
+  <section class="panel">
+    <label for="words">Three words</label>
+    <div class="entry">
+      <span class="slashes">///</span>
+      <input id="words" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="index.home.raft">
+    </div>
+    <div class="row">
+      <button id="send" disabled>Send to card</button>
+      <span id="hint" class="hint">Any three words work. A what3words address gives you the sound of that place.</span>
+    </div>
+    <div class="seeds" id="seeds"></div>
+  </section>
+
+  <section class="panel">
+    <label>On the card</label>
+    <div id="cardState" class="card-state hint">Connect the Workshop Computer by USB, with the what.three.wiggles card inserted.</div>
+    <div id="cpu" class="hint"></div>
+  </section>
+
+  <section class="panel">
+    <details>
+      <summary>Panel guide</summary>
+      <table>
+        <tr><td>Audio 1</td><td>Drone: three operators in a feedback FM loop (switch middle) or ring modulated (switch up). One operator per word.</td></tr>
+        <tr><td>Audio 2</td><td>Additive oscillator, partials set by the words. V/oct into CV In 1, sampled and held by triggers into CV In 2 (tracks continuously if CV In 2 is empty).</td></tr>
+        <tr><td>CV 1</td><td>Random walk through the scale, with random holds and glides.</td></tr>
+        <tr><td>CV 2</td><td>Complex LFO, about ±5 V.</td></tr>
+        <tr><td>Pulse 1 / 2</td><td>Random triggers / flip-flop gates toggled by them.</td></tr>
+        <tr><td>Audio In 1</td><td>Adds to the FM depth (ring mod amount).</td></tr>
+        <tr><td>Pulse In 1 / 2</td><td>External clock (replaces the internal one) / reset.</td></tr>
+        <tr><td>Page A</td><td>Main: FM depth · X: quantiser scale · Y: clock rate</td></tr>
+        <tr><td>Page B</td><td>Main: CV 1 range · X: trigger density · Y: LFO rate</td></tr>
+        <tr><td>Switch down</td><td>Tap to change knob page (LED 4 lit on page B). Hold for a second to reset. LED 5 blinks until a knob catches up with its value on the new page.</td></tr>
+      </table>
+    </details>
+  </section>
+
+  <footer>Needs a browser with WebMIDI and SysEx: Chrome, Edge or Opera. what3words is a trademark of what3words Ltd; this project is not affiliated with it.</footer>
+</main>
+
+<script>
+'use strict';
+
+const W = window.W3WSeed;
+const CARD_ID = 0x33;
+const MSG_HELLO = 0x01, MSG_STATE = 0x02, MSG_SET_WORDS = 0x03, MSG_ERROR = 0x04;
+const MSG_STATS = 0x05, MSG_GET_STATS = 0x06;
+const INTERFACE_VERSION = [0, 1, 0];
+const ERRORS = { 1: 'the card did not understand the message', 2: 'the card rejected those words' };
+
+const $ = (id) => document.getElementById(id);
+let midiIn = null, midiOut = null;
+let current = null; // {text, words, seeds, combined} for what's typed
+
+////////////////////////////////////////
+// WebMIDI (after the ComputerCard web_interface example)
+
+async function midiSetup() {
+  if (!navigator.requestMIDIAccess) {
+    setStatus('This browser has no WebMIDI', 'bad');
+    return;
+  }
+  try {
+    const midi = await navigator.requestMIDIAccess({ sysex: true });
+    bind(midi);
+    midi.addEventListener('statechange', () => bind(midi));
+  } catch (e) {
+    setStatus('MIDI access refused', 'bad');
+  }
+}
+
+function bind(midi) {
+  const find = (ports) => [...ports.values()].find((p) => p.name.includes('MTMComputer') && p.state === 'connected');
+  const input = find(midi.inputs), output = find(midi.outputs);
+  if (input && output) {
+    if (input !== midiIn) {
+      midiIn = input;
+      midiOut = output;
+      midiIn.onmidimessage = onMidi;
+      setStatus('Card connected', 'ok');
+      send([MSG_HELLO, ...INTERFACE_VERSION]);
+    }
+  } else if (midiIn) {
+    midiIn = midiOut = null;
+    setStatus('Card disconnected', 'bad');
+  } else {
+    setStatus('Card not found', '');
+  }
+  updateSendButton();
+}
+
+function send(bytes) {
+  if (!midiOut) return;
+  midiOut.send([0xF0, 0x7D, CARD_ID, ...bytes, 0xF7]);
+}
+
+function onMidi(event) {
+  const d = Array.from(event.data);
+  if (d.length < 5 || d[0] !== 0xF0 || d[1] !== 0x7D || d[d.length - 1] !== 0xF7 || d[2] !== CARD_ID) return;
+  const body = d.slice(3, -1);
+  if (body[0] === MSG_STATE) showCardState(body);
+  if (body[0] === MSG_ERROR) $('cardState').textContent = 'Error: ' + (ERRORS[body[1]] || 'code ' + body[1]);
+  if (body[0] === MSG_STATS && body.length === 13) showStats(body);
+}
+
+// Peak time spent in the audio callback over the last second
+function showStats(b) {
+  const num = (from) => b.slice(from, from + 6).reduce((a, n) => a * 16 + n, 0);
+  const peak = num(1), budget = num(7);
+  const pct = budget ? Math.round((100 * peak) / budget) : 0;
+  $('cpu').textContent = `CPU: audio callback peaks at ${peak} of ${budget} cycles per sample (${pct}%)`;
+  $('cpu').className = 'hint' + (pct > 80 ? ' error' : '');
+}
+
+setInterval(() => { if (midiOut) send([MSG_GET_STATS]); }, 1000);
+
+////////////////////////////////////////
+// Messages
+
+const nibbles = (bytes) => bytes.flatMap((b) => [b >> 4, b & 15]);
+
+function sendWords() {
+  if (!current || !midiOut) return;
+  const bytes = Array.from(new TextEncoder().encode(current.text));
+  send([MSG_SET_WORDS, ...nibbles([bytes.length]), ...nibbles(bytes)]);
+  $('cardState').textContent = 'Sending…';
+  history.replaceState(null, '', '?w=' + encodeURIComponent(current.text));
+}
+
+function showCardState(b) {
+  // [MSG_STATE, fw x3, seeds as 3 x 8 nibbles, length as 2 nibbles, text as nibbles]
+  if (b.length < 30) return;
+  const fw = b.slice(1, 4).join('.');
+  const seeds = [0, 1, 2].map((w) => b.slice(4 + w * 8, 12 + w * 8).reduce((a, n) => a * 16 + n, 0));
+  const len = (b[28] << 4) | b[29];
+  const bytes = [];
+  for (let i = 0; i < len; i++) bytes.push((b[30 + 2 * i] << 4) | b[31 + 2 * i]);
+  const text = new TextDecoder().decode(new Uint8Array(bytes));
+
+  // The card hashes the words itself. If its seeds match ours, the C++ and
+  // JS seeding agree.
+  const ours = W.seedsFromText(text).seeds;
+  const agree = ours.every((s, i) => s === seeds[i]);
+  const el = $('cardState');
+  el.innerHTML = '';
+  el.classList.remove('hint');
+  el.append('///' + text + ' ');
+  const tag = document.createElement('span');
+  tag.className = agree ? 'match' : 'mismatch';
+  tag.textContent = agree ? '✓ seeds match' : '⚠ seeds differ from this page (update the firmware or the page)';
+  el.append(tag);
+  const small = document.createElement('div');
+  small.className = 'hint';
+  small.textContent = 'firmware ' + fw + ' · seeds ' + seeds.map(W.hex).join(' ');
+  el.append(small);
+}
+
+////////////////////////////////////////
+// Page
+
+function setStatus(text, cls) {
+  const el = $('status');
+  el.textContent = text;
+  el.className = 'status ' + cls;
+}
+
+function updateSendButton() {
+  $('send').disabled = !(current && midiOut);
+}
+
+function onInput() {
+  const raw = $('words').value;
+  const hint = $('hint');
+  const seedsEl = $('seeds');
+  seedsEl.innerHTML = '';
+  if (!raw.trim()) {
+    current = null;
+    hint.className = 'hint';
+    hint.textContent = 'Any three words work. A what3words address gives you the sound of that place.';
+    updateSendButton();
+    return;
+  }
+  const n = W.normalise(raw);
+  if (n.error) {
+    current = null;
+    hint.className = 'hint error';
+    hint.textContent = n.error;
+    updateSendButton();
+    return;
+  }
+  current = { ...n, ...W.seedsFromText(n.text) };
+  hint.className = 'hint';
+  hint.innerHTML = '';
+  const link = document.createElement('a');
+  link.href = 'https://what3words.com/' + encodeURIComponent(n.text).replace(/%2E/gi, '.');
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'Where is ///' + n.text + '?';
+  hint.append(link);
+  n.words.forEach((w, i) => {
+    const d = document.createElement('div');
+    d.className = 'seed';
+    d.innerHTML = '<div class="w"></div><div class="h"></div>';
+    d.querySelector('.w').textContent = w;
+    d.querySelector('.h').textContent = W.hex(current.seeds[i]);
+    seedsEl.append(d);
+  });
+  updateSendButton();
+}
+
+$('words').addEventListener('input', onInput);
+$('words').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendWords(); });
+$('send').addEventListener('click', sendWords);
+
+const fromUrl = new URLSearchParams(location.search).get('w');
+if (fromUrl) $('words').value = fromUrl;
+onInput();
+midiSetup();
+</script>
+</body>
+</html>
