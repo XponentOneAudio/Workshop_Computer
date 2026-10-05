@@ -1,0 +1,142 @@
+draft: false
+Name: Nested Circles
+short-description: "An additive oscillator - eight sine waves drawn as circles turning on circles - edited from a Music Thing 8mu, with a web app that animates the circles and explains the Fourier series behind them"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: web
+date-created: 2026-10-05
+date-updated: 2026-10-05
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/nested_circles.uf2
+    name: Nested Circles 0.1.0
+
+tags:
+  - synth
+  - oscillator
+  - additive
+  - educational
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  An additive oscillator, made to be looked at as well as listened to. Eight
+  sine waves - partials - are added together. Each is a circle turning at its
+  own speed, and the circles are nested, each riding on the rim of the one
+  before, so the outermost point traces a more complicated waveform. That is a
+  Fourier series, and the web app draws it, slowed right down, alongside its
+  spectrum and short explanations with links to read further.<br><br>
+
+  The eight partials are edited from a Music Thing 8mu. Its faders are the
+  eight partials and its buttons choose what they change: A is LEVEL (each
+  circle's size), B is PHASE (where it starts) and C is FREQUENCY (how fast it
+  turns). Frequency defaults to the harmonic series - the middle of each
+  fader is exactly partial n at n times the fundamental - and either side
+  detunes it by up to 12 semitones, for inharmonic, bell-like sounds. D loads
+  the next of six built-in shapes: saw, square, triangle, sine, pulse and bell.
+  After a page change the faders pick up, so nothing jumps.<br><br>
+
+  The X knob fades the partials in one by one, to hear and see a Fourier
+  series converge, and Y stretches the harmonic series as stiff piano strings
+  do. Audio Out 2 is the same circles read on the other axis, so the two
+  outputs into a scope's X-Y mode draw the circles' path.<br><br>
+
+  Without an 8mu the card plays a sawtooth, under the panel controls.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Stretch
+      type: cv
+      description: Added to the Y knob.
+    - id: AudioIn2
+      name: Unused
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: 1V/oct, added to the Main knob.
+    - id: CVIn2
+      name: Partials
+      type: cv
+      description: Added to the X knob.
+    - id: PulseIn1
+      name: Sync
+      type: pulse
+      description: Every circle back to its start phase.
+    - id: PulseIn2
+      name: Next shape
+      type: pulse
+      description: Loads the next built-in shape.
+  outputs:
+    - id: AudioOut1
+      name: Out
+      type: audio
+      description: The sum of the partials - the height of the outermost circle.
+    - id: AudioOut2
+      name: Shadow
+      type: audio
+      description: The same partials as cosines - the outermost circle's position across. Into a scope's X-Y mode with Audio Out 1, it draws the circles' path.
+    - id: CVOut1
+      name: Pitch
+      type: cv
+      description: 1V/oct, 0V at middle C.
+    - id: CVOut2
+      name: Unused
+    - id: PulseOut1
+      name: Square
+      type: pulse
+      description: Square wave at the fundamental, high for the first half of each turn of the first circle.
+    - id: PulseOut2
+      name: Unused
+
+controls:
+  switch:
+    up:
+      name: Harmonic lock
+      description: Every partial at its exact harmonic, ignoring the FREQUENCY page and stretch.
+    middle:
+      name: Free
+      description: The FREQUENCY page and stretch apply.
+    down:
+      name: Next shape
+      description: Momentary. Each tap loads the next shape - saw, square, triangle, sine, pulse, bell.
+  knobs:
+    - main:
+        name: Pitch
+        description: C1 to C7.
+      x:
+        name: Partials
+        description: How many partials sound, 1 to 8, each fading in as the knob turns.
+      y:
+        name: Stretch
+        description: Moves partial n from n times the fundamental to n^(1 + stretch) times, stretch 0 to 0.5. Switch in the middle.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page A / partial 1
+          description: With an 8mu or the web app, LEDs 0-2 show the page (A-C) and LED 3 flashes when a shape loads. Without one, LEDs 0-3 show the levels of partials 1-4.
+        - id: LED1
+          name: Page B / partial 2
+        - id: LED2
+          name: Page C / partial 3
+        - id: LED3
+          name: Shape / partial 4
+        - id: LED4
+          name: Square
+          description: Follows Pulse Out 1.
+        - id: LED5
+          name: 8mu / web app
+          description: Lit while an 8mu, or the web app, is connected.
