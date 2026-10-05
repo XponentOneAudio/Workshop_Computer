@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nested Circles</title>
+<title>Sine Lab</title>
 <!--
-  NESTED CIRCLES - web app for the Music Thing Modular Workshop Computer card.
+  SINE LAB - web app for the Music Thing Modular Workshop Computer card.
   One static file, no network needed (the links to Wikipedia aside). Talks to
   the card over WebMIDI + SysEx (protocol: ../sysex.h). The card works without
   this page; the page draws what the card is doing, explains it, and passes on
@@ -147,7 +147,7 @@
 </head>
 <body>
 <header>
-  <h1>Nested Circles</h1>
+  <h1>Sine Lab</h1>
   <nav class="modes" aria-label="Synthesis type">
     <button id="mode-0" class="on">Additive</button>
     <button id="mode-1">FM</button>
@@ -350,7 +350,7 @@
         <summary>Connecting</summary>
         <ul class="caption">
           <li>The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page
-            isn't needed. <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Nested Circles</b>, and
+            isn't needed. <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Sine Lab</b>, and
             an 8mu plugged into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.</li>
           <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
           <li>Press <kbd>Connect card &amp; 8mu</kbd> and allow MIDI with SysEx when the browser asks.</li>
@@ -582,7 +582,7 @@
 // ============================================================================
 const NP = 8;                                   // partials
 const PAGES = 3;
-const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x4E, PROTOCOL_VERSION = 2;
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x53, PROTOCOL_VERSION = 2;
 const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, SHAPE: 6, STATUS: 7, PING: 9, SYNC: 10,
               MODE: 11, FM_TYPE: 12, EXAMPLE: 13 };
 const FIRST_FADER_CC = 34;
@@ -715,7 +715,7 @@ const EXAMPLES = [
 const depthOf = (v) => 10 * (v / 127) * (v / 127);
 const decayOf = (v) => 0.02 * Math.pow(400, v / 127);
 
-// Everything about the two operators right now, as NestedCircles::FMControl
+// Everything about the two operators right now, as SineLab::FMControl
 function fmModel() {
   const f = state.values[FM_PAGE];
   const cr = CAR_RATIOS[Math.floor(f[0] * CAR_RATIOS.length / 128)];
@@ -753,7 +753,7 @@ function harmonicity(fc, fm, fixed) {
 }
 function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
 
-// One run of the card's FM, in floating point, as NestedCircles::FMSample.
+// One run of the card's FM, in floating point, as SineLab::FMSample.
 // st carries the oscillators between calls; out gets the modulator, the
 // carrier's instantaneous frequency and the output.
 function fmState() { return { phc: 0, phm: 0, phu: 0, m1: 0, m2: 0, prevM: 0 }; }
@@ -1230,7 +1230,7 @@ const state = {
 const view = { tau: 0, turnsPerSec: 0.01, paused: false, trail: true, shadow: false, lastT: 0 };
 const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
                sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
-// 8mu pickup, mirroring NestedCircles::HandleEightMU in the firmware
+// 8mu pickup, mirroring SineLab::HandleEightMU in the firmware
 const mu = { phys: new Array(NP).fill(-1), engaged: new Array(NP).fill(false),
              ledSent: new Array(NP).fill(-1), lastBlinkOff: 0 };
 
@@ -1248,7 +1248,7 @@ const store = {
 };
 
 // ============================================================================
-// The model: fader values to circles, as NestedCircles::Control does
+// The model: fader values to circles, as SineLab::Control does
 // ============================================================================
 const hz = (note) => 440 * Math.pow(2, (note - 69) / 12);
 // FREQUENCY fader to octaves away from the harmonic; the middle three steps are exact
@@ -1641,7 +1641,7 @@ function changed(save = true) {
   }
   if (save) {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => store.set('nestedcircles.last.v2',
+    saveTimer = setTimeout(() => store.set('sinelab.last.v2',
       { values: state.values, shape: state.shape, note: state.note, partials: state.partials, stretch: state.stretch, lock: state.lock,
         mode: state.mode, fmType: state.fmType, example: state.example, fmKnob: state.fmKnob, fmSteps: state.fmSteps, fmDrone: state.fmDrone }), 400);
   }
@@ -1715,7 +1715,7 @@ function serviceEightmuLeds() {
 // ============================================================================
 // WebMIDI
 // ============================================================================
-const isCardName = (n) => /nested\s*circles/i.test(n || '');
+const isCardName = (n) => /sine\s*lab/i.test(n || '');
 const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
 
 async function connect() {
@@ -1752,12 +1752,12 @@ function scanPorts() {
   if (link.cardOnline) {
     link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
     sendRaw(sysex(CMD.PING, []));
-    setStatus('ok', 'Connected: Nested Circles card' + (muIns.length ? ' + 8mu' : ''));
+    setStatus('ok', 'Connected: Sine Lab card' + (muIns.length ? ' + 8mu' : ''));
     say(muIns.length ? 'The 8mu drives this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug an 8mu into this computer.' + note);
     if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));       // the card is the source of truth: read it
   } else if (muIns.length) {
     setStatus('warn', 'Connected: 8mu only (no card)');
-    say('No “Nested Circles” card found, so this page works on its own. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+    say('No “Sine Lab” card found, so this page works on its own. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
   } else {
     setStatus('warn', 'No card or 8mu found');
     say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
@@ -1820,7 +1820,7 @@ function sendAll() {
 // Listening in the browser: an AudioWorklet doing what ProcessSample does
 // ============================================================================
 const WORKLET = `
-class NestedCircles extends AudioWorkletProcessor {
+class SineLab extends AudioWorkletProcessor {
   constructor() {
     super();
     this.master = 0; this.ph = new Float64Array(8); this.g = new Float64Array(8); this.off = new Float64Array(8);
@@ -1860,7 +1860,7 @@ class NestedCircles extends AudioWorkletProcessor {
       L[i] = y * t.vol;
     }
   }
-  // As NestedCircles::FMSample
+  // As SineLab::FMSample
   fm(L, t) {
     const TAU = 2 * Math.PI, ic = t.fc / sampleRate, im = t.fm / sampleRate;
     const coef = Math.exp(-1 / (t.decay * sampleRate));
@@ -1883,7 +1883,7 @@ class NestedCircles extends AudioWorkletProcessor {
     }
   }
 }
-registerProcessor('nested-circles', NestedCircles);
+registerProcessor('sine-lab', SineLab);
 `;
 const audio = { ctx: null, node: null, on: false };
 async function toggleListen() {
@@ -1897,7 +1897,7 @@ async function toggleListen() {
       audio.ctx = new AudioContext();
       // A data: URL, since a Blob URL won't load from a page opened as a file
       await audio.ctx.audioWorklet.addModule('data:application/javascript;charset=utf-8,' + encodeURIComponent(WORKLET));
-      audio.node = new AudioWorkletNode(audio.ctx, 'nested-circles', { outputChannelCount: [2] });
+      audio.node = new AudioWorkletNode(audio.ctx, 'sine-lab', { outputChannelCount: [2] });
       audio.node.connect(audio.ctx.destination);
     }
     await audio.ctx.resume();
@@ -1952,7 +1952,7 @@ function frame(now) {
 // ============================================================================
 function init() {
   readColors();
-  const last = store.get('nestedcircles.last.v2', null);
+  const last = store.get('sinelab.last.v2', null);
   if (last && Array.isArray(last.values) && last.values.length === 4 &&
       last.values.every(r => Array.isArray(r) && r.length === NP && r.every(v => Number.isInteger(v) && v >= 0 && v <= 127))) {
     state.values = last.values;

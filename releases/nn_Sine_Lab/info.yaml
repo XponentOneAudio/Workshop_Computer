@@ -1,9 +1,9 @@
 draft: false
-Name: Nested Circles
+Name: Sine Lab
 short-description: "Additive and FM synthesis, explained - eight sine waves drawn as circles turning on circles, or two operators bending each other four ways - edited from a Music Thing 8mu, with a web app that animates and explains both"
 Language: C++ (ComputerCard)
 Creator: XponentOneAudio
-Version: "0.2.0"
+Version: "0.3.0"
 Status: Beta
 License: MIT
 Editor: web
@@ -19,8 +19,8 @@ contact:
 #     (c) Chris Johnson
 
 uf2:
-  - path: UF2/nested_circles.uf2
-    name: Nested Circles 0.2.0
+  - path: UF2/sine_lab.uf2
+    name: Sine Lab 0.3.0
 
 tags:
   - synth

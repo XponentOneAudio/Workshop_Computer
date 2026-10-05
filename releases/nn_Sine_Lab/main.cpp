@@ -1,4 +1,4 @@
-// Nested Circles
+// Sine Lab
 //
 // Two ways of making a complex wave from sine waves, for the Music Thing
 // Workshop Computer, edited from a Music Thing 8mu over USB MIDI host.  Hold
@@ -88,7 +88,7 @@
 //
 // USB, chosen once at power-up
 //   Port supplying power (an 8mu, or nothing yet): USB host, reading the 8mu.
-//   Computer plugged in: USB MIDI device called "Nested Circles", for the
+//   Computer plugged in: USB MIDI device called "Sine Lab", for the
 //   web app in web/index.html (protocol in sysex.h).  An 8mu plugged into
 //   the computer is passed on by the web app.
 
@@ -101,8 +101,8 @@
 
 #include <math.h>
 
-class NestedCircles;
-static NestedCircles *gCard = nullptr;
+class SineLab;
+static SineLab *gCard = nullptr;
 
 // Built-in additive shapes, in 8mu fader units (0-127): level, phase,
 // frequency.  Levels are amplitudes, 127 = 1.  Phase 64 = 180 degrees.
@@ -158,7 +158,7 @@ static const uint8_t kExamples[kNumExamples][9] = {
 };
 
 
-class NestedCircles : public ComputerCard
+class SineLab : public ComputerCard
 {
 public:
 	static constexpr int kPartials = 8;
@@ -166,7 +166,7 @@ public:
 	enum Page {PageLevel, PagePhase, PageFreq, PageFM, kPages};
 	enum Mode {ModeAdditive, ModeFM, kModes};
 
-	NestedCircles()
+	SineLab()
 	{
 		for (int i = 0; i <= kSineSize; i++)
 		{
@@ -959,6 +959,6 @@ int main()
 {
 	set_sys_clock_khz(200000, true);
 
-	static NestedCircles card;
+	static SineLab card;
 	card.Run();
 }

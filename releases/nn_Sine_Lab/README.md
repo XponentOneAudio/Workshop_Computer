@@ -1,4 +1,4 @@
-# Nested Circles
+# Sine Lab
 
 Two ways of building complex sounds from sine waves, for the Workshop
 Computer, edited from a [Music Thing 8mu](https://www.musicthing.co.uk/8mu_page/)
@@ -32,7 +32,7 @@ The card works on its own; the 8mu and the web app are both optional.
 | Plugged into the Computer's USB socket | The card is | The faders are |
 |---|---|---|
 | an 8mu | USB host | the 8mu's, read directly. No computer needed |
-| a computer | a USB MIDI device called **Nested Circles** | the web app's, and an 8mu plugged into the *computer* is passed on by the web app |
+| a computer | a USB MIDI device called **Sine Lab** | the web app's, and an 8mu plugged into the *computer* is passed on by the web app |
 | nothing | USB host, waiting | (plug an 8mu in any time) |
 
 The card picks its USB mode once, at power-up, so **after plugging a computer

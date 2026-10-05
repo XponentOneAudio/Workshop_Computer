@@ -1,12 +1,12 @@
-// TinyUSB configuration for Nested Circles.
+// TinyUSB configuration for Sine Lab.
 //
 // The card is a USB host when an 8mu is plugged in, and a USB MIDI device
 // (for the web editor) when a computer is, so both modes are compiled in and
 // one is started at power-up. The host side, and the usb_midi_host driver,
 // come from EightMU.h.
 
-#ifndef NESTED_TUSB_CONFIG_H
-#define NESTED_TUSB_CONFIG_H
+#ifndef SINELAB_TUSB_CONFIG_H
+#define SINELAB_TUSB_CONFIG_H
 
 #define CFG_TUSB_RHPORT0_MODE     (OPT_MODE_HOST | OPT_MODE_DEVICE)
 

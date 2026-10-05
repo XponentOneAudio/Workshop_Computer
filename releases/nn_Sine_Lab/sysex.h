@@ -1,9 +1,9 @@
-// SysEx protocol between the Nested Circles card and its web app
+// SysEx protocol between the Sine Lab card and its web app
 // (web/index.html), used when a computer is plugged into the Computer's USB
 // socket and the card is acting as a USB MIDI device.
 //
-// Every message is  F0 7D 4E <cmd> <payload...> F7
-// (7D is the MIDI 'non-commercial' manufacturer ID, 4E is 'N').
+// Every message is  F0 7D 53 <cmd> <payload...> F7
+// (7D is the MIDI 'non-commercial' manufacturer ID, 53 is 'S').
 // All values are 7-bit; wider values are sent as two bytes, high 7 bits first.
 //
 // Fader values are in 8mu fader units, 0-127, sent page by page (4 pages
@@ -43,8 +43,8 @@
 //            steps       FM: modulator ratio steps added by Y, 0-12
 //            env         FM: envelope, 0-127
 
-#ifndef NESTED_SYSEX_H
-#define NESTED_SYSEX_H
+#ifndef SINELAB_SYSEX_H
+#define SINELAB_SYSEX_H
 
 #include <stdint.h>
 
@@ -52,7 +52,7 @@ namespace sysex
 {
 
 static constexpr uint8_t kMfr = 0x7D;
-static constexpr uint8_t kProduct = 0x4E;
+static constexpr uint8_t kProduct = 0x53;
 static constexpr uint8_t kVersion = 2;
 static constexpr int kNumValues = 32;
 
