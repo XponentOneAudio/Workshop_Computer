@@ -65,7 +65,7 @@ take it over. So nothing jumps.
 | Shape | Recipe | Read more |
 |-------|--------|-----------|
 | Saw | every harmonic, amplitude 1/n | [Sawtooth wave](https://en.wikipedia.org/wiki/Sawtooth_wave) |
-| Square | odd harmonics, 1/n | [Square wave](https://en.wikipedia.org/wiki/Square_wave), [Gibbs phenomenon](https://en.wikipedia.org/wiki/Gibbs_phenomenon) |
+| Square | odd harmonics, 1/n | [Square wave](https://en.wikipedia.org/wiki/Square_wave_(waveform)), [Gibbs phenomenon](https://en.wikipedia.org/wiki/Gibbs_phenomenon) |
 | Triangle | odd harmonics, 1/n², every other one at 180° | [Triangle wave](https://en.wikipedia.org/wiki/Triangle_wave) |
 | Sine | the first partial alone | [Sine wave](https://en.wikipedia.org/wiki/Sine_wave) |
 | Pulse | every harmonic at the same level, all at 90° (cosines) | [Pulse wave](https://en.wikipedia.org/wiki/Pulse_wave), [Dirichlet kernel](https://en.wikipedia.org/wiki/Dirichlet_kernel) |
