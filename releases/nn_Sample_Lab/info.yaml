@@ -1,0 +1,152 @@
+draft: false
+Name: Sample Lab
+short-description: "Sampling, time-stretching and granular synthesis, explained - one two-second sample played back four ways (varispeed, overlap-add, WSOLA and a granular cloud) - edited from a Music Thing 8mu, with a web app that shows every grain and compares them"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: web
+date-created: 2026-10-05
+date-updated: 2026-10-05
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/sample_lab.uf2
+    name: Sample Lab 0.1.0
+
+tags:
+  - sampler
+  - granular
+  - time-stretch
+  - looper
+  - educational
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  A sampler made to be looked at as well as listened to. The card holds a
+  little over two seconds of sound - at power-up a generated demo loop of
+  drums and a plucked melody, or whatever is recorded from Audio In 1 with the
+  switch up - and plays it back in one of four ways, chosen by the 8mu's
+  buttons or a tap down on the switch.<br><br>
+
+  <b>A, varispeed</b>, plays it like tape: faster is higher, slower is lower.
+  <b>B, overlap-add</b>, cuts it into overlapping windowed grains, so speed
+  and pitch come apart, with the flutter and doubled drums that come of grains
+  meeting out of step. <b>C, WSOLA</b>, slides each grain to where it best
+  continues the one before, and the flutter goes. <b>D, cloud</b>, is granular
+  synthesis: many grains scattered in time and pitch around the playhead,
+  down to freezing a single moment.<br><br>
+
+  The Main knob is speed (-2 to 2, through stopped and reverse), X is pitch
+  and Y is grain size. The 8mu's faders set position, overlap or density,
+  spray, window shape, WSOLA's search range, pitch spray, and the output's
+  bit depth and sample rate, for hearing quantisation and aliasing. Audio
+  Out 2 is always varispeed at the same speed, in step, for comparison.<br><br>
+
+  The web app draws each grain as it's taken from the sample and laid into
+  the output, in slow motion, renders all four engines and a phase vocoder
+  side by side as spectrograms, explains the history and the ideas with
+  links, plays everything in the browser, and can send the card a sample from
+  a file or the microphone, or read back what the card recorded.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Record in
+      type: audio
+      description: What's recorded with the switch up, or Pulse In 1 high.
+    - id: AudioIn2
+      name: Speed
+      type: cv
+      description: Added to the Main knob, about 1 per 3V.
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: 1V/oct, added to the X knob.
+    - id: CVIn2
+      name: Position
+      type: cv
+      description: Added to fader 1, moving where in the sample grains are taken from.
+    - id: PulseIn1
+      name: Record
+      type: pulse
+      description: Records Audio In 1 while high, up to the buffer's length.
+    - id: PulseIn2
+      name: Restart
+      type: pulse
+      description: Playhead back to the start of the sample.
+  outputs:
+    - id: AudioOut1
+      name: Out
+      type: audio
+      description: The chosen engine, after the Bits and Rate faders.
+    - id: AudioOut2
+      name: Varispeed
+      type: audio
+      description: Varispeed at the same speed, in step with Audio Out 1 - the sound without time-stretching.
+    - id: CVOut1
+      name: Playhead
+      type: cv
+      description: 0 to 5V across the sample.
+    - id: CVOut2
+      name: Window
+      type: cv
+      description: The newest grain's window, 0 to 5V.
+    - id: PulseOut1
+      name: Grain
+      type: pulse
+      description: A trigger at the start of each grain.
+    - id: PulseOut2
+      name: Loop
+      type: pulse
+      description: A trigger each time the playhead loops.
+
+controls:
+  switch:
+    up:
+      name: Record
+      description: Records Audio In 1 from the moment the switch goes up, until it comes down or the buffer (about 2.08s) is full.
+    middle:
+      name: Play
+      description: Plays the sample.
+    down:
+      name: Next engine
+      description: Momentary. Each tap steps through varispeed, overlap-add, WSOLA and cloud.
+  knobs:
+    - main:
+        name: Speed
+        description: -2 to 2 - reverse to the left of centre, stopped in the middle, snapping to 0 and to 1 either way.
+      x:
+        name: Pitch
+        description: -24 to 24 semitones, snapping to 0. For varispeed it changes the speed too.
+      y:
+        name: Grain size
+        description: 10ms to 500ms.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Varispeed
+          description: LEDs 0-3 show the engine (A-D), all four flashing on a change.
+        - id: LED1
+          name: Overlap-add
+        - id: LED2
+          name: WSOLA
+        - id: LED3
+          name: Cloud
+        - id: LED4
+          name: Record / grains
+          description: Lit while recording; otherwise flickers with each grain.
+        - id: LED5
+          name: 8mu / web app
+          description: Lit while an 8mu, or the web app, is connected.

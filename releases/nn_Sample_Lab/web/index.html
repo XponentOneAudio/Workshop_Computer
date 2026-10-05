@@ -1,0 +1,1454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample Lab</title>
+<!--
+  SAMPLE LAB - web app for the Music Thing Modular Workshop Computer card.
+  One static file, no network needed (the links to Wikipedia aside). Talks to
+  the card over WebMIDI + SysEx (protocol: ../sysex.h). The card works without
+  this page; the page draws what the card is doing, explains it, plays the same
+  engines in the browser, sends the card samples and reads back what it holds.
+
+  The playback engines below (#engine-src) are ../main.cpp's, in floating
+  point, and the demo loop is ../demo.h's.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8; --sum: #1c1b19;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --s0: #0b7d78; --s1: #3a6fb0; --s2: #7a55b0; --s3: #b0457a;
+    --s4: #b5560a; --s5: #8a7a12; --s6: #3f8a3a; --s7: #5a6470;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29; --sum: #ecebe6;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --s0: #4fd1c5; --s1: #7aa8f0; --s2: #b49af0; --s3: #f08ab8;
+      --s4: #f0a35e; --s5: #d8c85a; --s6: #84d07c; --s7: #a8b2bc;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  h3 { font-size: 15px; margin: 14px 0 4px; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  button.on { background: var(--accent-soft); border-color: var(--accent); }
+  #msg { padding: 6px 16px; min-height: 1.5em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 380px; }
+  @media (max-width: 1060px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .col { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  #overview { height: 120px; cursor: pointer; }
+  #diagram { height: 380px; }
+  #crush { height: 150px; } #crush-spec { height: 120px; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .row .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-right: 4px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 16px; margin-top: 10px; }
+  .ctl { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ctl .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: flex; justify-content: space-between; gap: 6px; }
+  .ctl .k span { text-transform: none; letter-spacing: 0; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .ctl input[type=range] { width: 100%; accent-color: var(--accent); }
+  .ctl .from { font-size: 11px; color: var(--muted); }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; align-items: center; }
+  .checks label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 760px) { .types { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .type { text-align: left; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .type.on { border-color: var(--accent); background: var(--accent-soft); }
+  .type .tname { font-weight: 600; font-size: 13px; }
+  .type .tname b, .tab b { display: inline-block; width: 1.4em; text-align: center; margin-right: 5px; border-radius: 4px; background: var(--track); }
+  .type.on .tname b { background: var(--accent); color: var(--panel); }
+  .type .tinfo { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; }
+  .fader.dim { opacity: .45; }
+  .fader .name { font-size: 12px; font-weight: 600; }
+  .fader .fname { font-size: 11px; color: var(--muted); text-align: center; min-height: 2.6em; line-height: 1.2; overflow-wrap: anywhere; }
+  .fader .slot { position: relative; height: 140px; width: 32px; }
+  .fader input[type=range] { writing-mode: vertical-lr; direction: rtl; width: 32px; height: 140px; margin: 0; cursor: pointer; accent-color: var(--accent); }
+  .fader .ghost { position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm); pointer-events: none; display: none; }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+  .lesson { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--wave-bg); border-radius: 0 6px 6px 0; }
+  .lesson p { margin: 0 0 6px; } .lesson p:last-child { margin: 0; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-top: 10px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .renders { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+  .render { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .render .rname { font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .render canvas { height: 110px; image-rendering: pixelated; }
+  .render .rinfo { font-size: 11px; color: var(--muted); }
+  .learn p { margin: 0 0 8px; }
+  .learn ol, .learn ul { margin: 4px 0 8px; padding-left: 20px; }
+  .learn li { margin-bottom: 6px; }
+  .formula { font: 14px ui-serif, Georgia, serif; font-style: italic; background: var(--wave-bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0 10px; overflow-x: auto; }
+  .links { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin: 4px 0 6px; }
+  .links::before { content: 'Read more:'; color: var(--muted); }
+  details { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  table.jacks { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.jacks td { border-top: 1px solid var(--line); padding: 4px 6px 4px 0; vertical-align: top; }
+  table.jacks td:first-child { white-space: nowrap; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sample Lab</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <div class="spacer"></div>
+  <button id="btn-listen">Listen in the browser</button>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-send" disabled>Send settings to card</button>
+  <button id="btn-restart">Restart</button>
+</header>
+<div id="msg"></div>
+
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>The sample</h2>
+      <canvas id="overview" aria-label="The whole sample, with the playhead and where grains are reading"></canvas>
+      <div class="caption" id="overview-caption"></div>
+      <div class="row">
+        <span class="k">Source</span>
+        <button id="src-demo">Demo loop</button>
+        <button id="src-file">Load a file…</button>
+        <button id="src-mic">Record 2 s from the microphone</button>
+        <button id="src-save">Save as WAV</button>
+        <input type="file" id="file-in" accept="audio/*" hidden>
+        <span class="spacer"></span>
+        <button id="card-get" disabled>Get the card’s sample</button>
+        <button id="card-put" disabled>Send this sample to the card</button>
+        <button id="card-rec" disabled>Record on the card</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Four ways to play it back</h2>
+      <div class="types" id="engines"></div>
+      <div class="lesson" id="engine-lesson"></div>
+    </section>
+
+    <section class="card">
+      <h2>Grains in slow motion</h2>
+      <canvas id="diagram" aria-label="Top: where in the sample each grain is read from. Bottom: where it is placed in the output, and the output waveform"></canvas>
+      <div class="caption" id="diagram-caption"></div>
+      <div class="controls">
+        <div class="ctl"><div class="k">Speed <span id="v-speed"></span></div>
+          <input id="in-speed" type="range" min="-2" max="2" step="0.01" value="0.5">
+          <div class="from" id="from-speed">Main knob + Audio In 2</div></div>
+        <div class="ctl"><div class="k">Pitch <span id="v-pitch"></span></div>
+          <input id="in-pitch" type="range" min="-24" max="24" step="0.1" value="0">
+          <div class="from" id="from-pitch">X knob + CV In 1</div></div>
+        <div class="ctl"><div class="k">Grain size <span id="v-size"></span></div>
+          <input id="in-size" type="range" min="0" max="1" step="0.001" value="0.53">
+          <div class="from" id="from-size">Y knob</div></div>
+        <div class="ctl"><div class="k">Slow motion <span id="v-slow"></span></div>
+          <input id="in-slow" type="range" min="1" max="3" step="0.01" value="2">
+          <div class="from">Page only</div></div>
+      </div>
+      <div class="checks"><label><input type="checkbox" id="in-paused"> Pause</label>
+        <label><input type="checkbox" id="in-ref" checked> Show Audio Out 2 (varispeed at the same speed)</label></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="fader-hint">Point at a fader to see what it does. Faded faders don’t affect the chosen engine.</div>
+      <div class="row" id="experiments"><span class="k">Experiments</span></div>
+      <div class="lesson" id="experiment-lesson" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Bits and rate</h2>
+      <canvas id="crush" aria-label="A few milliseconds of output, smooth and as reduced by the Bits and Rate faders"></canvas>
+      <canvas id="crush-spec" style="margin-top:8px" aria-label="Spectrum of the reduced output"></canvas>
+      <div class="caption" id="crush-caption"></div>
+    </section>
+
+    <section class="card">
+      <h2>Compare, offline</h2>
+      <div class="caption" style="margin-top:0">Renders the whole sample at the current speed and pitch through each engine, plus a
+        <b>phase vocoder</b>, which the card can't run but this page can, then draws each as a <b>spectrogram</b>: time across, frequency
+        up (60 Hz to 16 kHz, each octave the same height), loudness as darkness. Press a render's ▶ to hear it.</div>
+      <div class="row"><button id="btn-render" class="primary">Render and compare</button><span class="caption" id="render-status" style="margin:0"></span></div>
+      <div class="renders" id="renders"></div>
+    </section>
+  </div>
+
+  <aside class="col">
+    <section class="card learn">
+      <h2>What sampling is</h2>
+      <p>A microphone turns sound into a voltage that wobbles smoothly. <b>Sampling</b> measures that voltage at regular instants, here
+        48,000 times a second, and stores each measurement as a number. Play the numbers back at the same rate through a
+        converter and the wobble, and so the sound, comes back.</p>
+      <p>Two numbers decide how faithful that is. The <b>sample rate</b> sets the highest frequency that survives: half the rate,
+        the <b>Nyquist frequency</b>. Anything above it doesn't vanish but folds back down as a wrong frequency, <b>aliasing</b>,
+        which is why converters filter first. The <b>bit depth</b> sets how finely each measurement is rounded: each bit halves the
+        rounding error, about 6 dB less noise. The card's converters work at 12 bits.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Sampling_(signal_processing)" target="_blank" rel="noopener">Sampling</a>
+        <a href="https://en.wikipedia.org/wiki/Nyquist%E2%80%93Shannon_sampling_theorem" target="_blank" rel="noopener">Nyquist–Shannon theorem</a>
+        <a href="https://en.wikipedia.org/wiki/Aliasing" target="_blank" rel="noopener">Aliasing</a>
+        <a href="https://en.wikipedia.org/wiki/Quantization_(signal_processing)" target="_blank" rel="noopener">Quantization</a>
+        <a href="https://en.wikipedia.org/wiki/Audio_bit_depth" target="_blank" rel="noopener">Bit depth</a>
+      </div>
+
+      <h3>Samplers</h3>
+      <p>Musical <b>samplers</b> record a sound and play it back on cue, usually at many pitches. The Fairlight CMI (1979) and
+        E-mu Emulator (1981) cost as much as a house; by the late 1980s the Akai S-series and MPC put sampling in every studio,
+        and hip hop, house and jungle were built on it. Memory was precious, so early samplers used low rates and few bits, and
+        that grit became a sound of its own: try the <b>Bits</b> and <b>Rate</b> faders.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Sampler_(musical_instrument)" target="_blank" rel="noopener">Sampler</a>
+        <a href="https://en.wikipedia.org/wiki/Fairlight_CMI" target="_blank" rel="noopener">Fairlight CMI</a>
+        <a href="https://en.wikipedia.org/wiki/E-mu_Emulator" target="_blank" rel="noopener">E-mu Emulator</a>
+        <a href="https://en.wikipedia.org/wiki/Akai_MPC" target="_blank" rel="noopener">Akai MPC</a>
+      </div>
+
+      <h3>Speed is pitch</h3>
+      <p>Play the numbers back faster and every wobble happens sooner: the sound is higher <i>and</i> shorter, just as when a tape
+        or record runs fast. Twice the speed is an octave up and half the length. This is <b>varispeed</b>, engine A, and it's how
+        a simple sampler plays notes, so a sample played high is also short and its character shifts (the "chipmunk" effect).
+        Between stored samples it has to guess the values; the card draws a straight line between neighbours,
+        <b>linear interpolation</b>.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Varispeed" target="_blank" rel="noopener">Varispeed</a>
+        <a href="https://en.wikipedia.org/wiki/Linear_interpolation" target="_blank" rel="noopener">Linear interpolation</a>
+        <a href="https://en.wikipedia.org/wiki/Sample-rate_conversion" target="_blank" rel="noopener">Sample-rate conversion</a>
+      </div>
+
+      <h3>Pulling time and pitch apart</h3>
+      <p>To change the length but not the pitch, or the pitch but not the length, the sound is cut into short <b>grains</b>, a few
+        tens of milliseconds each, smoothed at the ends by a <b>window</b>. Each grain is played at the pitch you want, but the
+        grains are taken from the sample at one rate (the speed) and laid down in the output at another (steady), overlapping
+        so they blend. Slow down and grains are taken from nearly the same place repeatedly; speed up and some of the sample is
+        skipped. That's <b>overlap-add</b>, engine B.</p>
+      <p>The catch is in the joins. Where one grain's waveform meets the next out of step, they partly cancel, so the sound
+        flutters and sounds phasey, and drum hits can double. <b>WSOLA</b> (waveform-similarity overlap-add), engine C, slides
+        each grain a few milliseconds (the <b>Search</b> fader) to wherever it best continues the one before, and the joins
+        line up. Set Search to zero and it is plain overlap-add again.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Audio_time_stretching_and_pitch_scaling" target="_blank" rel="noopener">Time stretching and pitch scaling</a>
+        <a href="https://en.wikipedia.org/wiki/Overlap%E2%80%93add_method" target="_blank" rel="noopener">Overlap–add</a>
+        <a href="https://en.wikipedia.org/wiki/Window_function" target="_blank" rel="noopener">Window function</a>
+        <a href="https://en.wikipedia.org/wiki/Cross-correlation" target="_blank" rel="noopener">Cross-correlation</a>
+      </div>
+
+      <h3>The phase vocoder</h3>
+      <p>Another family works on the spectrum instead. The <b>phase vocoder</b> takes overlapping Fourier transforms, measuring how
+        much of each frequency is present and how fast its phase is turning, then rebuilds the sound with the frames spaced
+        differently, advancing each frequency's phase so it stays smooth. It handles sustained, pitched sounds beautifully and
+        smears sharp attacks into a characteristic "phasey" wash. It needs far more computing than the card has, so it lives in
+        the <i>Compare</i> panel. Extreme versions, like <b>Paulstretch</b>, turn a song into a slowly evolving cloud.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Phase_vocoder" target="_blank" rel="noopener">Phase vocoder</a>
+        <a href="https://en.wikipedia.org/wiki/Short-time_Fourier_transform" target="_blank" rel="noopener">Short-time Fourier transform</a>
+        <a href="https://en.wikipedia.org/wiki/Spectrogram" target="_blank" rel="noopener">Spectrogram</a>
+        <a href="https://en.wikipedia.org/wiki/Paulstretch" target="_blank" rel="noopener">Paulstretch</a>
+      </div>
+
+      <h3>Granular synthesis</h3>
+      <p>Take the grains further from the playhead, scatter them in time (<b>Spray</b>) and pitch (<b>Pitch spray</b>), and pile up
+        dozens a second, and the result stops being "the sample, stretched" and becomes a texture made from it: a <b>cloud</b>,
+        engine D. The idea goes back to the physicist <b>Dennis Gabor</b>, who in 1947 described sound as made of tiny acoustic
+        quanta, and to the composer <b>Iannis Xenakis</b>; <b>Curtis Roads</b> and <b>Barry Truax</b> made it practical on
+        computers, Truax in real time from 1986. Set the speed to zero and the cloud <b>freezes</b> a moment of sound, which
+        varispeed never could: stopped tape is silent.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Granular_synthesis" target="_blank" rel="noopener">Granular synthesis</a>
+        <a href="https://en.wikipedia.org/wiki/Dennis_Gabor" target="_blank" rel="noopener">Dennis Gabor</a>
+        <a href="https://en.wikipedia.org/wiki/Iannis_Xenakis" target="_blank" rel="noopener">Iannis Xenakis</a>
+        <a href="https://en.wikipedia.org/wiki/Curtis_Roads" target="_blank" rel="noopener">Curtis Roads</a>
+        <a href="https://en.wikipedia.org/wiki/Barry_Truax" target="_blank" rel="noopener">Barry Truax</a>
+      </div>
+
+      <h3>Grain size and window</h3>
+      <p>Grain size is a trade. Long grains keep more of the original intact, but repeat (or skip) audibly big chunks, so
+        rhythms stutter. Short grains hide that, but each join adds a little roughness, and below about 20 ms the grain rate
+        itself becomes an audible buzz. The <b>window</b> matters too: square-edged grains click at every join, a smooth
+        <b>Hann</b> curve doesn't. Low notes need long grains: a grain must hold a few cycles of the lowest pitch to keep it.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Hann_function" target="_blank" rel="noopener">Hann window</a>
+        <a href="https://en.wikipedia.org/wiki/Window_function#Tukey_window" target="_blank" rel="noopener">Tukey window</a>
+      </div>
+    </section>
+
+    <section class="card learn">
+      <h2>Things to try</h2>
+      <ol>
+        <li><b>Speed is pitch.</b> Engine A, then move Speed from 1 down to 0.5: an octave down and twice as long. To 0: silence,
+          as stopped tape would be. Below 0: backwards.</li>
+        <li><b>Pull them apart.</b> Engine B at speed 0.5: the same length as A at 0.5 (compare with Audio Out 2) but the pitch
+          stays put. Listen to the drums: they flam and double.</li>
+        <li><b>Line up the joins.</b> Switch to C, WSOLA: the plucks lose their flutter. Turn Search to zero and it comes back.</li>
+        <li><b>Change pitch, keep time.</b> Speed 1, Pitch +7 on C: a fifth up, still in time with Out 2.</li>
+        <li><b>Grain size.</b> On B, sweep the grain size: long grains stutter, short ones buzz. Set Window to square and hear
+          the clicks.</li>
+        <li><b>Freeze.</b> Engine D, speed 0, a little spray: one moment of the sample, held as long as you like.</li>
+        <li><b>Clouds.</b> D, raise Overlap (grains per second), Spray and Pitch spray: the sample dissolves into texture.</li>
+        <li><b>Lo-fi.</b> Bits down to 8, Rate down to 8 kHz: an early sampler. Below that, aliasing whistles in.</li>
+        <li><b>Compare.</b> Press <i>Render and compare</i> at speed 0.5: in the spectrograms, see the drum hits stay sharp in A,
+          double in B, and smear in the phase vocoder.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>The card</h2>
+      <table class="jacks">
+        <tr><td>8mu A–D</td><td>Engine: varispeed, overlap-add, WSOLA, cloud</td></tr>
+        <tr><td>8mu faders</td><td>Position, overlap / density, spray, window, search, pitch spray, bits, rate</td></tr>
+        <tr><td>Main knob</td><td>Speed, −2 to 2, snapping to 0 and ±1</td></tr>
+        <tr><td>X knob</td><td>Pitch, ±24 semitones, snapping to 0</td></tr>
+        <tr><td>Y knob</td><td>Grain size, 10 ms to 500 ms</td></tr>
+        <tr><td>Switch</td><td>Up: record. Middle: play. Down (tap): next engine</td></tr>
+        <tr><td>Audio In 1</td><td>Record input</td></tr>
+        <tr><td>Audio In 2</td><td>Speed, added to the Main knob</td></tr>
+        <tr><td>CV In 1</td><td>Pitch, 1V/oct</td></tr>
+        <tr><td>CV In 2</td><td>Position, added to fader 1</td></tr>
+        <tr><td>Pulse In 1</td><td>Record while high</td></tr>
+        <tr><td>Pulse In 2</td><td>Restart</td></tr>
+        <tr><td>Audio Out 1</td><td>The chosen engine</td></tr>
+        <tr><td>Audio Out 2</td><td>Varispeed at the same speed: the sound without time-stretching</td></tr>
+        <tr><td>CV Out 1</td><td>Playhead, 0–5V across the sample</td></tr>
+        <tr><td>CV Out 2</td><td>The newest grain's window, 0–5V</td></tr>
+        <tr><td>Pulse Out 1</td><td>Trigger at each grain</td></tr>
+        <tr><td>Pulse Out 2</td><td>Trigger each time the playhead loops</td></tr>
+        <tr><td>LEDs</td><td>1–4 the engine, 5 recording or grains, 6 an 8mu or this page</td></tr>
+      </table>
+      <details>
+        <summary>Connecting</summary>
+        <ul class="caption">
+          <li>The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page
+            isn't needed. <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Sample Lab</b>, and an
+            8mu plugged into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.</li>
+          <li>Use Chrome, Edge or another Chromium browser, and allow MIDI with SysEx when asked.</li>
+          <li>On connecting, the page reads the card's sample (a couple of seconds). <i>Send this sample to the card</i> sends the
+            page's instead, taking a few seconds; the card is silent meanwhile.</li>
+          <li>With a card connected, Speed, Pitch and Grain size follow the module's knobs. Experiments then set the faders and
+            engine, and tell you where to put the knobs.</li>
+          <li>The card holds a little over 2 seconds; longer files are trimmed, and silence at the start skipped.</li>
+          <li>The card forgets its sample at power-off. To keep a recording, read it here and press <i>Save as WAV</i>.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<!-- The playback engines, shared by the page's drawing, the browser's audio
+     (an AudioWorklet) and the offline renders.  As SampleLab in main.cpp. -->
+<script type="text/plain" id="engine-src">
+class SampleEngine {
+  constructor(rate) {
+    this.rate = rate;                  // output sample rate
+    this.step = 48000 / rate;          // sample frames per output sample
+    this.buf = new Float32Array(2); this.len = 2;
+    this.grains = []; for (let i = 0; i < 16; i++) this.grains.push({ on: false, src: 0, r: 1, age: 0, len: 1, taper: 0 });
+    this.newest = 0;
+    this.p = { engine: 1, speed: 1, pitch: 1, grain: 0.1, pos: 0, overlap: 2, density: 10, spray: 0, alpha: 1, search: 0,
+               pitchSpray: 0, bits: 12, srate: 48000 };
+    this.rng = 0x9E3779B9; this.events = null; this.t = 0;
+    this.restart();
+  }
+  setBuffer(b) { this.buf = b; this.len = Math.max(2, b.length); this.restart(); }
+  set(p) { Object.assign(this.p, p); }
+  restart() {
+    this.head = 0; this.tape = 0; this.until = 0; this.hold = 0; this.held = 0; this.next = null;
+    for (const g of this.grains) g.on = false;
+  }
+  random() { let s = this.rng; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; this.rng = s >>> 0; return this.rng / 4294967296; }
+  wrap(q) { const L = this.len; q %= L; return q < 0 ? q + L : q; }
+  read(q) { const i = Math.floor(q), f = q - i, j = i + 1 < this.len ? i + 1 : 0; const a = this.buf[i]; return a + (this.buf[j] - a) * f; }
+  window(g) {
+    const e = Math.min(g.age, g.len - 1 - g.age);
+    return e >= g.taper ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * e / g.taper);
+  }
+  hopSamples() { return Math.max(1, Math.floor(this.grainSamples() / this.p.overlap)); }
+  grainSamples() { return Math.max(1, Math.round(this.p.grain * this.rate)); }
+  startGrain(src, r, extra) {
+    let slot = this.grains.findIndex(g => !g.on);
+    if (slot < 0) { slot = 0; for (let i = 1; i < 16; i++) if (this.grains[i].age > this.grains[slot].age) slot = i; }
+    const g = this.grains[slot], len = this.grainSamples();
+    Object.assign(g, { on: true, src, r, age: 0, len, taper: Math.floor(len * this.p.alpha / 2) });
+    this.newest = slot;
+    if (this.events) this.events.push(Object.assign({ t: this.t, src, r, len, alpha: this.p.alpha, slot }, extra || {}));
+  }
+  sprayStart() {
+    const sp = this.p.spray * 48000;
+    return this.wrap(this.head + this.p.pos * this.len + (sp > 0 ? sp * (this.random() * 2 - 1) : 0));
+  }
+  // WSOLA: where should the grain starting now begin, to best continue the last one?
+  search(nominal) {
+    const range = Math.round(this.p.search * 48000), prev = this.next;
+    if (range <= 0 || !prev) return { at: nominal, shift: 0 };
+    const len = this.grainSamples(), points = Math.max(8, Math.min(256, Math.floor(len / 4)));
+    const r = prev.r * this.step, ref = prev.ref;
+    const score = (c) => { let s = 0; for (let j = 0; j < points; j++) { const d = j * 2 * r; s += Math.abs(this.buf[Math.floor(this.wrap(ref + d))] - this.buf[Math.floor(this.wrap(c + d))]); } return s; };
+    const cs = Math.floor(range / 24) + 1;
+    let best = 0, bestS = Infinity;
+    for (let o = -range; o <= range; o += cs) { const s = score(this.wrap(nominal + o)); if (s < bestS) { bestS = s; best = o; } }
+    if (cs > 1) for (let o = best - cs + 1; o <= best + cs - 1; o++) { const s = score(this.wrap(nominal + o)); if (s < bestS) { bestS = s; best = o; } }
+    return { at: this.wrap(nominal + best), shift: best };
+  }
+  // n samples into out1 (the engine, reduced by bits and rate), out2 (varispeed
+  // at the same speed), and pre (the engine before reduction), from index i0
+  process(out1, out2, n, i0 = 0, pre = null) {
+    const P = this.p, sp = P.speed * this.step, hop = this.hopSamples();
+    const holdInc = P.srate / this.rate, q = Math.pow(2, P.bits - 1);
+    const overlapping = P.engine === 3 ? (this.grainSamples() * P.density / this.rate) * (1 - P.alpha / 2) : 0;
+    const gain = P.engine === 3 ? (overlapping > 1 ? 1 / Math.sqrt(overlapping) : 1) : 1 / (P.overlap * (1 - P.alpha / 2));
+    for (let k = 0; k < n; k++) {
+      this.head = this.wrap(this.head + sp);
+      let out = 0;
+      if (P.engine === 0) {
+        this.tape = this.wrap(this.tape + sp * P.pitch);
+        out = this.read(this.wrap(this.tape + P.pos * this.len));
+        if (this.events && (this.t % 480) === 0) this.events.push({ t: this.t, src: this.wrap(this.tape + P.pos * this.len), r: P.speed * P.pitch, len: 480, alpha: 0, tape: true });
+      } else {
+        if (--this.until <= 0) {
+          if (P.engine === 3) {
+            const interval = this.rate / P.density;
+            this.until = Math.max(1, Math.floor(interval * (0.5 + this.random())));
+            const ps = P.pitchSpray ? Math.pow(2, P.pitchSpray * (this.random() * 2 - 1)) : 1;
+            this.startGrain(this.sprayStart(), P.pitch * ps);
+          } else {
+            this.until = hop;
+            let src, extra;
+            if (P.engine === 2) {
+              const nominal = this.wrap(this.head + P.pos * this.len);
+              const s = this.search(nominal); src = s.at; extra = { shift: s.shift, nominal };
+            } else src = this.sprayStart();
+            this.startGrain(src, P.pitch, extra);
+            // what this grain will be reading a hop from now, for the next search
+            this.next = { r: P.pitch, ref: this.wrap(src + P.pitch * this.step * hop) };
+          }
+        }
+        for (const g of this.grains) {
+          if (!g.on) continue;
+          out += this.read(g.src) * this.window(g);
+          g.src = this.wrap(g.src + g.r * this.step);
+          if (++g.age >= g.len) g.on = false;
+        }
+        out *= gain;
+      }
+      out = Math.max(-1, Math.min(1, out));
+      if (pre) pre[i0 + k] = out;
+      this.hold += holdInc;
+      if (this.hold >= 1) { this.hold -= Math.floor(this.hold); this.held = P.bits >= 12 ? out : (Math.floor(out * q) + 0.5) / q; }
+      out1[i0 + k] = this.held;
+      if (out2) out2[i0 + k] = this.read(this.wrap(this.head + P.pos * this.len));
+      this.t++;
+    }
+  }
+}
+</script>
+
+<script>
+'use strict';
+
+// ============================================================================
+// Constants mirroring the firmware (main.cpp, sysex.h, demo.h)
+// ============================================================================
+const SampleEngine = new Function(document.getElementById('engine-src').textContent + '; return SampleEngine;')();
+const RATE = 48000, CAPACITY = 100000, NF = 8;
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x50, PROTOCOL_VERSION = 1, CHUNK = 48;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, ENGINE: 5, STATUS: 7, PING: 9, RESTART: 10,
+              SAMPLE_BEGIN: 11, SAMPLE_DATA: 12, SAMPLE_END: 13, GET_SAMPLE: 14, RECORD: 15, DEMO: 16 };
+const FIRST_FADER_CC = 34, BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+const DEFAULTS = [0, 16, 0, 127, 64, 0, 0, 0];
+const L = (href, text) => `<a href="https://en.wikipedia.org/wiki/${href}" target="_blank" rel="noopener">${text}</a>`;
+
+const ENGINES = [
+  { name: 'Varispeed', letter: 'A', short: 'Read faster or slower, like tape. Speed and pitch are the same thing.', uses: [0, 6, 7],
+    lesson: `<p><b>A · Varispeed.</b> One read head moving through the sample at the speed (times the pitch: here they're the same
+      thing). Faster is higher <i>and</i> shorter; slower, lower and longer; stopped, silent; negative, backwards. It's what tape,
+      turntables and the simplest samplers do, and it sounds natural because nothing is cut up: the whole waveform is just
+      stretched like a spring. In the diagram, the rungs show how a stretch of output maps to a stretch of sample.</p>
+      <p>${L('Varispeed', 'Varispeed')} · ${L('Linear_interpolation', 'Linear interpolation')}</p>` },
+  { name: 'Overlap-add', letter: 'B', short: 'Grains taken at the speed, played at the pitch, overlapped at a steady rate.', uses: [0, 1, 2, 3, 6, 7],
+    lesson: `<p><b>B · Overlap-add.</b> Every hop (grain size ÷ overlap), a new windowed grain starts, read from wherever the playhead is
+      now, at the pitch. The playhead moves at the speed, so speed decides <i>which</i> part of the sample you hear, and pitch
+      decides <i>how</i> it's read: they're separate at last. In the diagram the grains are evenly spaced below but bunched (slow)
+      or spread (fast) above. Where neighbouring grains meet out of step, they partly cancel: flutter, phasiness, doubled drum
+      hits. Spray scatters the grains, which trades the regular flutter for a rougher blur.
+      (On a steady note it can come out perfectly, by luck: if the step through the sample between grains happens to be a whole
+      number of the note's cycles, every join lands in step. WSOLA makes its own luck.)</p>
+      <p>${L('Overlap%E2%80%93add_method', 'Overlap–add')} · ${L('Audio_time_stretching_and_pitch_scaling', 'Time stretching')}</p>` },
+  { name: 'WSOLA', letter: 'C', short: 'Overlap-add, but each grain slides to where it best continues the last.', uses: [0, 1, 3, 4, 6, 7],
+    lesson: `<p><b>C · WSOLA.</b> Overlap-add, except that before each grain starts, the card tries positions up to the Search range
+      either side of the playhead, and picks the one whose waveform best matches how the previous grain would have carried on
+      (the smallest total difference, sample by sample). The orange ticks in the diagram show how far each grain was moved.
+      The joins line up, so pitched sounds stay smooth; it can still repeat or skip a cycle, and the search has nothing to
+      match on noise. Search at 0 is overlap-add exactly.</p>
+      <p>${L('Audio_time_stretching_and_pitch_scaling', 'Time stretching')} · ${L('Cross-correlation', 'Cross-correlation')}</p>` },
+  { name: 'Cloud', letter: 'D', short: 'Many grains at random around the playhead: granular synthesis.', uses: [0, 1, 2, 3, 5, 6, 7],
+    lesson: `<p><b>D · Cloud.</b> Grains start at random moments (Overlap now sets how many per second), at random places around the
+      playhead (Spray) and at random pitches around the pitch (Pitch spray). Nothing tries to keep the waveform continuous;
+      the point is texture. With speed 0 it freezes a moment indefinitely; with wide spray it blurs the whole sample into a
+      shimmer. Many grains at once add up as random sums do, so the level is scaled by the square root of the overlap.</p>
+      <p>${L('Granular_synthesis', 'Granular synthesis')} · ${L('Dennis_Gabor', 'Dennis Gabor')}</p>` },
+];
+
+const FADERS = [
+  { name: 'Position', hint: 'Fader 1, position: where in the sample to play, added to the playhead (and CV In 2). Click the sample above to set it.' },
+  { name: 'Overlap', hint: 'Fader 2, overlap: B and C, how many grains overlap, 1 to 8 (with a square window, 1 is just chopping). D: grains per second, 5 to 200.' },
+  { name: 'Spray', hint: 'Fader 3, spray: B and D, a random scatter of up to 500 ms in where each grain starts.' },
+  { name: 'Window', hint: 'Fader 4, window: the shape of each grain, from square at the bottom (clicks at every join) to a smooth Hann curve at the top.' },
+  { name: 'Search', hint: 'Fader 5, search: C, how far WSOLA may move a grain to line it up, up to 15 ms. At 0, it’s plain overlap-add.' },
+  { name: 'Pitch spray', hint: 'Fader 6, pitch spray: D, a random pitch for each grain, up to an octave either way.' },
+  { name: 'Bits', hint: 'Fader 7, bits: the output’s bit depth, 12 (the card’s converters) down to 1. Each bit is about 6 dB of noise.' },
+  { name: 'Rate', hint: 'Fader 8, rate: the output’s sample rate, 48 kHz down to 1 kHz, with no filtering, so high frequencies alias.' },
+];
+
+// Fader units (0-127) to settings, as SampleLab::Control
+const F = {
+  pos: v => v / 127,
+  overlap: v => 1 + Math.floor(v * 8 / 128),
+  density: v => 5 * Math.pow(40, v / 127),
+  spray: v => (v / 127) ** 2 * 0.5,
+  alpha: v => v / 127,
+  search: v => (v / 127) ** 2 * 0.015,
+  pitchSpray: v => v / 127,
+  bits: v => 12 - Math.floor((v * 11 + 63) / 127),
+  srate: v => 48000 * Math.pow(48, -v / 127),
+};
+// and back, for the experiments
+const inv = {
+  overlap: o => (o - 1) * 16, density: d => Math.round(127 * Math.log(d / 5) / Math.log(40)),
+  spray: s => Math.round(127 * Math.sqrt(s / 0.5)), search: s => Math.round(127 * Math.sqrt(s / 0.015)),
+  bits: b => Math.round((12 - b) * 127 / 11), srate: r => Math.round(127 * Math.log(48000 / r) / Math.log(48)),
+};
+const sizeOf = (k) => 0.01 * Math.pow(50, k);                          // Y knob 0-1 to seconds
+const kOfSize = (s) => Math.log(s / 0.01) / Math.log(50);
+function snapSpeed(s) { if (Math.abs(s) < 0.06) return 0; if (Math.abs(s - 1) < 0.06) return 1; if (Math.abs(s + 1) < 0.06) return -1; return s; }
+const snapPitch = (p) => Math.abs(p) < 0.75 ? 0 : p;
+
+const EXPERIMENTS = [
+  { name: 'Tape, half speed', engine: 0, speed: 0.5, pitch: 0, size: 0.1, f: { 1: 16 },
+    lesson: 'Varispeed at half speed: an octave down and twice as long. Every sampler that plays notes by changing speed does this, which is why a sample played far from its original pitch sounds wrong as well as different.' },
+  { name: 'Stretch, simply', engine: 1, speed: 0.5, pitch: 0, size: 0.08, f: { 1: 16, 2: 0, 3: 127 },
+    lesson: 'Overlap-add at half speed, 80 ms grains overlapping twice: twice as long, same pitch. But listen to the plucks flutter and the drums flam. That’s grains meeting out of step.' },
+  { name: 'Stretch, matched', engine: 2, speed: 0.5, pitch: 0, size: 0.08, f: { 1: 16, 3: 127, 4: 'search:0.01' },
+    lesson: 'The same, through WSOLA, searching ±10 ms for the best join. The plucks are smooth now. Drag Search to the bottom to hear it fall back to plain overlap-add.' },
+  { name: 'A fifth up, in time', engine: 2, speed: 1, pitch: 7, size: 0.06, f: { 1: 16, 3: 127, 4: 'search:0.01' },
+    lesson: 'Pitch shifting without changing length: speed 1, pitch +7 semitones. Compare with Audio Out 2 (the original, in step): same rhythm, a fifth higher.' },
+  { name: 'Square grains', engine: 1, speed: 0.5, pitch: 0, size: 0.03, f: { 1: 0, 3: 0 },
+    lesson: 'Square-edged 30 ms grains, no overlap: every join is a click, and 33 clicks a second become a buzz. Raise the Window fader and Overlap to smooth it away.' },
+  { name: 'Freeze', engine: 3, speed: 0, pitch: 0, size: 0.12, f: { 1: 'density:40', 2: 'spray:0.02', 3: 127, 5: 0 },
+    lesson: 'Speed 0: the playhead stops, but grains keep coming from where it stopped, so a moment of the sample is held indefinitely. Click elsewhere in the sample to freeze somewhere else. Varispeed at speed 0 is silent.' },
+  { name: 'Cloud', engine: 3, speed: 0.2, pitch: 0, size: 0.07, f: { 1: 'density:100', 2: 'spray:0.3', 3: 127, 5: 40 },
+    lesson: '100 grains a second, scattered 300 ms and a third of an octave: the loop dissolves into a slowly drifting texture. This is granular synthesis proper.' },
+  { name: '8 bits, 8 kHz', engine: 0, speed: 1, pitch: 0, size: 0.1, f: { 6: 'bits:8', 7: 'srate:8000' },
+    lesson: 'The output reduced to 8 bits and 8,000 samples a second, as an early sampler might have been: duller (nothing above 4 kHz is real), noisier, and with aliased whistles where high sounds fold down.' },
+];
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  values: DEFAULTS.slice(), engine: 1,
+  speed: 0.5, pitch: 0, sizeK: kOfSize(0.1),
+  source: 'demo', experiment: -1,
+};
+const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0,
+               cardLength: 0, cardHead: -1, cardRec: false, receiving: null, sending: false, skipFetch: false };
+const mu = { phys: new Array(NF).fill(-1), engaged: new Array(NF).fill(false), ledSent: new Array(NF).fill(-1), lastBlinkOff: 0 };
+let sample = new Float32Array(2);
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+const fmtMs = (s) => s >= 1 ? s.toFixed(2) + ' s' : (s * 1000).toFixed(s < 0.01 ? 1 : 0) + ' ms';
+const fmtHz = (f) => f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 0 : 1) + ' kHz' : Math.round(f) + ' Hz';
+
+// The engine's settings now
+function params() {
+  const v = state.values, e = state.engine;
+  return { engine: e, speed: snapSpeed(state.speed), pitch: Math.pow(2, snapPitch(state.pitch) / 12), grain: sizeOf(state.sizeK),
+           pos: F.pos(v[0]), overlap: F.overlap(v[1]), density: F.density(v[1]), spray: F.spray(v[2]), alpha: F.alpha(v[3]),
+           search: F.search(v[4]), pitchSpray: F.pitchSpray(v[5]), bits: F.bits(v[6]), srate: F.srate(v[7]) };
+}
+
+// ============================================================================
+// The demo loop, as demo.h
+// ============================================================================
+function buildDemo() {
+  const n = 96000, sr = 48000, buf = new Int16Array(n), tau = 2 * Math.PI;
+  let s = 0x12345678;
+  const rnd = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return (s | 0) / 2147483648; };
+  const add = (i, v) => { buf[i] = clamp(buf[i] + Math.trunc(v * 32767), -32767, 32767); };
+  for (let k = 0; k < 2; k++) { let ph = 0; for (let i = 0; i < 19200; i++) { const t = i / sr; ph += tau * (50 + 100 * Math.exp(-t / 0.04)) / sr; add(k * 48000 + i, 0.55 * Math.sin(ph) * Math.exp(-t / 0.12)); } }
+  for (let k = 0; k < 2; k++) for (let i = 0; i < 12000; i++) { const t = i / sr; add(24000 + k * 48000 + i, 0.3 * rnd() * Math.exp(-t / 0.06) + 0.25 * Math.sin(tau * 180 * t) * Math.exp(-t / 0.04)); }
+  for (let k = 0; k < 4; k++) { let prev = 0; for (let i = 0; i < 3840; i++) { const t = i / sr, x = rnd(); add(12000 + k * 24000 + i, 0.06 * (x - prev) * Math.exp(-t / 0.02)); prev = x; } }
+  const notes = [57, 60, 64, 67, 69, 67, 64, 60];
+  for (let k = 0; k < 8; k++) {
+    const f = 440 * Math.pow(2, (notes[k] - 69) / 12), d = Math.trunc(sr / f + 0.5), line = new Float64Array(d);
+    for (let i = 0; i < d; i++) line[i] = 0.38 * rnd();
+    let j = 0;
+    for (let i = 0; i < 24000 && k * 12000 + i < n; i++) { const out = line[j], j1 = j + 1 < d ? j + 1 : 0; line[j] = 0.498 * (line[j] + line[j1]); j = j1; add(k * 12000 + i, out); }
+  }
+  const out = new Float32Array(n); for (let i = 0; i < n; i++) out[i] = buf[i] / 32767;
+  return out;
+}
+
+// ============================================================================
+// Sources
+// ============================================================================
+function setSample(f32, source, quiet) {
+  sample = f32.length > CAPACITY ? f32.slice(0, CAPACITY) : f32;
+  state.source = source;
+  vis.engine.setBuffer(sample); vis.reset();
+  if (audio.node) audio.node.port.postMessage({ buffer: sample });
+  overviewCache = null;
+  renders.length = 0; drawRenders();
+  if (!quiet) say('Sample: ' + describeSource() + ', ' + fmtMs(sample.length / RATE) + '.');
+  changed();
+}
+// The sample as a 16-bit, 48kHz mono WAV file
+function saveWav() {
+  const n = sample.length, b = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) b.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); b.setUint32(16, 16, true);
+  b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, RATE, true); b.setUint32(28, RATE * 2, true);
+  b.setUint16(32, 2, true); b.setUint16(34, 16, true); str(36, 'data'); b.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) b.setInt16(44 + i * 2, clamp(Math.round(sample[i] * 32767), -32768, 32767), true);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+  a.download = 'sample-lab-' + state.source + '.wav'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function describeSource() { return { demo: 'the demo loop', file: 'a file', mic: 'the microphone', card: 'the card’s' }[state.source] || 'a sample'; }
+// Decode any audio file to 48kHz mono, skip leading silence, trim to the card's capacity
+async function decodeTo48k(arrayBuf) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const ab = await ctx.decodeAudioData(arrayBuf);
+  ctx.close();
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(ab.duration * RATE)), RATE);
+  const src = off.createBufferSource(); src.buffer = ab; src.connect(off.destination); src.start();
+  const out = (await off.startRendering()).getChannelData(0);
+  let peak = 0; for (let i = 0; i < out.length; i++) peak = Math.max(peak, Math.abs(out[i]));
+  let start = 0; const thr = peak * 0.02; while (start < out.length && Math.abs(out[start]) < thr) start++;
+  start = Math.max(0, start - 240);
+  const res = out.slice(start, start + CAPACITY);
+  if (peak > 0) for (let i = 0; i < res.length; i++) res[i] = res[i] / peak * 0.9;
+  return res;
+}
+async function loadFile(file) {
+  try { setSample(await decodeTo48k(await file.arrayBuffer()), 'file'); if (link.cardOnline) say('Loaded. “Send this sample to the card” to play it there too.'); }
+  catch (e) { say('Could not read that file as audio: ' + (e && e.message || e), true); }
+}
+async function recordMic() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) { say('This browser can’t record from a microphone.', true); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const rec = new MediaRecorder(stream), chunks = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    const done = new Promise(r => rec.onstop = r);
+    rec.start(); say('Recording 2 seconds…'); $('src-mic').classList.add('on');
+    await new Promise(r => setTimeout(r, 2300));
+    rec.stop(); await done; stream.getTracks().forEach(t => t.stop()); $('src-mic').classList.remove('on');
+    const blob = new Blob(chunks, { type: rec.mimeType });
+    setSample(await decodeTo48k(await blob.arrayBuffer()), 'mic');
+  } catch (e) { $('src-mic').classList.remove('on'); say('Could not record: ' + (e && e.message || e), true); }
+}
+
+// ============================================================================
+// Visual engine: the same engine, run in slow motion for the diagram
+// ============================================================================
+const vis = {
+  engine: new SampleEngine(RATE), ringN: 0, out: null, ref: null, pre: null, pos: 0, filled: 0,
+  events: [], acc: 0, slow: 100, paused: false, showRef: true, window: 0.3,
+  reset() {
+    this.window = this.windowFor();
+    this.ringN = Math.ceil(this.window * RATE);
+    this.out = new Float32Array(this.ringN); this.ref = new Float32Array(this.ringN); this.pre = new Float32Array(this.ringN);
+    this.pos = 0; this.filled = 0; this.events = []; this.engine.events = this.events; this.engine.t = 0;
+  },
+  windowFor() { const p = params(); return clamp((p.engine === 0 ? 0.06 : p.grain * 3), 0.03, 1.5); },
+  advance(dt) {
+    if (Math.abs(this.windowFor() - this.window) > this.window * 0.02) this.reset();
+    let n = this.filled < this.ringN ? this.ringN - this.filled : 0;
+    if (!this.paused) { this.acc += dt * RATE / this.slow; const m = Math.floor(this.acc); this.acc -= m; n += m; }
+    n = Math.min(n, this.ringN);
+    const tmp1 = new Float32Array(n), tmp2 = new Float32Array(n), tmp3 = new Float32Array(n);
+    this.engine.process(tmp1, tmp2, n, 0, tmp3);
+    for (let i = 0; i < n; i++) { this.out[this.pos] = tmp1[i]; this.ref[this.pos] = tmp2[i]; this.pre[this.pos] = tmp3[i]; this.pos = (this.pos + 1) % this.ringN; }
+    this.filled = Math.min(this.ringN, this.filled + n);
+    const tMin = this.engine.t - this.ringN - RATE;
+    while (this.events.length && this.events[0].t + this.events[0].len < tMin) this.events.shift();
+  },
+  // output sample i samples ago
+  ago(arr, i) { return arr[(this.pos - 1 - i + this.ringN * 2) % this.ringN]; },
+};
+
+// ============================================================================
+// Drawing
+// ============================================================================
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+// min/max per pixel of a stretch of a Float32Array
+function drawWave(ctx, arr, a, b, x0, x1, yMid, half, col, wrapLen) {
+  const span = x1 - x0, per = (b - a) / span;
+  ctx.fillStyle = col; ctx.beginPath();
+  for (let px = 0; px < span; px++) {
+    let lo = 1, hi = -1;
+    const s0 = a + px * per, s1 = Math.max(s0 + 1, a + (px + 1) * per);
+    for (let s = Math.floor(s0); s < s1; s += Math.max(1, Math.floor(per / 64))) {
+      const v = arr[wrapLen ? ((s % wrapLen) + wrapLen) % wrapLen : clamp(s, 0, arr.length - 1)] || 0;
+      if (v < lo) lo = v; if (v > hi) hi = v;
+    }
+    if (hi < lo) continue;
+    ctx.rect(x0 + px, yMid - hi * half, 1, Math.max(1, (hi - lo) * half));
+  }
+  ctx.fill();
+}
+let overviewCache = null;
+function drawOverview() {
+  const cv = $('overview'), { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const n = sample.length, X = (s) => 6 + (W - 12) * s / n, mid = H / 2, half = H / 2 - 8;
+  ctx.strokeStyle = cssVar('--grid'); ctx.beginPath(); ctx.moveTo(6, mid); ctx.lineTo(W - 6, mid); ctx.stroke();
+  drawWave(ctx, sample, 0, n, 6, W - 6, mid, half, cssVar('--muted'));
+  const P = params(), e = vis.engine;
+  // spray range around the playhead
+  if ((P.engine === 1 || P.engine === 3) && P.spray > 0) {
+    const c = e.wrap(e.head + P.pos * n), r = P.spray * RATE;
+    ctx.fillStyle = cssVar('--warm'); ctx.globalAlpha = 0.12;
+    ctx.fillRect(X(c - r), 0, X(c + r) - X(c - r), H);
+    if (c - r < 0) ctx.fillRect(X(c - r + n), 0, X(n) - X(c - r + n), H);
+    if (c + r > n) ctx.fillRect(X(0), 0, X(c + r - n) - X(0), H);
+    ctx.globalAlpha = 1;
+  }
+  // grains now playing
+  const colors = [0, 1, 2, 3, 4, 5, 6, 7].map(i => cssVar('--s' + i));
+  e.grains.forEach((g, i) => { if (!g.on) return; ctx.fillStyle = colors[i % 8]; ctx.globalAlpha = 0.35 * e.window(g) + 0.1; const w = Math.max(2, (W - 12) * g.len * Math.abs(g.r) / n); ctx.fillRect(X(g.src) - (g.r < 0 ? w : 0), 6, w, H - 12); });
+  ctx.globalAlpha = 1;
+  const line = (s, col, wd, dash) => { ctx.strokeStyle = col; ctx.lineWidth = wd; ctx.setLineDash(dash || []); ctx.beginPath(); ctx.moveTo(X(s), 0); ctx.lineTo(X(s), H); ctx.stroke(); ctx.setLineDash([]); };
+  line(P.pos * n, cssVar('--warm'), 1, [3, 3]);
+  line(P.engine === 0 ? e.wrap(e.tape + P.pos * n) : e.wrap(e.head + P.pos * n), cssVar('--accent'), 2);
+  if (link.cardOnline && link.cardHead >= 0) line(e.wrap(link.cardHead + P.pos * n), cssVar('--bad'), 1.5);
+  ctx.fillStyle = cssVar('--muted'); ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText(fmtMs(n / RATE), W - 50, 12);
+}
+
+function drawDiagram() {
+  const { ctx, w: W, h: H } = setupCanvas($('diagram'));
+  ctx.clearRect(0, 0, W, H);
+  const P = params(), e = vis.engine, n = sample.length;
+  const muted = cssVar('--muted'), grid = cssVar('--grid'), ink = cssVar('--sum'), warm = cssVar('--warm'), acc = cssVar('--accent');
+  const colors = [0, 1, 2, 3, 4, 5, 6, 7].map(i => cssVar('--s' + i));
+  ctx.font = '11px system-ui, sans-serif';
+  const x0 = 8, x1 = W - 8, topA = 18, topB = 128, botA = 230, botB = H - 18;
+  const now = e.t, win = vis.ringN;
+  const tx = (t) => x0 + (x1 - x0) * (t - (now - win)) / win;
+  // Source lane covers what the visible grains read, plus the playhead
+  const vis_ev = vis.events.filter(g => g.t + g.len > now - win);
+  let sMin = Infinity, sMax = -Infinity;
+  const headPos = e.wrap(e.head + P.pos * n);
+  const unwrapNear = (s, ref) => { let d = s - ref; if (d > n / 2) d -= n; if (d < -n / 2) d += n; return ref + d; };
+  for (const g of vis_ev) {
+    const a = unwrapNear(g.src, headPos), b = a + g.r * g.len * e.step;
+    sMin = Math.min(sMin, a, b); sMax = Math.max(sMax, a, b);
+  }
+  sMin = Math.min(sMin, headPos - win * Math.abs(P.speed) * e.step); sMax = Math.max(sMax, headPos);
+  if (!isFinite(sMin)) { sMin = headPos - win; sMax = headPos; }
+  const pad = (sMax - sMin) * 0.05 + 50; sMin -= pad; sMax += pad;
+  const sx = (s) => x0 + (x1 - x0) * (s - sMin) / (sMax - sMin);
+
+  ctx.fillStyle = muted;
+  ctx.fillText('Sample: where each grain is read from (' + fmtMs((sMax - sMin) / RATE) + ' of it)', x0, topA - 5);
+  ctx.fillText('Output: where each grain is placed (' + fmtMs(win / RATE) + ' of it, newest at the right)', x0, botA - 5);
+  // source waveform
+  const midA = (topA + topB) / 2, halfA = (topB - topA) / 2 - 4;
+  ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(x0, midA); ctx.lineTo(x1, midA); ctx.stroke();
+  drawWave(ctx, sample, sMin, sMax, x0, x1, midA, halfA, muted, n);
+
+  // grains: window shape in each lane, joined by a band
+  const envPath = (xa, xb, yBase, hgt, alpha) => {
+    ctx.beginPath(); ctx.moveTo(xa, yBase);
+    const steps = 24;
+    for (let k = 0; k <= steps; k++) {
+      const u = k / steps, e2 = Math.min(u, 1 - u) * 2, w = alpha <= 0 ? 1 : (e2 >= alpha ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * e2 / alpha));
+      ctx.lineTo(xa + (xb - xa) * u, yBase - hgt * w);
+    }
+    ctx.lineTo(xb, yBase); ctx.closePath();
+  };
+  const midB = (botA + botB) / 2, halfB = (botB - botA) / 2 - 4;
+  const bandAlpha = 0.18 * Math.min(1, Math.sqrt(8 / Math.max(1, vis_ev.length)));
+  vis_ev.forEach((g, i) => {
+    const col = g.tape ? acc : colors[(g.slot ?? i) % 8];
+    const a = unwrapNear(g.src, headPos), b = a + g.r * g.len * e.step;
+    const ta = tx(g.t), tb = tx(g.t + g.len);
+    ctx.globalAlpha = g.tape ? 0.25 : bandAlpha; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(sx(a), topB); ctx.lineTo(sx(b), topB); ctx.lineTo(tb, botA); ctx.lineTo(ta, botA); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 0.5;
+    if (!g.tape) {
+      envPath(Math.min(sx(a), sx(b)), Math.max(sx(a), sx(b)), topB, topB - topA, g.alpha); ctx.fill();
+      envPath(ta, tb, botB, botB - botA, g.alpha); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (g.shift !== undefined && g.shift !== 0) {        // WSOLA: how far it was moved
+      const nom = unwrapNear(g.nominal, headPos);
+      ctx.strokeStyle = warm; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(nom), topB + 4); ctx.lineTo(sx(a), topB + 4); ctx.stroke();
+      ctx.beginPath(); ctx.arc(sx(nom), topB + 4, 2, 0, 2 * Math.PI); ctx.fillStyle = warm; ctx.fill();
+    }
+  });
+  // playhead in the source lane
+  ctx.strokeStyle = acc; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(headPos), topA); ctx.lineTo(sx(headPos), topB); ctx.stroke();
+  ctx.fillStyle = acc; ctx.fillText('playhead', Math.min(sx(headPos) + 4, x1 - 50), topA + 10);
+  // output waveform
+  ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, midB); ctx.lineTo(x1, midB); ctx.stroke();
+  const trace = (arr, col, wd) => {
+    ctx.strokeStyle = col; ctx.lineWidth = wd; ctx.beginPath();
+    const span = x1 - x0;
+    for (let px = 0; px <= span; px++) {
+      const i = Math.round((span - px) * (win - 1) / span), y = midB - halfB * vis.ago(arr, i);
+      px ? ctx.lineTo(x0 + px, y) : ctx.moveTo(x0 + px, y);
+    }
+    ctx.stroke();
+  };
+  if (vis.showRef) trace(vis.ref, warm, 1);
+  trace(vis.out, ink, 1.4);
+  ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.fillText(vis.showRef ? 'black: Audio Out 1 · orange: Audio Out 2' : 'Audio Out 1', x1, botB + 13);
+  ctx.textAlign = 'left';
+}
+
+function drawCrush() {
+  const P = params();
+  let { ctx, w: W, h: H } = setupCanvas($('crush'));
+  ctx.clearRect(0, 0, W, H);
+  const span = Math.min(vis.ringN, Math.round(0.004 * RATE)), mid = H / 2;
+  let pk = 0.05; for (let i = 0; i < span; i++) pk = Math.max(pk, Math.abs(vis.ago(vis.pre, i)), Math.abs(vis.ago(vis.out, i)));
+  const half = (H / 2 - 6) / pk;
+  ctx.strokeStyle = cssVar('--grid'); ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+  const tr = (arr, col, wd, steps) => {
+    ctx.strokeStyle = col; ctx.lineWidth = wd; ctx.beginPath();
+    for (let i = 0; i < span; i++) {
+      const x = W * i / span, y = mid - half * vis.ago(arr, span - 1 - i);
+      if (!i) ctx.moveTo(x, y); else if (steps) { ctx.lineTo(x, ctx._ly); ctx.lineTo(x, y); } else ctx.lineTo(x, y);
+      ctx._ly = y;
+    }
+    ctx.stroke();
+  };
+  // quantisation levels, when few enough to see
+  if (P.bits <= 6) {
+    ctx.strokeStyle = cssVar('--grid'); ctx.setLineDash([2, 3]); ctx.beginPath();
+    const lv = Math.pow(2, P.bits);
+    for (let k = 0; k <= lv; k++) { const y = mid - half * (k / lv * 2 - 1); ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  tr(vis.pre, cssVar('--accent'), 1, false);
+  tr(vis.out, cssVar('--sum'), 1.5, true);
+  ctx.fillStyle = cssVar('--muted'); ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText('4 ms of output, enlarged ×' + (1 / pk).toFixed(1) + ' · teal: before · black: after Bits and Rate', 6, 12);
+
+  // spectrum of a short render of the reduced output
+  ({ ctx, w: W, h: H } = setupCanvas($('crush-spec')));
+  ctx.clearRect(0, 0, W, H);
+  if (!crushSpec) return;
+  const x0 = 30, x1 = W - 8, y0 = 6, y1 = H - 18, bins = crushSpec.length;
+  ctx.strokeStyle = cssVar('--grid'); ctx.fillStyle = cssVar('--muted'); ctx.textAlign = 'center';
+  ctx.beginPath();
+  for (let f = 0; f <= 24000; f += 4000) { const x = x0 + (x1 - x0) * f / 24000; ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.fillText(f / 1000 + 'k', x, y1 + 12); }
+  ctx.stroke();
+  ctx.fillStyle = cssVar('--accent'); ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.moveTo(x0, y1);
+  for (let px = 0; px <= x1 - x0; px++) {
+    const k0 = Math.floor(px / (x1 - x0) * bins), k1 = Math.max(k0 + 1, Math.floor((px + 1) / (x1 - x0) * bins));
+    let m = -200; for (let k = k0; k < k1 && k < bins; k++) m = Math.max(m, crushSpec[k]);
+    ctx.lineTo(x0 + px, y1 - (y1 - y0) * (clamp(m, -90, 0) + 90) / 90);
+  }
+  ctx.lineTo(x1, y1); ctx.fill(); ctx.globalAlpha = 1;
+  if (P.srate < 47000) {
+    const xn = x0 + (x1 - x0) * (P.srate / 2) / 24000;
+    ctx.strokeStyle = cssVar('--bad'); ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(xn, y0); ctx.lineTo(xn, y1); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = cssVar('--bad'); ctx.textAlign = 'left'; ctx.fillText('new Nyquist ' + fmtHz(P.srate / 2), Math.min(xn + 4, x1 - 110), y0 + 10);
+  }
+  ctx.textAlign = 'right'; ctx.fillStyle = cssVar('--muted'); ctx.fillText('0 dB', x0 - 3, y0 + 8); ctx.fillText('−90', x0 - 3, y1);
+  ctx.textAlign = 'left';
+}
+let crushSpec = null, crushKey = '';
+function updateCrushSpec() {
+  const P = params(), key = JSON.stringify([P, sample.length, state.source]);
+  if (key === crushKey) return; crushKey = key;
+  const eng = new SampleEngine(RATE); eng.setBuffer(sample); eng.set(P);
+  const N = 8192, pre = new Float32Array(RATE / 4 + N), out = new Float32Array(pre.length);
+  eng.process(out, null, pre.length);
+  crushSpec = fftDb(out.subarray(out.length - N));
+  const snr = 6.02 * P.bits + 1.76;
+  $('crush-caption').innerHTML = `${P.bits} bits: ${2 ** P.bits} levels, roughly ${Math.round(snr)} dB from the loudest sound to the rounding
+    noise. ${fmtHz(P.srate)} sample rate: nothing above ${fmtHz(P.srate / 2)} can be represented${P.srate < 47000 ? `, and with no filter
+    anything above it folds back down, mirrored about it (aliasing)` : ''}. The held steps between samples are a
+    <a href="https://en.wikipedia.org/wiki/Zero-order_hold" target="_blank" rel="noopener">zero-order hold</a>, as the simplest converters do.`;
+}
+
+// ---- FFT ---------------------------------------------------------------------
+function fftInPlace(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+  for (let len = 2; len <= n; len <<= 1) {
+    const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a), h = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < h; k++) {
+        const p = i + k, q = p + h, vr = re[q] * cr - im[q] * ci, vi = re[q] * ci + im[q] * cr;
+        re[q] = re[p] - vr; im[q] = im[p] - vi; re[p] += vr; im[p] += vi;
+        const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+      }
+    }
+  }
+}
+const hann = (n) => { const w = new Float64Array(n); for (let i = 0; i < n; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / n); return w; };
+function fftDb(x) {
+  const n = x.length, w = hann(n), re = new Float64Array(n), im = new Float64Array(n);
+  let ws = 0; for (let i = 0; i < n; i++) { re[i] = x[i] * w[i]; ws += w[i]; }
+  fftInPlace(re, im);
+  const out = new Float32Array(n / 2);
+  for (let k = 0; k < n / 2; k++) out[k] = 20 * Math.log10(Math.max(1e-7, 2 * Math.hypot(re[k], im[k]) / ws));
+  return out;
+}
+
+// ---- Phase vocoder (offline only) -------------------------------------------
+// Time position moves at 'speed'; every output frame reads the spectrum there,
+// and each bin's phase advances by its measured frequency, so the frames join
+// smoothly.  Pitch: render stretched by the pitch ratio, then resample.
+function phaseVocoder(src, speed, ratio, outLen) {
+  const N = 2048, Hs = 512, w = hann(N), half = N / 2, n = src.length;
+  const stretchLen = Math.ceil(outLen * ratio) + N;
+  const y = new Float32Array(stretchLen), norm = new Float32Array(stretchLen);
+  const phase = new Float64Array(half + 1), re = new Float64Array(N), im = new Float64Array(N), re2 = new Float64Array(N), im2 = new Float64Array(N);
+  const dEst = 256;                                    // measure phase change over this many samples
+  const at = (i) => src[((Math.floor(i) % n) + n) % n];
+  let a = 0, first = true;
+  const step = speed * Hs / ratio;
+  for (let o = 0; o + N < stretchLen; o += Hs) {
+    for (let i = 0; i < N; i++) { re[i] = at(a + i) * w[i]; im[i] = 0; re2[i] = at(a + dEst + i) * w[i]; im2[i] = 0; }
+    fftInPlace(re, im); fftInPlace(re2, im2);
+    for (let k = 0; k <= half; k++) {
+      const p1 = Math.atan2(im[k], re[k]), p2 = Math.atan2(im2[k], re2[k]);
+      const expected = 2 * Math.PI * k * dEst / N;
+      let dp = p2 - p1 - expected; dp -= 2 * Math.PI * Math.round(dp / (2 * Math.PI));
+      const omega = (expected + dp) / dEst;              // radians per sample
+      if (first) phase[k] = p1; else phase[k] += omega * Hs;
+      const mag = Math.hypot(re[k], im[k]);
+      re[k] = mag * Math.cos(phase[k]); im[k] = mag * Math.sin(phase[k]);
+      if (k > 0 && k < half) { re[N - k] = re[k]; im[N - k] = -im[k]; }
+    }
+    first = false;
+    // inverse FFT by conjugation
+    for (let i = 0; i < N; i++) im[i] = -im[i];
+    fftInPlace(re, im);
+    for (let i = 0; i < N; i++) { y[o + i] += re[i] / N * w[i]; norm[o + i] += w[i] * w[i]; }
+    a += step;
+  }
+  for (let i = 0; i < stretchLen; i++) if (norm[i] > 1e-3) y[i] /= norm[i];
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) { const p = i * ratio, j = Math.floor(p), f = p - j; out[i] = (y[j] || 0) + ((y[j + 1] || 0) - (y[j] || 0)) * f; }
+  return out;
+}
+
+// ---- Compare ------------------------------------------------------------------
+const renders = [];
+async function renderAll() {
+  const P = params(), sp = Math.abs(P.speed);
+  const secs = clamp(sp > 0.01 ? sample.length / RATE / sp : 3, 1, 8);
+  const n = Math.round(secs * RATE);
+  $('render-status').textContent = 'Rendering ' + secs.toFixed(1) + ' s through each…';
+  await new Promise(r => setTimeout(r, 20));
+  renders.length = 0;
+  renders.push({ name: 'Original', info: 'The sample as it is, for reference', y: sample.slice(0, Math.min(sample.length, n)) });
+  for (let e = 0; e < 4; e++) {
+    const eng = new SampleEngine(RATE); eng.setBuffer(sample); eng.set(Object.assign({}, P, { engine: e }));
+    const y = new Float32Array(n); eng.process(y, null, n);
+    renders.push({ name: ENGINES[e].letter + ' · ' + ENGINES[e].name, info: e === P.engine ? 'The chosen engine' : '', y, engine: e });
+  }
+  const pv = phaseVocoder(sample, P.speed, P.pitch, n);
+  let pk = 0; for (const v of pv) pk = Math.max(pk, Math.abs(v)); if (pk > 1) for (let i = 0; i < n; i++) pv[i] /= pk;
+  renders.push({ name: 'Phase vocoder', info: 'Browser only: FFT 2048, hop 512', y: pv });
+  for (const r of renders) r.spec = spectrogram(r.y);
+  $('render-status').textContent = 'Speed ' + P.speed.toFixed(2) + ', pitch ' + (Math.log2(P.pitch) * 12).toFixed(1) + ' st, grain ' + fmtMs(P.grain) + '.';
+  drawRenders();
+}
+// Rows on a log-frequency scale, 60 Hz to 16 kHz, so octaves are equal heights
+const SPEC_LO = 60, SPEC_HI = 16000;
+function spectrogram(y) {
+  const N = 2048, hop = 384, w = hann(N), frames = Math.max(1, Math.floor((y.length - N) / hop)), bins = 160;
+  const img = new Float32Array(frames * bins), re = new Float64Array(N), im = new Float64Array(N), mag = new Float64Array(N / 2);
+  const edges = []; for (let k = 0; k <= bins; k++) edges.push(SPEC_LO * Math.pow(SPEC_HI / SPEC_LO, k / bins) / (RATE / N));
+  for (let f = 0; f < frames; f++) {
+    for (let i = 0; i < N; i++) { re[i] = (y[f * hop + i] || 0) * w[i]; im[i] = 0; }
+    fftInPlace(re, im);
+    for (let k = 0; k < N / 2; k++) mag[k] = Math.hypot(re[k], im[k]) / (N / 4);
+    for (let k = 0; k < bins; k++) {
+      let m = 0; const a = Math.floor(edges[k]), b = Math.max(a + 1, Math.floor(edges[k + 1]));
+      for (let j = a; j < b; j++) m = Math.max(m, mag[j] || 0);
+      img[f * bins + k] = 20 * Math.log10(Math.max(1e-7, m));
+    }
+  }
+  return { img, frames, bins };
+}
+function drawRenders() {
+  const box = $('renders'); box.innerHTML = '';
+  const bg = cssVar('--wave-bg'), acc = cssVar('--accent');
+  const parse = (c) => { const d = document.createElement('div'); d.style.color = c; document.body.appendChild(d); const m = getComputedStyle(d).color.match(/\d+/g).map(Number); d.remove(); return m; };
+  const c0 = parse(bg), c1 = parse(acc), c2 = parse(cssVar('--ink'));
+  renders.forEach((r) => {
+    const d = document.createElement('div'); d.className = 'render';
+    d.innerHTML = `<div class="rname"><span>${r.name}</span><button aria-label="Play ${r.name}">▶</button></div><canvas></canvas><div class="rinfo">${r.info ? r.info + ' · ' : ''}${fmtMs(r.y.length / RATE)}</div>`;
+    d.querySelector('button').addEventListener('click', () => playBuffer(r.y));
+    box.appendChild(d);
+    const cv = d.querySelector('canvas'), { frames, bins, img } = r.spec;
+    cv.width = Math.min(frames, 600); cv.height = bins;
+    const ctx = cv.getContext('2d'), id = ctx.createImageData(cv.width, bins);
+    for (let x = 0; x < cv.width; x++) {
+      const f = Math.floor(x * frames / cv.width);
+      for (let k = 0; k < bins; k++) {
+        const v = Math.pow(clamp((img[f * bins + k] + 70) / 66, 0, 1), 1.6), o = ((bins - 1 - k) * cv.width + x) * 4;
+        const a = v < 0.65 ? v / 0.65 : 1, b = v < 0.65 ? 0 : (v - 0.65) / 0.35;
+        for (let ch = 0; ch < 3; ch++) id.data[o + ch] = c0[ch] + (c1[ch] - c0[ch]) * a + (c2[ch] - c1[ch]) * b;
+        id.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(id, 0, 0);
+  });
+}
+
+// ============================================================================
+// UI: engines, faders, experiments
+// ============================================================================
+function buildUI() {
+  const eb = $('engines');
+  ENGINES.forEach((en, i) => {
+    const b = document.createElement('button'); b.className = 'type';
+    b.innerHTML = `<div class="tname"><b>${en.letter}</b>${en.name}</div><div class="tinfo">${en.short}</div>`;
+    b.addEventListener('click', () => setEngine(i, true));
+    eb.appendChild(b);
+  });
+  const fb = $('faders');
+  FADERS.forEach((f, i) => {
+    const d = document.createElement('div'); d.className = 'fader';
+    d.innerHTML = `<div class="name">${i + 1}</div><div class="fname">${f.name}</div><div class="slot"><input type="range" min="0" max="127" step="1" aria-label="${f.name}"><div class="ghost"></div></div><div class="val"></div>`;
+    const input = d.querySelector('input');
+    input.addEventListener('input', () => userSetValue(i, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(i, DEFAULTS[i]));
+    const hint = () => { $('fader-hint').textContent = f.hint; };
+    d.addEventListener('pointerenter', hint); input.addEventListener('focus', hint);
+    fb.appendChild(d);
+  });
+  const xb = $('experiments');
+  EXPERIMENTS.forEach((x, i) => {
+    const b = document.createElement('button'); b.textContent = x.name; b.dataset.i = i;
+    b.addEventListener('click', () => loadExperiment(i));
+    xb.appendChild(b);
+  });
+}
+function describeFader(i) {
+  const v = state.values[i], P = params();
+  switch (i) {
+    case 0: return Math.round(F.pos(v) * 100) + '%';
+    case 1: return P.engine === 3 ? Math.round(F.density(v)) + '/s' : '×' + F.overlap(v);
+    case 2: return v ? fmtMs(F.spray(v)) : 'off';
+    case 3: return v === 0 ? 'square' : v >= 127 ? 'Hann' : Math.round(F.alpha(v) * 100) + '%';
+    case 4: return v ? '±' + fmtMs(F.search(v)) : 'off';
+    case 5: return v ? '±' + (F.pitchSpray(v) * 12).toFixed(1) + ' st' : 'off';
+    case 6: return F.bits(v) + ' bits';
+    default: return fmtHz(F.srate(v));
+  }
+}
+function refreshUI() {
+  const P = params();
+  [...$('engines').children].forEach((b, i) => b.classList.toggle('on', i === state.engine));
+  $('engine-lesson').innerHTML = ENGINES[state.engine].lesson;
+  [...$('faders').children].forEach((d, i) => {
+    const input = d.querySelector('input'), v = state.values[i];
+    if (document.activeElement !== input || +input.value !== v) input.value = v;
+    d.querySelector('.val').textContent = describeFader(i);
+    d.classList.toggle('dim', !ENGINES[state.engine].uses.includes(i));
+    const ph = mu.phys[i], g = d.querySelector('.ghost'), show = link.muIns.length && ph >= 0 && !mu.engaged[i];
+    g.style.display = show ? 'block' : 'none'; if (show) g.style.top = (140 * (1 - ph / 127)) + 'px';
+  });
+  document.querySelectorAll('#experiments button').forEach(b => b.classList.toggle('on', +b.dataset.i === state.experiment));
+  const sp = P.speed, st = Math.log2(P.pitch) * 12;
+  $('v-speed').textContent = (sp === 0 ? 'stopped' : '×' + sp.toFixed(2) + (sp < 0 ? ' (reverse)' : ''));
+  $('v-pitch').textContent = (st > 0 ? '+' : '') + st.toFixed(1) + ' st' + (P.engine === 0 && st ? ' (also speeds it)' : '');
+  $('v-size').textContent = fmtMs(P.grain);
+  $('v-slow').textContent = Math.round(vis.slow) + '× slower';
+  for (const id of ['in-speed', 'in-pitch', 'in-size']) $(id).disabled = link.cardOnline;
+  $('in-speed').value = state.speed; $('in-pitch').value = state.pitch; $('in-size').value = state.sizeK;
+  const live = link.cardOnline ? ' (live from the card)' : ' (on the card)';
+  $('from-speed').textContent = 'Main knob + Audio In 2' + live;
+  $('from-pitch').textContent = 'X knob + CV In 1' + live;
+  $('from-size').textContent = 'Y knob' + live;
+  const hop = P.grain / P.overlap;
+  const lines = {
+    0: `Varispeed: the output is the sample read at ×${(P.speed * P.pitch).toFixed(2)}. The rungs join moments of output (below) to the moments of sample they come from (above); their slant is the speed.`,
+    1: `A grain every ${fmtMs(hop)} of output, each ${fmtMs(P.grain)} long, taken from the sample every ${fmtMs(hop * Math.abs(P.speed))}${P.speed ? '' : ' (no further on: frozen)'}. Below, the grains are evenly spaced; above, they ${Math.abs(P.speed) < 1 ? 'overlap more: material is repeated' : Math.abs(P.speed) > 1 ? 'are spread apart: material is skipped' : 'line up exactly'}.`,
+    2: `As overlap-add, but each grain may move up to ±${fmtMs(P.search)} (orange ticks) to continue the one before smoothly.`,
+    3: `About ${Math.round(P.density)} grains a second, each ${fmtMs(P.grain)}, scattered ±${fmtMs(P.spray)} around the playhead${P.pitchSpray ? ' and ±' + (P.pitchSpray * 12).toFixed(1) + ' semitones' : ''}: about ${(P.density * P.grain).toFixed(1)} sounding at once.`,
+  };
+  $('diagram-caption').textContent = lines[P.engine] + ' Slowed down ' + Math.round(vis.slow) + ' times.';
+  $('overview-caption').textContent = describeSource()[0].toUpperCase() + describeSource().slice(1) + ', ' + fmtMs(sample.length / RATE) +
+    ' at 48 kHz. Teal: the playhead' + (P.engine === 0 ? ' (the read head)' : '') + ' in slow motion; dashed: Position; coloured: grains playing now' +
+    (link.cardOnline ? '; red: the card’s playhead, in real time' : '') + '. Click to set Position.';
+  $('card-get').disabled = $('card-put').disabled = $('card-rec').disabled = !link.cardOnline || link.sending || !!link.receiving;
+  $('card-rec').textContent = link.cardRec ? 'Stop recording on the card' : 'Record on the card';
+  $('btn-send').disabled = !link.cardOnline;
+}
+
+let renderQueued = false, saveTimer = 0;
+function changed(save = true) {
+  vis.engine.set(params());
+  pushAudio();
+  if (!renderQueued) {
+    renderQueued = true;
+    requestAnimationFrame(() => { renderQueued = false; refreshUI(); updateCrushSpec(); });
+  }
+  if (save) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => store.set('samplelab.last.v1', { values: state.values, engine: state.engine, speed: state.speed, pitch: state.pitch, sizeK: state.sizeK }), 400);
+  }
+}
+
+// ============================================================================
+// Editing
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+const put21 = (v) => [(v >> 14) & 127, (v >> 7) & 127, v & 127];
+const get21 = (p, i) => (p[i] << 14) | (p[i + 1] << 7) | p[i + 2];
+
+function userSetValue(i, v) {
+  v = clamp(v | 0, 0, 127);
+  if (state.values[i] === v) return;
+  state.values[i] = v; state.experiment = -1;
+  mu.engaged[i] = false;
+  queueSend('v' + i, sysex(CMD.SET, [i, v]));
+  changed();
+}
+function setEngine(e, send) {
+  if (state.engine === e) return;
+  state.engine = e;
+  vis.reset();
+  if (send) queueSend('engine', sysex(CMD.ENGINE, [e]));
+  changed();
+}
+function repickup() { for (let i = 0; i < NF; i++) { const ph = mu.phys[i]; mu.engaged[i] = ph >= 0 && Math.abs(ph - state.values[i]) <= 1; } }
+function loadExperiment(i) {
+  const x = EXPERIMENTS[i];
+  state.values = DEFAULTS.slice();
+  for (const [k, v] of Object.entries(x.f)) {
+    if (typeof v === 'number') state.values[k] = v;
+    else { const [fn, arg] = v.split(':'); state.values[k] = clamp(inv[fn](+arg), 0, 127); }
+  }
+  state.engine = x.engine; state.experiment = i;
+  if (!link.cardOnline) { state.speed = x.speed; state.pitch = x.pitch; state.sizeK = kOfSize(x.size); }
+  repickup(); vis.reset();
+  if (link.cardOnline) {
+    sendAll();
+    const knob = (v, lo, hi) => Math.round((v - lo) / (hi - lo) * 100) + '%';
+    say(`On the card, set the knobs: Main (speed ×${x.speed}) to ${knob(x.speed, -2, 2)}, X (pitch ${x.pitch > 0 ? '+' : ''}${x.pitch}) to ${knob(x.pitch, -24, 24)}, Y (grain ${fmtMs(x.size)}) to ${Math.round(kOfSize(x.size) * 100)}%.`);
+  }
+  $('experiment-lesson').hidden = false;
+  $('experiment-lesson').innerHTML = `<p><b>${x.name}.</b> ${x.lesson}</p>`;
+  changed();
+}
+
+// ---- 8mu plugged into this computer -----------------------------------------
+function eightmuFader(i, v) {
+  const last = mu.phys[i], target = state.values[i];
+  mu.phys[i] = v;
+  if (!mu.engaged[i]) {
+    const near = Math.abs(v - target) <= 1, crossed = last >= 0 && ((last < target) !== (v < target));
+    if (!near && !crossed) { changed(false); return; }
+    mu.engaged[i] = true;
+  }
+  if (state.values[i] !== v) { state.values[i] = v; state.experiment = -1; queueSend('v' + i, sysex(CMD.SET, [i, v])); changed(); }
+}
+function eightmuMessage(d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0;
+  if (type === 0xB0) { const cc = d[1]; if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NF) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F); }
+  else if (type === 0x90 && d[2] > 0) { const b = BUTTON_NOTES.indexOf(d[1]); if (b >= 0) setEngine(b, true); }
+}
+function serviceEightmuLeds() {
+  if (!link.muOuts.length) return;
+  const now = performance.now();
+  if (now - mu.lastBlinkOff > 2000) { mu.lastBlinkOff = now; for (const o of link.muOuts) try { o.send(EIGHTMU_BLINK_OFF); } catch (e) {} mu.ledSent.fill(-1); return; }
+  if (now - mu.lastBlinkOff < 60) return;
+  for (let i = 0; i < NF; i++) { const v = (state.values[i] * 9) >> 4; if (v === mu.ledSent[i]) continue; mu.ledSent[i] = v; for (const o of link.muOuts) try { o.send([0x90, i, v]); } catch (e) {} }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /sample\s*lab/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected'), outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+  for (const p of muIns) p.onmidimessage = (ev) => eightmuMessage(ev.data);
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut; link.muIns = muIns; link.muOuts = muOuts;
+  link.cardOnline = !!(cardIn && cardOut); link.sysexBuf = []; link.sysexOn = false;
+  if (!muIns.length) mu.phys.fill(-1);
+  mu.lastBlinkOff = 0;
+  clearInterval(link.pingTimer);
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: Sample Lab card' + (muIns.length ? ' + 8mu' : ''));
+    say('Card connected. Reading its settings and sample…');
+    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));
+  } else if (muIns.length) {
+    setStatus('warn', 'Connected: 8mu only (no card)');
+    say('No “Sample Lab” card found, so this page works on its own. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.', true);
+  }
+  changed(false);
+}
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 160) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3);
+  if (cmd === CMD.STATE) {
+    if (p.length !== 2 + NF + 6) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '.', true); return; }
+    state.engine = clamp(p[1], 0, 3);
+    for (let i = 0; i < NF; i++) state.values[i] = p[2 + i];
+    const len = get21(p, 2 + NF);
+    link.cardLength = len;
+    repickup(); vis.reset();
+    // The card is the source of truth: fetch its sample, unless it's the one just sent
+    if (link.skipFetch) link.skipFetch = false;
+    else if (!link.receiving && len > 0) fetchCardSample();
+    changed(false);
+  } else if (cmd === CMD.STATUS && p.length >= 10) {
+    state.speed = (((p[0] << 7) | p[1]) - 4000) / 1000;
+    state.pitch = (((p[2] << 7) | p[3]) - 4800) / 100;
+    const ms = ((p[4] << 7) | p[5]) / 10; state.sizeK = kOfSize(clamp(ms / 1000, 0.01, 0.5));
+    link.cardHead = get21(p, 6);
+    const rec = !!(p[9] & 1);
+    if (rec !== link.cardRec) { link.cardRec = rec; refreshUI(); }
+    link.lastStatus = performance.now();
+    changed(false);
+  } else if (cmd === CMD.SAMPLE_DATA && link.receiving && p.length >= 5) {
+    const at = get21(p, 0), r = link.receiving;
+    for (let i = 0; 3 + 2 * i + 1 < p.length; i++) { const k = at + i; if (k < r.data.length) { r.data[k] = (((p[3 + 2 * i] << 7) | p[4 + 2 * i]) - 8192) / 8192; r.got++; } }
+    if ((r.got & 4095) < 48) say('Reading the card’s sample… ' + Math.round(100 * r.got / r.data.length) + '%');
+  } else if (cmd === CMD.SAMPLE_END && link.receiving) {
+    const r = link.receiving; link.receiving = null;
+    setSample(r.data, 'card', true);
+    say('Read the card’s sample: ' + fmtMs(r.data.length / RATE) + (r.got < r.data.length ? ' (some was lost on the way)' : '') + '.');
+  }
+}
+function fetchCardSample() {
+  if (!link.cardOnline || !link.cardLength) return;
+  link.receiving = { data: new Float32Array(link.cardLength), got: 0 };
+  sendRaw(sysex(CMD.GET_SAMPLE, []));
+  refreshUI();
+}
+async function sendSampleToCard() {
+  if (!link.cardOnline || link.sending) return;
+  link.sending = true; refreshUI();
+  const n = Math.min(sample.length, CAPACITY);
+  sendRaw(sysex(CMD.SAMPLE_BEGIN, put21(n)));
+  for (let at = 0; at < n; at += CHUNK) {
+    const payload = put21(at);
+    for (let i = 0; i < CHUNK && at + i < n; i++) { const v = clamp(Math.round(sample[at + i] * 8191) + 8192, 0, 16383); payload.push(v >> 7, v & 127); }
+    sendRaw(sysex(CMD.SAMPLE_DATA, payload));
+    if ((at / CHUNK) % 40 === 39) { say('Sending to the card… ' + Math.round(100 * at / n) + '%'); await new Promise(r => setTimeout(r, 8)); }
+  }
+  link.skipFetch = true;
+  sendRaw(sysex(CMD.SAMPLE_END, []));
+  link.sending = false;
+  say('Sent ' + fmtMs(n / RATE) + ' to the card.');
+  refreshUI();
+}
+function sendAll() {
+  if (!link.cardOnline) return;
+  sendRaw(sysex(CMD.SET_ALL, [PROTOCOL_VERSION, ...state.values, state.engine]));
+}
+
+// ============================================================================
+// Listening in the browser
+// ============================================================================
+const WORKLET = document.getElementById('engine-src').textContent + `
+class SampleLabProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.e = new SampleEngine(sampleRate);
+    this.port.onmessage = (ev) => {
+      const d = ev.data;
+      if (d.buffer) this.e.setBuffer(d.buffer);
+      if (d.params) this.e.set(d.params);
+      if (d.restart) this.e.restart();
+    };
+  }
+  process(inputs, outputs) {
+    const o = outputs[0], L = o[0], R = o[1] || null;
+    this.e.process(L, R, L.length);
+    for (let i = 0; i < L.length; i++) { L[i] *= 0.7; if (R) R[i] = this.ref ? R[i] * 0.7 : L[i]; }
+    return true;
+  }
+}
+registerProcessor('sample-lab', SampleLabProcessor);
+`;
+const audio = { ctx: null, node: null, on: false };
+async function ensureCtx() {
+  if (!audio.ctx) audio.ctx = new AudioContext();
+  if (audio.ctx.state !== 'running') await audio.ctx.resume();
+  return audio.ctx;
+}
+async function toggleListen() {
+  if (audio.on) { audio.on = false; audio.node.disconnect(); $('btn-listen').classList.remove('on'); $('btn-listen').textContent = 'Listen in the browser'; return; }
+  try {
+    const ctx = await ensureCtx();
+    if (!audio.node) {
+      await ctx.audioWorklet.addModule('data:application/javascript;charset=utf-8,' + encodeURIComponent(WORKLET));
+      audio.node = new AudioWorkletNode(ctx, 'sample-lab', { outputChannelCount: [2] });
+    }
+    audio.node.port.postMessage({ buffer: sample, params: params(), restart: true });
+    audio.node.connect(ctx.destination);
+    audio.on = true; $('btn-listen').classList.add('on'); $('btn-listen').textContent = 'Stop listening';
+  } catch (e) { say('Could not start audio in this browser: ' + (e && e.message || e), true); }
+}
+function pushAudio() { if (audio.node) audio.node.port.postMessage({ params: params() }); }
+let playing = null;
+async function playBuffer(y) {
+  const ctx = await ensureCtx();
+  if (playing) try { playing.stop(); } catch (e) {}
+  const b = ctx.createBuffer(1, y.length, RATE); b.copyToChannel(y, 0);
+  playing = ctx.createBufferSource(); playing.buffer = b; playing.connect(ctx.destination); playing.start();
+}
+function restart() {
+  vis.engine.restart(); vis.reset();
+  if (audio.node) audio.node.port.postMessage({ restart: true });
+  if (link.cardOnline) sendRaw(sysex(CMD.RESTART, []));
+}
+
+// ============================================================================
+// Animation and start
+// ============================================================================
+let lastT = 0;
+function frame(now) {
+  const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
+  vis.advance(dt);
+  drawOverview(); drawDiagram(); drawCrush();
+  serviceEightmuLeds();
+  if (link.cardOnline && link.lastStatus && now - link.lastStatus > 3000) {
+    link.lastStatus = 0;
+    say('The card has stopped answering. Is it still plugged in, and was it power-cycled after plugging this computer in?', true);
+  }
+  requestAnimationFrame(frame);
+}
+function init() {
+  const last = store.get('samplelab.last.v1', null);
+  if (last && Array.isArray(last.values) && last.values.length === NF && last.values.every(v => Number.isInteger(v) && v >= 0 && v <= 127)) {
+    state.values = last.values;
+    if (Number.isInteger(last.engine)) state.engine = clamp(last.engine, 0, 3);
+    if (typeof last.speed === 'number') state.speed = clamp(last.speed, -2, 2);
+    if (typeof last.pitch === 'number') state.pitch = clamp(last.pitch, -24, 24);
+    if (typeof last.sizeK === 'number') state.sizeK = clamp(last.sizeK, 0, 1);
+  }
+  buildUI();
+  vis.slow = Math.pow(10, +$('in-slow').value);
+  setSample(buildDemo(), 'demo', true);
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', connect);
+  $('btn-listen').addEventListener('click', toggleListen);
+  $('btn-restart').addEventListener('click', restart);
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent the faders and engine to the card.'); });
+  $('btn-render').addEventListener('click', renderAll);
+  $('src-demo').addEventListener('click', () => { setSample(buildDemo(), 'demo'); if (link.cardOnline) { link.skipFetch = false; sendRaw(sysex(CMD.DEMO, [])); } });
+  $('src-file').addEventListener('click', () => $('file-in').click());
+  $('file-in').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
+  $('src-mic').addEventListener('click', recordMic);
+  $('src-save').addEventListener('click', saveWav);
+  $('card-get').addEventListener('click', fetchCardSample);
+  $('card-put').addEventListener('click', sendSampleToCard);
+  $('card-rec').addEventListener('click', () => { sendRaw(sysex(CMD.RECORD, [link.cardRec ? 0 : 1])); say(link.cardRec ? 'Stopped recording.' : 'Recording Audio In 1 on the card, for up to 2 seconds…'); });
+  $('in-speed').addEventListener('input', (e) => { state.speed = +e.target.value; state.experiment = -1; changed(); });
+  $('in-pitch').addEventListener('input', (e) => { state.pitch = +e.target.value; state.experiment = -1; changed(); });
+  $('in-size').addEventListener('input', (e) => { state.sizeK = +e.target.value; state.experiment = -1; changed(); });
+  $('in-slow').addEventListener('input', (e) => { vis.slow = Math.pow(10, +e.target.value); changed(false); });
+  $('in-paused').addEventListener('change', (e) => { vis.paused = e.target.checked; });
+  $('in-ref').addEventListener('change', (e) => { vis.showRef = e.target.checked; });
+  $('overview').addEventListener('click', (e) => {
+    const r = $('overview').getBoundingClientRect();
+    userSetValue(0, Math.round(clamp((e.clientX - r.left - 6) / (r.width - 12), 0, 1) * 127));
+  });
+  window.addEventListener('resize', () => changed(false));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { drawRenders(); changed(false); });
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. Everything else here works.');
+  else say('Press “Connect card & 8mu” to reach the card. Until then this page works on its own: try “Listen in the browser”, and the experiments.');
+  changed(false);
+  requestAnimationFrame(frame);
+}
+init();
+</script>
+</body>
+</html>
