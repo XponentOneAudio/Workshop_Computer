@@ -63,6 +63,7 @@
   #msg.err { color: var(--bad); }
   main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 380px; }
   @media (max-width: 1060px) { main { grid-template-columns: minmax(0, 1fr); } }
+  main[hidden] { display: none; }
   .col { display: grid; gap: 16px; align-content: start; min-width: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
   canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
@@ -115,6 +116,29 @@
   .links::before { content: 'Read more:'; color: var(--muted); }
   details { margin-top: 10px; }
   details summary { cursor: pointer; color: var(--muted); }
+  nav.modes { display: flex; gap: 3px; background: var(--track); padding: 3px; border-radius: 8px; }
+  nav.modes button { border: none; background: transparent; padding: 5px 14px; }
+  nav.modes button.on { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+  .lesson { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--wave-bg); border-radius: 0 6px 6px 0; }
+  .lesson p { margin: 0 0 6px; } .lesson p:last-child { margin: 0; }
+  #fm-hero { height: 480px; }
+  #fm-spectrum { height: 210px; }
+  #fm-bessel { height: 190px; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-top: 10px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 14px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 760px) { .types { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .type { text-align: left; padding: 8px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .type.on { border-color: var(--accent); background: var(--accent-soft); }
+  .type .tname { font-weight: 600; font-size: 13px; }
+  .type .tname b { display: inline-block; width: 1.4em; text-align: center; margin-right: 5px; border-radius: 4px; background: var(--track); }
+  .type.on .tname b { background: var(--accent); color: var(--panel); }
+  .type canvas.tw { height: 56px; } .type canvas.ts { height: 42px; }
+  .type .tinfo { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .formula.small { font-size: 12px; padding: 3px 6px; margin: 0; white-space: normal; }
+  .fader .fname { font-size: 11px; color: var(--muted); text-align: center; min-height: 1.4em; overflow-wrap: anywhere; line-height: 1.2; }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
   table.jacks { border-collapse: collapse; width: 100%; font-size: 12px; }
   table.jacks td { border-top: 1px solid var(--line); padding: 4px 6px 4px 0; vertical-align: top; }
@@ -124,6 +148,10 @@
 <body>
 <header>
   <h1>Nested Circles</h1>
+  <nav class="modes" aria-label="Synthesis type">
+    <button id="mode-0" class="on">Additive</button>
+    <button id="mode-1">FM</button>
+  </nav>
   <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
   <div class="spacer"></div>
   <button id="btn-listen">Listen in the browser</button>
@@ -135,7 +163,7 @@
 </header>
 <div id="msg"></div>
 
-<main>
+<main id="page-add" class="page">
   <div class="col">
     <section class="card">
       <h2>Circles on circles</h2>
@@ -168,7 +196,7 @@
       <div class="faders" id="faders"></div>
       <div class="caption" id="page-hint"></div>
       <div class="shapes" id="shapes"><span class="k">Shape (button D)</span></div>
-      <div id="shape-lesson"></div>
+      <div id="shape-lesson" class="lesson"></div>
     </section>
 
     <section class="card">
@@ -301,8 +329,9 @@
     </section>
 
     <section class="card">
-      <h2>The card</h2>
+      <h2>The card in additive mode</h2>
       <table class="jacks">
+        <tr><td>Swap mode</td><td>Hold the switch down for a second, or hold the 8mu's D</td></tr>
         <tr><td>Main knob</td><td>Pitch, C1 to C7</td></tr>
         <tr><td>X knob</td><td>Partials: how many circles turn, 1 to 8, each fading in</td></tr>
         <tr><td>Y knob</td><td>Stretch, 0 to 0.5 (switch in the middle)</td></tr>
@@ -337,6 +366,214 @@
   </aside>
 </main>
 
+<main id="page-fm" class="page" hidden>
+  <div class="col">
+    <section class="card">
+      <h2>Two operators</h2>
+      <canvas id="fm-hero" aria-label="The modulator and carrier as turning circles, with the modulator, the carrier's frequency and the output drawn over time"></canvas>
+      <div class="caption" id="fm-caption"></div>
+      <div class="controls">
+        <div class="ctl"><div class="k">Pitch <span id="fv-pitch"></span></div>
+          <input id="fm-pitch" type="range" min="24" max="96" step="0.01" value="48">
+          <div class="from" id="ffrom-pitch">Main knob + CV In 1</div></div>
+        <div class="ctl"><div class="k">Depth from knob <span id="fv-knob"></span></div>
+          <input id="fm-knob" type="range" min="0" max="10" step="0.01" value="0">
+          <div class="from" id="ffrom-knob">X knob + CV In 2, added to fader 4</div></div>
+        <div class="ctl"><div class="k">Ratio steps <span id="fv-steps"></span></div>
+          <input id="fm-steps" type="range" min="0" max="12" step="1" value="0">
+          <div class="from" id="ffrom-steps">Y knob, added to fader 2</div></div>
+        <div class="ctl"><div class="k">Animation <span id="fv-speed"></span></div>
+          <input id="fm-speed" type="range" min="2" max="30" step="0.5" value="8">
+          <div class="from">Slow motion: page only</div></div>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="fm-drone" checked> Drone <span class="caption" style="margin:0">(switch up: envelope held at its peak)</span></label>
+        <label><input type="checkbox" id="fm-paused"> Pause</label>
+        <button id="fm-trigger">Trigger <kbd>Space</kbd></button>
+      </div>
+      <div class="readouts" id="fm-readouts"></div>
+    </section>
+
+    <section class="card">
+      <h2>Four ways to bend a sine</h2>
+      <div class="types" id="fm-types"></div>
+      <div class="caption">The same carrier, modulator and depth, made each of the four ways, as the card would. Click one to hear and
+        edit it (or press the 8mu's A–D, or tap the switch down). <i>Average pitch</i> is how far the carrier's average frequency
+        has moved: zero means it stays in tune.</div>
+      <div class="lesson" id="fm-type-lesson"></div>
+    </section>
+
+    <section class="card">
+      <h2>Faders</h2>
+      <div class="faders" id="fm-faders"></div>
+      <div class="caption" id="fm-hint">Point at a fader to see what it does.</div>
+      <div class="shapes" id="fm-examples"><span class="k">Examples (Pulse In 2)</span></div>
+      <div class="lesson" id="fm-lesson"></div>
+    </section>
+
+    <section class="card">
+      <h2>Spectrum</h2>
+      <canvas id="fm-spectrum" aria-label="Spectrum of the output, in decibels"></canvas>
+      <div class="caption">What the output is made of, measured from 8192 samples of it, in decibels (0 dB is a full-level sine).
+        Faint lines are the harmonics of the pitch. The dots are what the Bessel functions predict for each sideband,
+        J<sub>k</sub>(β) at f<sub>c</sub> + k·f<sub>m</sub>; hollow dots are sidebands below 0 Hz, folded back up. Where
+        sidebands land on top of each other they add or cancel, so the measured peaks can differ from the dots.
+        The prediction is exact for through-zero FM and phase modulation without feedback, and for linear FM up to depth 1;
+        exponential FM doesn't follow it.</div>
+    </section>
+
+    <section class="card">
+      <h2>Bessel functions</h2>
+      <canvas id="fm-bessel" aria-label="Bessel functions J0 to J5 against the modulation index"></canvas>
+      <div class="caption">How loud each sideband pair is as the index β grows. J<sub>0</sub> is the carrier: at β ≈ 2.4 it
+        vanishes completely, leaving only sidebands. Each higher pair waits longer before rising, which is why more depth means more
+        brightness. The vertical line is the current β.
+        <a href="https://en.wikipedia.org/wiki/Bessel_function" target="_blank" rel="noopener">Bessel function</a></div>
+    </section>
+  </div>
+
+  <aside class="col">
+    <section class="card learn">
+      <h2>What FM is</h2>
+      <p>Take two sine-wave oscillators. One, the <b>carrier</b>, is what you hear. The other, the <b>modulator</b>, is wired to
+        bend the carrier: to push its frequency up and down. In the circles above, the modulator's height decides how fast the
+        carrier's point turns.</p>
+      <p>Slowly, that's <b>vibrato</b>: you hear the pitch wobble. Speed the modulator up into the audio range and the ear can't
+        follow the wobble any more. You hear a new <b>timbre</b> instead: the carrier has grown <b>sidebands</b>, new frequencies at
+        the carrier plus and minus whole multiples of the modulator:</p>
+      <div class="formula">y(t) = Σ<sub>k</sub> J<sub>k</sub>(β) · sin(2π (f<sub>c</sub> + k f<sub>m</sub>) t)</div>
+      <p>Two sine waves, and a whole spectrum. That economy is why FM ran the best-selling digital synths of the 1980s.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Frequency_modulation_synthesis" target="_blank" rel="noopener">FM synthesis</a>
+        <a href="https://en.wikipedia.org/wiki/Frequency_modulation" target="_blank" rel="noopener">Frequency modulation</a>
+        <a href="https://en.wikipedia.org/wiki/Sideband" target="_blank" rel="noopener">Sideband</a>
+        <a href="https://en.wikipedia.org/wiki/Vibrato" target="_blank" rel="noopener">Vibrato</a>
+      </div>
+
+      <h3>Chowning and the DX7</h3>
+      <p>FM had carried radio broadcasts since the 1930s. In 1967, at Stanford, the composer
+        <a href="https://en.wikipedia.org/wiki/John_Chowning" target="_blank" rel="noopener">John Chowning</a> noticed that
+        vibrato pushed fast and deep enough turned into new timbres, and worked out how to control them. His 1973 paper,
+        <i>The Synthesis of Complex Audio Spectra by Means of Frequency Modulation</i>, was licensed by Stanford to Yamaha, which
+        released the <b>DX7</b> in 1983, with six sine-wave operators per voice. Its electric pianos, bells and basses are all over
+        the decade's records.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Yamaha_DX7" target="_blank" rel="noopener">Yamaha DX7</a>
+        <a href="https://en.wikipedia.org/wiki/Center_for_Computer_Research_in_Music_and_Acoustics" target="_blank" rel="noopener">CCRMA</a>
+      </div>
+
+      <h3>Index, Bessel functions and bandwidth</h3>
+      <p>How bright FM sounds depends on the <b>modulation index</b>, β: how far the carrier's frequency swings (the deviation,
+        Δf), measured in units of the modulator's frequency: β = Δf / f<sub>m</sub>. The sideband levels are given exactly by
+        <b>Bessel functions</b> of β, J<sub>k</sub>(β): at small β only the first pair is there; as β grows, energy spreads to
+        further sidebands, and the carrier itself fades and even disappears (at β ≈ 2.405). A useful rule of thumb,
+        <b>Carson's rule</b>, says nearly all the energy lies within f<sub>c</sub> ± (Δf + f<sub>m</sub>).</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Bessel_function" target="_blank" rel="noopener">Bessel function</a>
+        <a href="https://en.wikipedia.org/wiki/Jacobi%E2%80%93Anger_expansion" target="_blank" rel="noopener">Jacobi–Anger expansion</a>
+        <a href="https://en.wikipedia.org/wiki/Carson_bandwidth_rule" target="_blank" rel="noopener">Carson's rule</a>
+      </div>
+
+      <h3>Ratios: harmonic or bell-like</h3>
+      <p>The sidebands sit at f<sub>c</sub> ± k·f<sub>m</sub>, so the ratio between carrier and modulator, the
+        <b>C:M ratio</b>, decides whether they line up into a harmonic series. When it's a ratio of small whole numbers the sound is
+        pitched: 1:1 gives every harmonic, 1:2 the odd ones only (sidebands at 1, 3, 5…). When it isn't, as with √2, the sidebands
+        share no fundamental and the sound is <b>inharmonic</b>: metallic, bell-like, clangorous. Sidebands that would fall below
+        0 Hz fold back up, phase inverted, landing among the others.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Harmonic_series_(music)" target="_blank" rel="noopener">Harmonic series</a>
+        <a href="https://en.wikipedia.org/wiki/Inharmonicity" target="_blank" rel="noopener">Inharmonicity</a>
+      </div>
+
+      <h3>Linear or exponential</h3>
+      <p>An analog oscillator has two kinds of FM input. The usual one is <b>exponential</b>, 1V/oct: the modulator moves the
+        <i>pitch</i>, so each volt up doubles the frequency and each volt down halves it. Doubling adds more hertz than halving
+        takes away, so as depth grows the average frequency climbs and the note goes sharp, by a different amount at every depth.
+        That's fine for vibrato, but makes stable FM timbres hard. A <b>linear</b> input adds the modulator to the
+        <i>frequency</i> itself, in hertz, equally up and down, so the average stays put and the note stays in tune.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Voltage-controlled_oscillator" target="_blank" rel="noopener">VCO</a>
+        <a href="https://en.wikipedia.org/wiki/CV/gate" target="_blank" rel="noopener">CV/gate (1V/oct)</a>
+      </div>
+
+      <h3>Through zero</h3>
+      <p>Linear FM has a limit. Once the deviation is bigger than the carrier's own frequency (depth above 1 here), the frequency
+        would have to go below zero. An ordinary oscillator can't, so it stops at 0 Hz for part of every cycle: the swing is
+        clipped, the average rises again and the tuning goes. A <b>through-zero</b> oscillator carries on into negative frequency:
+        it runs backwards. Watch the middle trace go below the 0 Hz line, and the carrier's point turn backwards on its circle.
+        It stays in tune at any depth, and its spectrum matches the Bessel prediction exactly.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Negative_frequency" target="_blank" rel="noopener">Negative frequency</a>
+        <a href="https://en.wikipedia.org/wiki/Instantaneous_phase_and_frequency" target="_blank" rel="noopener">Instantaneous frequency</a>
+      </div>
+
+      <h3>Phase modulation</h3>
+      <p><b>Phase modulation</b> adds the modulator to the carrier's <i>phase</i> rather than its frequency. Frequency is how fast
+        phase changes, so PM by a sine is FM by its slope, a cosine: the same sidebands, a quarter turn shifted. The differences
+        are practical. In FM the depth sets the deviation, so raising the modulator's frequency lowers the index and darkens the
+        sound; in PM the depth <i>is</i> the index, so the brightness holds as you change ratio or play up the keyboard. And a
+        steady offset in the modulator (from feedback, or from Audio In 1) detunes FM, but only shifts PM's phase, so PM stays in
+        tune. That's why Yamaha's "FM" synthesizers, the DX7 included, actually use phase modulation.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Phase_modulation" target="_blank" rel="noopener">Phase modulation</a>
+        <a href="https://en.wikipedia.org/wiki/Derivative" target="_blank" rel="noopener">Derivative</a>
+      </div>
+
+      <h3>Feedback and the ceiling</h3>
+      <p>An operator can modulate its own phase: <b>feedback</b>. A little bends the modulator's sine towards a sawtooth; a lot
+        tips it into noise. And because deep FM spreads sidebands so widely, it reaches the
+        <b>Nyquist frequency</b> (24 kHz on the card) easily; sidebands beyond it fold back as <b>aliasing</b>. High notes with
+        high depth get gritty for that reason.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Aliasing" target="_blank" rel="noopener">Aliasing</a>
+        <a href="https://en.wikipedia.org/wiki/Nyquist_frequency" target="_blank" rel="noopener">Nyquist frequency</a>
+      </div>
+    </section>
+
+    <section class="card learn">
+      <h2>Things to try</h2>
+      <ol>
+        <li><b>From vibrato to timbre.</b> Load <i>Vibrato</i>, then slowly raise the Modulator fader. The wobble speeds up, turns
+          rough, then becomes a steady new tone.</li>
+        <li><b>Grow the sidebands.</b> On <i>Deep 1:1</i>, choose D (phase) and bring Depth down to 0, then up. Watch the spectrum
+          fill out, and the carrier (the first dot) dip to nothing near β = 2.4.</li>
+        <li><b>Linear against through-zero.</b> Still on <i>Deep 1:1</i>, flip between A and C. Below depth 1 they match; above it,
+          the middle trace of A flattens at 0 Hz while C dips below, and A's average pitch drifts.</li>
+        <li><b>Exponential goes sharp.</b> Choose B and raise depth: the average pitch readout climbs, and the spectrum's peaks
+          slide off the harmonic lines.</li>
+        <li><b>FM against PM.</b> With C or D, raise the Modulator ratio a few steps. Through-zero gets duller (the same deviation
+          is a smaller index); phase keeps its brightness.</li>
+        <li><b>Odd harmonics.</b> Load <i>Clarinet</i>: the spectrum has only the odd harmonics. Nudge Modulator fine and they
+          split into a beating, inharmonic cluster.</li>
+        <li><b>Struck sounds.</b> Untick Drone (switch to the middle), load <i>Electric piano</i> or <i>Bell</i> and press Trigger.
+          The brightness falls faster than the level, as it does on real struck objects.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>The card in FM mode</h2>
+      <table class="jacks">
+        <tr><td>Swap mode</td><td>Hold the switch down for a second, or hold the 8mu's D</td></tr>
+        <tr><td>8mu A–D</td><td>FM type: linear, exponential, through-zero, phase</td></tr>
+        <tr><td>Main knob</td><td>Pitch, C1 to C7</td></tr>
+        <tr><td>X knob</td><td>Depth, added to fader 4</td></tr>
+        <tr><td>Y knob</td><td>Modulator ratio, up to 12 steps up from fader 2</td></tr>
+        <tr><td>Switch</td><td>Up: drone. Middle: envelope. Down (tap): next FM type</td></tr>
+        <tr><td>CV In 1</td><td>Pitch, 1V/oct</td></tr>
+        <tr><td>CV In 2</td><td>Depth, added to X</td></tr>
+        <tr><td>Audio In 1</td><td>External modulator, added to the modulator</td></tr>
+        <tr><td>Pulse In 1</td><td>Trigger the envelope, both operators from 0</td></tr>
+        <tr><td>Pulse In 2</td><td>Next example</td></tr>
+        <tr><td>Audio Out 1</td><td>The carrier, modulated</td></tr>
+        <tr><td>Audio Out 2</td><td>The modulator</td></tr>
+        <tr><td>CV Out 1</td><td>Pitch, 1V/oct, 0V at middle C</td></tr>
+        <tr><td>Pulse Out 1</td><td>Square at the pitch</td></tr>
+        <tr><td>LEDs</td><td>1–4 the FM type, 5 the envelope, 6 an 8mu or this page</td></tr>
+      </table>
+    </section>
+  </aside>
+</main>
+
 <script>
 'use strict';
 
@@ -345,8 +582,9 @@
 // ============================================================================
 const NP = 8;                                   // partials
 const PAGES = 3;
-const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x4E, PROTOCOL_VERSION = 1;
-const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, SHAPE: 6, STATUS: 7, PING: 9, SYNC: 10 };
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x4E, PROTOCOL_VERSION = 2;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, SHAPE: 6, STATUS: 7, PING: 9, SYNC: 10,
+              MODE: 11, FM_TYPE: 12, EXAMPLE: 13 };
 const FIRST_FADER_CC = 34;
 const BUTTON_NOTES = [36, 48, 60, 72];
 const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
@@ -398,11 +636,591 @@ const SHAPES = [
 ];
 
 // ============================================================================
+// FM: constants mirroring the firmware (kCarRatios, kModRatios, kExamples)
+// ============================================================================
+const CAR_RATIOS = [0.5, 1, 2, 3, 4, 5, 6, 7, 8];
+const MOD_RATIOS = [-2, -6, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16]; // below 0: fixed, in -Hz
+const FM_PAGE = 3;
+const FM_DEFAULT = [21, 32, 64, 0, 0, 64, 0, 0];
+const FM_TYPES = [
+  { name: 'Linear FM', letter: 'A', to: 'frequency',
+    formula: 'f(t) = f<sub>c</sub> · (1 + D·m(t)), never below 0 Hz',
+    lesson: `<p><b>A · Linear FM.</b> The modulator is added to the carrier's <i>frequency</i>, in hertz, as with an ordinary
+      analog oscillator's linear FM input. Up to depth 1 the frequency swings between 0 and twice the carrier, evenly either side,
+      so it stays in tune. Beyond that it would have to go below 0 Hz; it can't, so it waits at 0 Hz (the flat stretches in the
+      middle trace), the swing is lopsided, the average rises and the tuning goes.</p>
+      <p>${L('Frequency_modulation', 'Frequency modulation')} · ${L('Voltage-controlled_oscillator', 'VCO')}</p>` },
+  { name: 'Exponential FM', letter: 'B', to: 'pitch',
+    formula: 'f(t) = f<sub>c</sub> · 2<sup>0.4·D·m(t)</sup>',
+    lesson: `<p><b>B · Exponential FM.</b> The modulator is added to the carrier's <i>pitch</i>, in octaves (0.4 octave per unit
+      of depth), like an LFO into a 1V/oct input. An octave up doubles the frequency but an octave down only halves it, so the
+      frequency trace is taller above f<sub>c</sub> than below, its average climbs, and the sound goes sharp, by more as the depth
+      rises. Musical for vibrato, awkward for stable timbres.</p>
+      <p>${L('CV/gate', 'CV/gate (1V/oct)')} · ${L('Voltage-controlled_oscillator', 'VCO')}</p>` },
+  { name: 'Through-zero FM', letter: 'C', to: 'frequency',
+    formula: 'f(t) = f<sub>c</sub> · (1 + D·m(t)), any sign',
+    lesson: `<p><b>C · Through-zero FM.</b> Linear, but allowed below 0 Hz: there the oscillator runs <i>backwards</i>, and its
+      point turns the other way round its circle. The swing stays even, the average stays at f<sub>c</sub>, and it stays in tune at
+      any depth. The index is β = Δf / f<sub>m</sub> with Δf = D·f<sub>c</sub>, so the spectrum matches the Bessel dots exactly.</p>
+      <p>${L('Negative_frequency', 'Negative frequency')} · ${L('Instantaneous_phase_and_frequency', 'Instantaneous frequency')}</p>` },
+  { name: 'Phase modulation', letter: 'D', to: 'phase',
+    formula: 'φ(t) = 2π f<sub>c</sub> t + D·m(t)',
+    lesson: `<p><b>D · Phase modulation.</b> The modulator is added to the carrier's <i>phase</i>, D radians at full swing, so its
+      point is pushed ahead and held back round its circle (the faint point shows where it would be unmodulated). Its frequency,
+      the middle trace, follows the modulator's slope rather than its height, so it's a quarter turn ahead. With sine waves the
+      sidebands are those of through-zero FM, but the depth is the index directly, so the brightness doesn't change with ratio,
+      and feedback or Audio In 1 can't knock it out of tune. Yamaha's "FM" is this.</p>
+      <p>${L('Phase_modulation', 'Phase modulation')} · ${L('Yamaha_DX7', 'Yamaha DX7')}</p>` },
+];
+const FM_FADERS = [
+  { name: 'Carrier', hint: 'Fader 1, carrier ratio: the carrier at 0.5, 1, 2 … 8 times the pitch.' },
+  { name: 'Modulator', hint: 'Fader 2, modulator ratio: 2 Hz and 6 Hz (fixed, for vibrato), then 0.25 to 16 times the pitch. The Y knob adds up to 12 steps.' },
+  { name: 'Fine', hint: 'Fader 3, modulator fine: up to a semitone either way. The middle three steps are exact; off them, a whole-number ratio stops being one.' },
+  { name: 'Depth', hint: 'Fader 4, depth: 0 to 10, squared law, plus the X knob. For FM it sets the deviation (depth 1 swings from 0 Hz to twice the carrier); for phase modulation it is the index, in radians.' },
+  { name: 'Feedback', hint: 'Fader 5, feedback: the modulator modulating its own phase, 0 to 2 radians. Bends it towards a sawtooth, then noise.' },
+  { name: 'Decay', hint: 'Fader 6, decay: how quickly the envelope falls after a trigger, 20 ms to 8 s (switch in the middle; Pulse In 1 triggers).' },
+  { name: 'Env→depth', hint: 'Fader 7, envelope to depth: added to the depth at the envelope’s peak, falling with it. A bright attack mellowing as it fades.' },
+  { name: 'Env→level', hint: 'Fader 8, envelope to level: 0, the level stays put; at the top, the level follows the envelope too.' },
+];
+const EXAMPLES = [
+  { name: 'Vibrato', v: [21, 9, 64, 20, 0, 64, 0, 0], type: 1,
+    lesson: `<p><b>Vibrato.</b> A modulator at just 6 Hz, exponential, as an LFO into 1V/oct would be: slow FM is
+      ${L('Vibrato', 'vibrato')}, and you hear the pitch wobble rather than a new sound. Raise the Modulator fader. Somewhere
+      around 15–20 Hz the wobble blurs into a rough buzz, and from about 30 Hz up it becomes a steady new tone colour: sidebands.
+      That's the bridge from vibrato to FM synthesis, and how Chowning found it.</p>` },
+  { name: 'Clarinet', v: [21, 44, 64, 51, 0, 64, 0, 0], type: 3,
+    lesson: `<p><b>Clarinet.</b> Modulator at twice the carrier, 1:2. The sidebands land at 1, 3, 5, 7… times the carrier (those
+      below 0 Hz fold onto the same odd places), so there are odd harmonics only: hollow, like a ${L('Clarinet', 'clarinet')} or a
+      square wave. Depth sets how far up the odd harmonics reach.</p>` },
+  { name: 'Electric piano', v: [21, 32, 64, 31, 0, 91, 70, 127], type: 3,
+    lesson: `<p><b>Electric piano.</b> 1:1, so every harmonic. The envelope adds a lot of depth at the strike and lets it fall, so
+      the attack is bright and the tone mellows to almost a sine as it dies away, as a real struck tine does. Untick Drone and press
+      Trigger (on the card: switch in the middle, pulses into Pulse In 1). The ${L('Yamaha_DX7', 'DX7')}'s electric pianos were
+      built on this, with more operators.</p>` },
+  { name: 'Bell', v: [21, 38, 1, 0, 0, 112, 90, 127], type: 3,
+    lesson: `<p><b>Bell.</b> Modulator at 1.5 brought down a semitone: 1.414, about √2. That ratio is irrational, so the sidebands
+      at 1 ± 1.414·k times the carrier share no fundamental: the sound is ${L('Inharmonicity', 'inharmonic')}, metallic, a
+      ${L('Bell_(instrument)', 'bell')}. Chowning's own bells used non-integer ratios like this. Untick Drone and press Trigger:
+      the long decay lets the clang fade to a purer hum.</p>` },
+  { name: 'Feedback', v: [21, 32, 64, 40, 76, 64, 0, 0], type: 3,
+    lesson: `<p><b>Feedback.</b> The modulator also modulates its own phase. Watch the top trace (Audio Out 2): its sine leans over
+      towards a sawtooth, so the modulator itself now has harmonics, and the carrier's spectrum fills in. Push fader 5 higher and it
+      breaks into noise. The DX7 had one feedback loop like this in each of its algorithms.</p>` },
+  { name: 'Deep 1:1', v: [21, 32, 64, 64, 0, 64, 0, 0], type: 0,
+    lesson: `<p><b>Deep 1:1.</b> Depth 2.5, past the point where linear FM's frequency would need to go below zero. Compare the four
+      panels above, or switch between A, B, C and D: linear sticks at 0 Hz and goes sharp; exponential goes sharper still;
+      through-zero and phase modulation stay in tune, with the same spectrum.</p>` },
+];
+
+const depthOf = (v) => 10 * (v / 127) * (v / 127);
+const decayOf = (v) => 0.02 * Math.pow(400, v / 127);
+
+// Everything about the two operators right now, as NestedCircles::FMControl
+function fmModel() {
+  const f = state.values[FM_PAGE];
+  const cr = CAR_RATIOS[Math.floor(f[0] * CAR_RATIOS.length / 128)];
+  const miBase = Math.floor(f[1] * MOD_RATIOS.length / 128);
+  const mi = Math.min(MOD_RATIOS.length - 1, miBase + state.fmSteps), mr = MOD_RATIOS[mi];
+  const f0 = hz(state.note), fc = f0 * cr;
+  const fixed = mr < 0;
+  const fm = (fixed ? -mr : f0 * mr) * Math.pow(2, freqOffset(f[2]) / 12);
+  const env = state.fmDrone ? 1 : fmEnv.value;
+  const depthBase = clamp(depthOf(f[3]) + state.fmKnob, 0, 16);
+  const depth = Math.min(16, depthBase + depthOf(f[6]) * env);
+  const lvlEnv = f[7] / 127;
+  const type = state.fmType;
+  const P = { f0, fc, fm, cr, mr, mi, fixed, depth, depthBase, depthEnv: depthOf(f[6]), env, type,
+              fb: f[4] / 127 * 2, decay: decayOf(f[5]), lvlEnv, level: 1 - lvlEnv + lvlEnv * env };
+  P.beta = betaFor(P, type);
+  P.dev = type === 3 ? P.depth * fm : P.depth * fc;        // peak deviation, Hz (exponential: see expDev)
+  P.expUp = fc * (Math.pow(2, 0.4 * P.depth) - 1); P.expDown = fc * (1 - Math.pow(2, -0.4 * P.depth));
+  P.harm = harmonicity(fc, fm, fixed);
+  return P;
+}
+function betaFor(P, type) { return type === 3 ? P.depth : type === 1 ? 0.4 * Math.LN2 * P.depth * P.fc / P.fm : P.depth * P.fc / P.fm; }
+// Is fm/fc a ratio of small whole numbers?  If so, the sound is pitched at fc/q
+function harmonicity(fc, fm, fixed) {
+  if (fixed) return null;
+  const r = fm / fc;
+  for (let q = 1; q <= 12; q++) {
+    const p = Math.round(r * q);
+    if (p > 0 && Math.abs(r * q - p) < 1e-6) {
+      const g = gcd(p, q);
+      return { p: p / g, q: q / g, f: fc / (q / g) };
+    }
+  }
+  return null;
+}
+function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+
+// One run of the card's FM, in floating point, as NestedCircles::FMSample.
+// st carries the oscillators between calls; out gets the modulator, the
+// carrier's instantaneous frequency and the output.
+function fmState() { return { phc: 0, phm: 0, phu: 0, m1: 0, m2: 0, prevM: 0 }; }
+function simFM(P, type, rate, n, st, out, offset = 0, ring = 0) {
+  const TAU = 2 * Math.PI, ic = P.fc / rate, im = P.fm / rate, d = P.depth, fb = P.fb, lv = P.level;
+  for (let i = 0; i < n; i++) {
+    st.phm += im; st.phm -= Math.floor(st.phm);
+    const m = Math.sin(TAU * st.phm + fb * (st.m1 + st.m2) / 2);
+    st.m2 = st.m1; st.m1 = m;
+    let inc = ic, y;
+    if (type === 0) inc = Math.max(0, ic * (1 + d * m));
+    else if (type === 2) inc = ic * (1 + d * m);
+    else if (type === 1) inc = ic * Math.pow(2, 0.4 * d * m);
+    inc = clamp(inc, -0.5, 0.5);
+    st.phc += inc; st.phc -= Math.floor(st.phc);
+    st.phu += ic; st.phu -= Math.floor(st.phu);
+    let fInst = inc * rate;
+    if (type === 3) {
+      y = Math.sin(TAU * st.phc + d * m);
+      fInst = P.fc + d * (m - st.prevM) * rate / TAU;   // the slope of the phase
+    } else y = Math.sin(TAU * st.phc);
+    st.prevM = m;
+    const j = ring ? (offset + i) % ring : offset + i;
+    if (out.m) out.m[j] = m;
+    if (out.f) out.f[j] = fInst;
+    out.y[j] = y * lv;
+  }
+}
+
+// ---- FFT and Bessel ---------------------------------------------------------
+function fftMag(x) {                       // magnitude spectrum in dB, Hann window, 0 dB = full-level sine
+  const n = x.length, re = new Float64Array(n), im = new Float64Array(n);
+  let wsum = 0;
+  for (let i = 0; i < n; i++) { const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / n); re[i] = x[i] * w; wsum += w; }
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci, vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi; re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+      }
+    }
+  }
+  const out = new Float32Array(n / 2);
+  for (let k = 0; k < n / 2; k++) out[k] = 20 * Math.log10(Math.max(1e-6, 2 * Math.hypot(re[k], im[k]) / wsum));
+  return out;
+}
+function besselJ(k, x) {                   // J_k(x) = (1/π) ∫0^π cos(kτ − x sin τ) dτ
+  const N = 96; let s = 0;
+  for (let i = 0; i <= N; i++) { const t = Math.PI * i / N, w = (i === 0 || i === N) ? 0.5 : 1; s += w * Math.cos(k * t - x * Math.sin(t)); }
+  return s / N;
+}
+
+// ---- Envelope on the page ---------------------------------------------------
+const fmEnv = { t0: -1e9, value: 0, fromCard: false };
+function fmTrigger() {
+  fmEnv.t0 = performance.now();
+  hero.st = fmState(); hero.fill = 0;
+  if (audio.node) audio.node.port.postMessage({ trigger: true });
+  if (link.cardOnline) sendRaw(sysex(CMD.SYNC, []));
+}
+function updateEnv(now) {
+  if (link.cardOnline && link.lastStatus) return;          // the card's, from STATUS
+  const P = state.values[FM_PAGE];
+  fmEnv.value = Math.exp(-(now - fmEnv.t0) / 1000 / decayOf(P[5]));
+}
+
+// ---- Drawing ----------------------------------------------------------------
+const RING = 2400;
+const hero = { st: fmState(), m: new Float32Array(RING), f: new Float32Array(RING), y: new Float32Array(RING),
+               pos: 0, fill: 0, window: 0, acc: 0, scroll: 8, paused: false };
+let FM = null;
+
+function fmWindow(P) { return clamp(Math.max(2 / P.fm, 3 / P.fc), 0.0005, 1); }
+function advanceHero(dt) {
+  const W = fmWindow(FM);
+  if (Math.abs(W - hero.window) > hero.window * 0.01) { hero.window = W; hero.fill = 0; hero.st = fmState(); hero.acc = 0; }
+  const rate = RING / W;
+  let n = 0;
+  if (hero.fill < RING) { n = RING - hero.fill; }
+  else if (!hero.paused) { hero.acc += dt * RING / hero.scroll; n = Math.floor(hero.acc); hero.acc -= n; }
+  if (n <= 0) return;
+  n = Math.min(n, RING);
+  simFM(FM, FM.type, rate, n, hero.st, hero, hero.pos, RING);
+  hero.pos = (hero.pos + n) % RING;
+  hero.fill = Math.min(RING, hero.fill + n);
+}
+// Sample i samples ago (0 = now)
+const ago = (arr, i) => arr[(hero.pos - 1 - i + RING * 2) % RING];
+
+function drawFMHero() {
+  const { ctx, w: W, h: H } = setupCanvas($('fm-hero'));
+  ctx.clearRect(0, 0, W, H);
+  const P = FM, ink = cssVar('--sum'), grid = cssVar('--grid'), muted = cssVar('--muted');
+  const modCol = cssVar('--s1'), carCol = cssVar('--s0'), fCol = cssVar('--warm'), bad = cssVar('--bad');
+  ctx.font = '11px system-ui, sans-serif';
+  const left = Math.min(240, W * 0.32), x0 = left + 18, x1 = W - 10;
+  const bandH = (H - 20) / 3, pad = 14;
+  const bands = [0, 1, 2].map(b => ({ top: 10 + b * bandH + pad, bot: 10 + (b + 1) * bandH - 4 }));
+  const span = x1 - x0, step = (RING - 1) / span;
+
+  // Operators: modulator above, carrier below
+  const rM = Math.min(bandH * 0.36, left * 0.3), rC = Math.min(bandH * 0.44, left * 0.42);
+  const cM = { x: left / 2, y: (bands[0].top + bands[0].bot) / 2 }, cC = { x: left / 2, y: (bands[2].top + bands[2].bot) / 2 };
+  const st = hero.st, TAU = 2 * Math.PI;
+  const thM = TAU * st.phm, m = ago(hero.m, 0);
+  ctx.lineWidth = 1.5; ctx.strokeStyle = modCol;
+  ctx.beginPath(); ctx.arc(cM.x, cM.y, rM, 0, TAU); ctx.stroke();
+  const pM = { x: cM.x + rM * Math.cos(thM), y: cM.y - rM * m };
+  ctx.beginPath(); ctx.moveTo(cM.x, cM.y); ctx.lineTo(pM.x, pM.y); ctx.stroke();
+  ctx.fillStyle = modCol; ctx.beginPath(); ctx.arc(pM.x, pM.y, 3.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('modulator ' + fmtHz(P.fm), cM.x, cM.y + rM + 13);
+
+  // The arrow from modulator to carrier, saying what it bends
+  ctx.strokeStyle = muted; ctx.lineWidth = 1;
+  const ay0 = cM.y + rM + 18, ay1 = cC.y - rC - 6;
+  if (ay1 > ay0 + 8) {
+    ctx.beginPath(); ctx.moveTo(cM.x, ay0); ctx.lineTo(cM.x, ay1); ctx.lineTo(cM.x - 4, ay1 - 6); ctx.moveTo(cM.x, ay1); ctx.lineTo(cM.x + 4, ay1 - 6); ctx.stroke();
+    ctx.textAlign = 'left'; ctx.fillText('× ' + P.depth.toFixed(2) + ' → ' + FM_TYPES[P.type].to, cM.x + 8, (ay0 + ay1) / 2 + 4, left - cM.x - 8);
+  }
+
+  // Carrier, with where it would be unmodulated
+  const thC = TAU * st.phc + (P.type === 3 ? P.depth * m : 0), thU = TAU * st.phu;
+  ctx.strokeStyle = carCol; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cC.x, cC.y, rC, 0, TAU); ctx.stroke();
+  ctx.fillStyle = muted; ctx.globalAlpha = 0.5;
+  ctx.beginPath(); ctx.arc(cC.x + rC * Math.cos(thU), cC.y - rC * Math.sin(thU), 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+  const pC = { x: cC.x + rC * Math.cos(thC), y: cC.y - rC * Math.sin(thC) };
+  ctx.strokeStyle = carCol; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cC.x, cC.y); ctx.lineTo(pC.x, pC.y); ctx.stroke();
+  ctx.fillStyle = carCol; ctx.beginPath(); ctx.arc(pC.x, pC.y, 4, 0, TAU); ctx.fill();
+  ctx.fillStyle = muted; ctx.textAlign = 'center';
+  ctx.fillText('carrier ' + fmtHz(P.fc), cC.x, cC.y + rC + 13);
+  ctx.textAlign = 'left';
+
+  // Traces: now at the left, older to the right
+  function trace(arr, b, lo, hi, col, map) {
+    const yOf = (v) => b.bot - (b.bot - b.top) * (v - lo) / (hi - lo || 1);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath();
+    for (let px = 0; px <= span; px++) {
+      const v = ago(arr, Math.round(px * step)), yy = clamp(yOf(map ? map(v) : v), b.top - 2, b.bot + 2);
+      px ? ctx.lineTo(x0 + px, yy) : ctx.moveTo(x0 + px, yy);
+    }
+    ctx.stroke();
+    return yOf;
+  }
+  const labels = ['Modulator  (Audio Out 2)', 'Carrier frequency', 'Output  (Audio Out 1)'];
+  for (let b = 0; b < 3; b++) {
+    ctx.strokeStyle = grid; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, bands[b].top); ctx.lineTo(x0, bands[b].bot); ctx.stroke();
+    ctx.fillStyle = muted; ctx.fillText(labels[b], x0 + 6, bands[b].top - 3);
+  }
+  // Modulator
+  let b = bands[0], mid = (b.top + b.bot) / 2;
+  ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(x0, mid); ctx.lineTo(x1, mid); ctx.stroke();
+  trace(hero.m, b, -1.1, 1.1, modCol);
+  // Frequency: a range covering what the buffer holds, always showing 0 Hz and fc
+  b = bands[1];
+  let lo = 0, hi = P.fc * 2;
+  for (let i = 0; i < RING; i += 3) { const v = hero.f[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  lo -= (hi - lo) * 0.05; hi += (hi - lo) * 0.05;
+  const yF = (v) => b.bot - (b.bot - b.top) * (v - lo) / (hi - lo);
+  if (lo < 0) { ctx.fillStyle = bad; ctx.globalAlpha = 0.08; ctx.fillRect(x0, yF(0), span, b.bot - yF(0)); ctx.globalAlpha = 1; }
+  ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+  ctx.strokeStyle = bad; ctx.beginPath(); ctx.moveTo(x0, yF(0)); ctx.lineTo(x1, yF(0)); ctx.stroke();
+  ctx.strokeStyle = carCol; ctx.beginPath(); ctx.moveTo(x0, yF(P.fc)); ctx.lineTo(x1, yF(P.fc)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = bad; ctx.fillText('0 Hz', x1, yF(0) - 3);
+  ctx.fillStyle = carCol; ctx.fillText('f꜀ ' + fmtHz(P.fc), x1, yF(P.fc) - 3);
+  ctx.textAlign = 'left';
+  trace(hero.f, b, lo, hi, fCol);
+  // Output
+  b = bands[2]; mid = (b.top + b.bot) / 2;
+  ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(x0, mid); ctx.lineTo(x1, mid); ctx.stroke();
+  trace(hero.y, b, -1.1, 1.1, ink);
+
+  // From the points across to now
+  ctx.strokeStyle = muted; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+  const yMnow = (bands[0].bot + bands[0].top) / 2 - (bands[0].bot - bands[0].top) / 2.2 * m;
+  ctx.beginPath(); ctx.moveTo(pM.x, pM.y); ctx.lineTo(x0, yMnow);
+  const yOnow = (bands[2].bot + bands[2].top) / 2 - (bands[2].bot - bands[2].top) / 2.2 * ago(hero.y, 0);
+  ctx.moveTo(pC.x, pC.y); ctx.lineTo(x0, yOnow); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = muted; ctx.textAlign = 'right';
+  ctx.fillText((hero.window * 1000).toFixed(hero.window < 0.01 ? 2 : 0) + ' ms shown', x1, H - 3);
+  ctx.textAlign = 'left';
+}
+
+// Spectrum and the four-way comparison are measured, so worked out only when
+// something changes, at most a few times a second
+const fmCalc = { key: '', at: 0, spec: null, types: [] };
+function fmMeasure(force) {
+  const key = JSON.stringify([state.values[FM_PAGE], state.fmType, state.note, state.fmKnob, state.fmSteps, state.fmDrone, Math.round(FM.env * 50)]);
+  const now = performance.now();
+  if (!force && (key === fmCalc.key || now - fmCalc.at < 120)) return false;
+  fmCalc.key = key; fmCalc.at = now;
+  const N = 8192, rate = CARD_RATE;
+  fmCalc.types = FM_TYPES.map((_, t) => {
+    const P = { ...FM, beta: betaFor(FM, t) };
+    const st = fmState();
+    // settle, then measure: average frequency over whole modulator periods
+    const out = { y: new Float32Array(N), f: new Float32Array(N), m: null };
+    simFM(P, t, rate, 512, st, { y: new Float32Array(512), f: null });
+    simFM(P, t, rate, N, st, out);
+    const per = rate / P.fm, whole = Math.max(1, Math.floor(N / per)) * per;
+    let sum = 0, cnt = Math.min(N, Math.round(whole)); for (let i = 0; i < cnt; i++) sum += out.f[i];
+    const avg = sum / cnt;
+    return { y: out.y, spec: fftMag(out.y), cents: 1200 * Math.log2(Math.max(1e-9, avg) / P.fc), avg, beta: P.beta };
+  });
+  fmCalc.spec = fmCalc.types[state.fmType].spec;
+  return true;
+}
+
+function specRange(P) {
+  const top = P.type === 1 ? P.fc + P.expUp + 4 * P.fm : P.fc + Math.abs(P.dev) + 4 * P.fm;
+  return clamp(Math.max(top * 1.1, P.f0 * 8), 200, CARD_RATE / 2);
+}
+function drawSpecInto(ctx, spec, x0, x1, y0, y1, fmax, col, fill) {
+  const bins = spec.length, binHz = CARD_RATE / 2 / bins, dBlo = -80;
+  const yOf = (db) => y1 - (y1 - y0) * (clamp(db, dBlo, 0) - dBlo) / -dBlo;
+  ctx.beginPath(); ctx.moveTo(x0, y1);
+  const span = x1 - x0;
+  for (let px = 0; px <= span; px++) {
+    const fA = fmax * px / span, fB = fmax * (px + 1) / span;
+    let mx = -200;
+    for (let k = Math.floor(fA / binHz); k <= Math.ceil(fB / binHz) && k < bins; k++) if (spec[k] > mx) mx = spec[k];
+    ctx.lineTo(x0 + px, yOf(mx));
+  }
+  ctx.lineTo(x1, y1);
+  if (fill) { ctx.fillStyle = col; ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1; }
+  ctx.strokeStyle = col; ctx.lineWidth = 1.2; ctx.stroke();
+  return yOf;
+}
+
+function drawFMSpectrum() {
+  const { ctx, w: W, h: H } = setupCanvas($('fm-spectrum'));
+  ctx.clearRect(0, 0, W, H);
+  if (!fmCalc.spec) return;
+  const P = FM, fmax = specRange(P);
+  const x0 = 34, x1 = W - 10, y0 = 10, y1 = H - 22;
+  const X = (f) => x0 + (x1 - x0) * f / fmax;
+  const grid = cssVar('--grid'), muted = cssVar('--muted');
+  ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = muted; ctx.strokeStyle = grid; ctx.lineWidth = 1;
+  // harmonics of the pitch, or of the common fundamental
+  const fund = P.harm ? Math.min(P.f0, P.harm.f) : P.f0;
+  const nh = Math.floor(fmax / fund), every = Math.ceil(nh / 16);
+  ctx.textAlign = 'center'; ctx.beginPath();
+  for (let k = 1; k <= nh; k++) {
+    ctx.moveTo(X(k * fund), y0); ctx.lineTo(X(k * fund), y1);
+    if (k % every === 0) ctx.fillText(fmtHz(k * fund), X(k * fund), y1 + 13);
+  }
+  for (const db of [-20, -40, -60]) { const y = y1 - (y1 - y0) * (db + 80) / 80; ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
+  ctx.stroke();
+  ctx.textAlign = 'right';
+  for (const db of [0, -20, -40, -60, -80]) ctx.fillText(db + '', x0 - 4, y1 - (y1 - y0) * (db + 80) / 80 + 4);
+  ctx.textAlign = 'left';
+  const yOf = drawSpecInto(ctx, fmCalc.spec, x0, x1, y0, y1, fmax, cssVar('--accent'), true);
+  // Bessel prediction: exact for through-zero and phase, and for linear FM
+  // while it never reaches 0 Hz; not shown for exponential
+  ctx.fillStyle = muted;
+  ctx.fillText('dB', 4, y0 + 8);
+  if (P.type === 1 || (P.type === 0 && P.depth > 1)) {
+    ctx.textAlign = 'right';
+    ctx.fillText(P.type === 1 ? 'No Bessel dots: exponential FM doesn’t follow them' : 'No Bessel dots: depth is above 1, so linear FM clips at 0 Hz', x1, y0 + 8);
+    ctx.textAlign = 'left';
+    return;
+  }
+  const beta = P.beta, K = Math.ceil(beta + 8);
+  const dotCol = cssVar('--warm');
+  for (let k = -K; k <= K; k++) {
+    const f = P.fc + k * P.fm, a = Math.abs(besselJ(Math.abs(k), beta)) * P.level;
+    if (Math.abs(f) > fmax || a < 1e-4) continue;
+    const db = 20 * Math.log10(a);
+    if (db < -80) continue;
+    ctx.strokeStyle = dotCol; ctx.fillStyle = dotCol; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(X(Math.abs(f)), yOf(db), 3.5, 0, 2 * Math.PI);
+    f < 0 ? ctx.stroke() : ctx.fill();
+  }
+}
+
+function drawBessel() {
+  const { ctx, w: W, h: H } = setupCanvas($('fm-bessel'));
+  ctx.clearRect(0, 0, W, H);
+  const beta = FM.beta, xmax = Math.max(12, Math.ceil(beta + 1));
+  const x0 = 30, x1 = W - 10, y0 = 10, y1 = H - 20;
+  const X = (b) => x0 + (x1 - x0) * b / xmax, Y = (v) => y0 + (y1 - y0) * (1 - v) / 1.5;
+  const muted = cssVar('--muted'), grid = cssVar('--grid');
+  ctx.font = '11px system-ui, sans-serif'; ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.fillStyle = muted;
+  ctx.beginPath(); ctx.moveTo(x0, Y(0)); ctx.lineTo(x1, Y(0)); ctx.stroke();
+  ctx.textAlign = 'center';
+  for (let b = 0; b <= xmax; b += xmax > 16 ? 4 : 2) ctx.fillText(b + '', X(b), y1 + 13);
+  ctx.textAlign = 'right'; ctx.fillText('1', x0 - 4, Y(1) + 4); ctx.fillText('0', x0 - 4, Y(0) + 4); ctx.fillText('−0.5', x0 - 4, Y(-0.5) + 4);
+  ctx.textAlign = 'left';
+  for (let k = 0; k <= 5; k++) {
+    ctx.strokeStyle = colors[k]; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (let px = 0; px <= x1 - x0; px += 2) {
+      const b = xmax * px / (x1 - x0), y = Y(besselJ(k, b));
+      px ? ctx.lineTo(x0 + px, y) : ctx.moveTo(x0 + px, y);
+    }
+    ctx.stroke();
+    const v = besselJ(k, beta);
+    ctx.fillStyle = colors[k]; ctx.beginPath(); ctx.arc(X(beta), Y(v), 3.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillText('J' + k + (k === 0 ? ' carrier' : k === 1 ? ' 1st pair' : ''), x1 - 92, y0 + 10 + k * 13);
+  }
+  ctx.strokeStyle = cssVar('--ink'); ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(X(beta), y0); ctx.lineTo(X(beta), y1); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = cssVar('--ink'); ctx.fillText('β = ' + beta.toFixed(2), Math.min(X(beta) + 4, x1 - 150), y1 - 4);
+}
+
+// The four types, side by side
+const typeEls = [];
+function buildTypes() {
+  const box = $('fm-types');
+  FM_TYPES.forEach((t, i) => {
+    const d = document.createElement('button');
+    d.className = 'type';
+    d.innerHTML = `<div class="tname"><b>${t.letter}</b>${t.name}</div><div class="formula small">${t.formula}</div>
+      <canvas class="tw"></canvas><canvas class="ts"></canvas><div class="tinfo"></div>`;
+    d.addEventListener('click', () => setFMType(i, true));
+    box.appendChild(d);
+    typeEls.push({ d, w: d.querySelector('.tw'), s: d.querySelector('.ts'), info: d.querySelector('.tinfo') });
+  });
+}
+function drawTypes() {
+  const P = FM;
+  for (let t = 0; t < 4; t++) {
+    const e = typeEls[t], r = fmCalc.types[t];
+    e.d.classList.toggle('on', t === state.fmType);
+    if (!r) continue;
+    // waveform: the window the hero shows, from the measured run
+    let { ctx, w: W, h: H } = setupCanvas(e.w);
+    ctx.clearRect(0, 0, W, H);
+    const n = Math.min(r.y.length, Math.round(fmWindow(P) * CARD_RATE));
+    ctx.strokeStyle = cssVar('--sum'); ctx.lineWidth = 1.2; ctx.beginPath();
+    for (let px = 0; px <= W; px++) {
+      const yy = H / 2 - (H / 2 - 3) * r.y[Math.min(r.y.length - 1, Math.round(px / W * (n - 1)))];
+      px ? ctx.lineTo(px, yy) : ctx.moveTo(px, yy);
+    }
+    ctx.stroke();
+    ({ ctx, w: W, h: H } = setupCanvas(e.s));
+    ctx.clearRect(0, 0, W, H);
+    drawSpecInto(ctx, r.spec, 0, W, 2, H - 1, specRange(P), cssVar('--accent'), true);
+    const c = Math.abs(r.cents) < 0.5 ? 'in tune' : (r.cents > 0 ? '+' : '') + r.cents.toFixed(r.cents > 100 ? 0 : 1) + ' cents';
+    e.info.textContent = 'Average pitch: ' + c + ' · β ' + (t === 1 ? '≈ ' : '') + r.beta.toFixed(2);
+  }
+  $('fm-type-lesson').innerHTML = FM_TYPES[state.fmType].lesson;
+}
+
+function drawFMReadouts() {
+  const P = FM;
+  $('fv-pitch').textContent = noteName(state.note) + ' · ' + fmtHz(P.f0);
+  $('fv-knob').textContent = state.fmKnob.toFixed(2);
+  $('fv-steps').textContent = '+' + state.fmSteps;
+  $('fv-speed').textContent = hero.scroll + ' s per screen';
+  for (const id of ['fm-pitch', 'fm-knob', 'fm-steps', 'fm-drone']) $(id).disabled = link.cardOnline;
+  $('fm-pitch').value = state.note; $('fm-knob').value = state.fmKnob; $('fm-steps').value = state.fmSteps;
+  $('fm-drone').checked = state.fmDrone;
+  const live = link.cardOnline ? ' (live from the card)' : ' (on the card)';
+  $('ffrom-pitch').textContent = 'Main knob + CV In 1' + live;
+  $('ffrom-knob').textContent = 'X knob + CV In 2, added to fader 4' + live;
+  $('ffrom-steps').textContent = 'Y knob, added to fader 2' + live;
+  const ratio = P.fixed ? fmtHz(P.fm) + ' (fixed)' : '1 : ' + (P.fm / P.fc).toFixed(3).replace(/\.?0+$/, '');
+  const dev = P.type === 1 ? '+' + fmtHz(P.expUp) + ' / −' + fmtHz(P.expDown) : '±' + fmtHz(Math.abs(P.dev));
+  const carson = P.type === 1 ? '—' : fmtHz(2 * (Math.abs(P.dev) + P.fm));
+  const items = [
+    ['Carrier', fmtHz(P.fc)], ['Modulator', fmtHz(P.fm)], ['C : M', ratio],
+    ['Index β', (P.type === 1 ? '≈ ' : '') + P.beta.toFixed(2)], ['Deviation', dev], ['Carson bandwidth', carson],
+    ['Pitched?', P.harm ? 'yes, at ' + fmtHz(P.harm.f) : 'no: inharmonic'],
+    ['Envelope', state.fmDrone ? 'held (drone)' : Math.round(P.env * 100) + '%'],
+  ];
+  $('fm-readouts').innerHTML = items.map(([k, v]) => `<div class="readout"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  const turnsPerSec = P.fc * hero.window / hero.scroll;
+  $('fm-caption').textContent = 'Slowed down about ' + Math.round(hero.scroll / hero.window).toLocaleString() + ' times. ' +
+    'The modulator’s height (top) sets how the carrier turns: here its ' + FM_TYPES[P.type].to + '. ' +
+    (P.type === 3 ? 'The faint point is where the carrier would be unmodulated. ' : '') +
+    (P.type === 0 && P.depth > 1 ? 'Depth is above 1, so linear FM’s frequency is clipped at 0 Hz. ' : '') +
+    (P.type === 2 && P.depth > 1 ? 'Depth is above 1: below the red line the carrier runs backwards. ' : '') +
+    (turnsPerSec < 0.05 ? '' : '');
+}
+
+// ---- FM faders --------------------------------------------------------------
+const fmFaderEls = [];
+function buildFMFaders() {
+  const box = $('fm-faders');
+  for (let n = 0; n < NP; n++) {
+    const d = document.createElement('div'); d.className = 'fader';
+    d.innerHTML = `<div class="name">${n + 1}</div><div class="fname">${FM_FADERS[n].name}</div><div class="slot"><input type="range" min="0" max="127" step="1" aria-label="${FM_FADERS[n].name}"><div class="ghost"></div></div><div class="val"></div>`;
+    const input = d.querySelector('input');
+    input.style.accentColor = 'var(--accent)';
+    input.addEventListener('input', () => userSetValue(FM_PAGE, n, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(FM_PAGE, n, FM_DEFAULT[n]));
+    const hint = () => { $('fm-hint').textContent = FM_FADERS[n].hint; };
+    d.addEventListener('pointerenter', hint); input.addEventListener('focus', hint);
+    box.appendChild(d);
+    fmFaderEls.push({ d, input, ghost: d.querySelector('.ghost'), val: d.querySelector('.val') });
+  }
+  const ex = $('fm-examples');
+  EXAMPLES.forEach((e, i) => {
+    const b = document.createElement('button'); b.textContent = e.name; b.dataset.example = i;
+    b.addEventListener('click', () => loadExample(i, true));
+    ex.appendChild(b);
+  });
+}
+function describeFM(n) {
+  const v = state.values[FM_PAGE][n], P = FM;
+  switch (n) {
+    case 0: return '×' + P.cr;
+    case 1: { const r = MOD_RATIOS[Math.floor(v * MOD_RATIOS.length / 128)]; return (r < 0 ? -r + ' Hz' : '×' + r) + (state.fmSteps ? ' +' + state.fmSteps : ''); }
+    case 2: { const c = Math.round(freqOffset(v) * 100); return c === 0 ? 'exact' : (c > 0 ? '+' : '') + c + ' c'; }
+    case 3: return depthOf(v).toFixed(2);
+    case 4: return (v / 127 * 2).toFixed(2);
+    case 5: { const t = decayOf(v); return t >= 1 ? t.toFixed(1) + ' s' : Math.round(t * 1000) + ' ms'; }
+    case 6: return '+' + depthOf(v).toFixed(2);
+    default: return Math.round(v / 127 * 100) + '%';
+  }
+}
+function refreshFMFaders() {
+  for (let n = 0; n < NP; n++) {
+    const e = fmFaderEls[n], v = state.values[FM_PAGE][n];
+    if (document.activeElement !== e.input || +e.input.value !== v) e.input.value = v;
+    e.val.textContent = describeFM(n);
+    const ph = mu.phys[n], show = link.muIns.length && ph >= 0 && !mu.engaged[n] && state.mode === 1;
+    e.ghost.style.display = show ? 'block' : 'none';
+    if (show) e.ghost.style.top = (140 * (1 - ph / 127)) + 'px';
+  }
+  document.querySelectorAll('#fm-examples button').forEach(b => b.classList.toggle('on', +b.dataset.example === state.example));
+  $('fm-lesson').innerHTML = state.example >= 0 ? EXAMPLES[state.example].lesson
+    : `<p><b>Your own sound.</b> Every FM sound is these few numbers: two ratios, a depth, and how the depth moves over time.
+       The DX7 had six operators and many ways to connect them, but each pair works just like this one.</p>`;
+}
+
+function setFMType(t, send) {
+  if (state.fmType === t) return;
+  state.fmType = t;
+  hero.fill = 0;                               // start the traces afresh
+  if (send && link.cardOnline) sendRaw(sysex(CMD.FM_TYPE, [t]));
+  changed();
+}
+function loadExample(i, send) {
+  state.values[FM_PAGE] = EXAMPLES[i].v.slice();
+  state.fmType = EXAMPLES[i].type;
+  state.example = i;
+  hero.fill = 0;
+  repickup();
+  if (send && link.cardOnline) sendRaw(sysex(CMD.EXAMPLE, [i]));   // the card replies with its state
+  say('Example: ' + EXAMPLES[i].name + '.');
+  if (!state.fmDrone) fmTrigger();
+  changed();
+}
+
+// ============================================================================
 // State
 // ============================================================================
 const state = {
-  values: SHAPES[0].v.map(r => r.slice()),
-  page: 0,
+  values: [...SHAPES[0].v.map(r => r.slice()), EXAMPLES[1].v.slice()],  // additive pages, then the FM faders
+  mode: 0,                                      // 0 additive, 1 FM
+  page: 0,                                      // additive page
+  fmType: EXAMPLES[1].type, example: 1,         // as the card starts
+  fmKnob: 0, fmSteps: 0, fmDrone: true,
   shape: 0,                                     // last shape loaded, or -1 once edited
   hot: -1,                                      // partial under the pointer
   // local controls; with a card connected these follow its STATUS
@@ -769,8 +1587,8 @@ function userSetValue(page, n, v) {
   v = clamp(v | 0, 0, 127);
   if (state.values[page][n] === v) return;
   state.values[page][n] = v;
-  markEdited();
-  if (page === state.page) mu.engaged[n] = false;   // a physical fader must meet it again
+  if (page === FM_PAGE) state.example = -1; else markEdited();
+  if (page === activePage()) mu.engaged[n] = false;   // a physical fader must meet it again
   queueSend('v' + page + '.' + n, sysex(CMD.SET, [page, n, v]));
   changed();
 }
@@ -781,11 +1599,25 @@ function selectPage(p, send) {
   if (send) queueSend('page', sysex(CMD.PAGE, [p]));
   changed();
 }
+// The page the faders edit: an additive page, or the FM faders
+const activePage = () => state.mode === 1 ? FM_PAGE : state.page;
 function repickup() {
-  for (let n = 0; n < NP; n++) { const ph = mu.phys[n]; mu.engaged[n] = ph >= 0 && Math.abs(ph - state.values[state.page][n]) <= 1; }
+  const pg = activePage();
+  for (let n = 0; n < NP; n++) { const ph = mu.phys[n]; mu.engaged[n] = ph >= 0 && Math.abs(ph - state.values[pg][n]) <= 1; }
+}
+function setMode(m, send) {
+  if (state.mode === m) return;
+  state.mode = m;
+  document.querySelectorAll('nav.modes button').forEach((b, i) => b.classList.toggle('on', i === m));
+  $('page-add').hidden = m !== 0; $('page-fm').hidden = m !== 1;
+  $('btn-sync').innerHTML = m === 1 ? 'Trigger' : 'Sync';
+  repickup();
+  if (send && link.cardOnline) sendRaw(sysex(CMD.MODE, [m]));      // the card replies with its state
+  hero.fill = 0;
+  changed();
 }
 function loadShape(i, send) {
-  state.values = SHAPES[i].v.map(r => r.slice());
+  for (let p = 0; p < PAGES; p++) state.values[p] = SHAPES[i].v[p].slice();
   state.shape = i; lastShape = i;
   repickup();
   if (send && link.cardOnline) sendRaw(sysex(CMD.SHAPE, [i]));   // the card replies with its state
@@ -794,23 +1626,30 @@ function loadShape(i, send) {
 }
 
 let renderQueued = false, saveTimer = 0;
+function drawFMAll() { refreshFMFaders(); drawFMReadouts(); drawTypes(); drawFMSpectrum(); drawBessel(); }
 function changed(save = true) {
   M = model();
+  FM = fmModel();
   pushAudio();
   if (!renderQueued) {
     renderQueued = true;
-    requestAnimationFrame(() => { renderQueued = false; refreshFaders(); drawSpectrum(); drawReadouts(); });
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      if (state.mode === 1) { fmMeasure(true); drawFMAll(); }
+      else { refreshFaders(); drawSpectrum(); drawReadouts(); }
+    });
   }
   if (save) {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => store.set('nestedcircles.last.v1',
-      { values: state.values, shape: state.shape, note: state.note, partials: state.partials, stretch: state.stretch, lock: state.lock }), 400);
+    saveTimer = setTimeout(() => store.set('nestedcircles.last.v2',
+      { values: state.values, shape: state.shape, note: state.note, partials: state.partials, stretch: state.stretch, lock: state.lock,
+        mode: state.mode, fmType: state.fmType, example: state.example, fmKnob: state.fmKnob, fmSteps: state.fmSteps, fmDrone: state.fmDrone }), 400);
   }
 }
 
 // ---- 8mu plugged into this computer -----------------------------------------
 function eightmuFader(n, v) {
-  const last = mu.phys[n], target = state.values[state.page][n];
+  const pg = activePage(), last = mu.phys[n], target = state.values[pg][n];
   mu.phys[n] = v;
   if (!mu.engaged[n]) {
     const near = Math.abs(v - target) <= 1;
@@ -818,10 +1657,10 @@ function eightmuFader(n, v) {
     if (!near && !crossed) { changed(false); return; }
     mu.engaged[n] = true;
   }
-  if (state.values[state.page][n] !== v) {
-    state.values[state.page][n] = v;
-    markEdited();
-    queueSend('v' + state.page + '.' + n, sysex(CMD.SET, [state.page, n, v]));
+  if (state.values[pg][n] !== v) {
+    state.values[pg][n] = v;
+    if (pg === FM_PAGE) state.example = -1; else markEdited();
+    queueSend('v' + pg + '.' + n, sysex(CMD.SET, [pg, n, v]));
     changed();
   }
 }
@@ -831,12 +1670,28 @@ function eightmuMessage(d) {
   if (type === 0xB0) {
     const cc = d[1];
     if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NP) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F);
-  } else if (type === 0x90 && d[2] > 0) {
+  } else if (type === 0x90 || type === 0x80) {
     const b = BUTTON_NOTES.indexOf(d[1]);
-    if (b >= 0 && b < PAGES) selectPage(b, true);
-    else if (b === 3) loadShape(((state.shape >= 0 ? state.shape : lastShape) + 1) % SHAPES.length, true);
+    if (b < 0) return;
+    const down = type === 0x90 && d[2] > 0;
+    // As the card: additive A-C choose the page and a tap on D the next
+    // shape; FM A-D choose the type; holding D for a second swaps mode
+    if (down) {
+      if (state.mode === 1) setFMType(b, true);
+      else if (b < PAGES) selectPage(b, true);
+      if (b === 3) {
+        muButton.swapped = false;
+        clearTimeout(muButton.timer);
+        muButton.timer = setTimeout(() => { muButton.swapped = true; setMode(1 - state.mode, true); }, 1000);
+      }
+    } else if (b === 3) {
+      clearTimeout(muButton.timer);
+      if (!muButton.swapped && state.mode === 0) loadShape(((state.shape >= 0 ? state.shape : lastShape) + 1) % SHAPES.length, true);
+      muButton.swapped = true;
+    }
   }
 }
+const muButton = { timer: 0, swapped: true };
 // The 8mu's own LEDs: the stored values on this page, as the card does.
 // SysEx to the 8mu must travel on its own, so LED notes pause around it.
 function serviceEightmuLeds() {
@@ -850,7 +1705,7 @@ function serviceEightmuLeds() {
   }
   if (now - mu.lastBlinkOff < 60) return;
   for (let n = 0; n < NP; n++) {
-    const v = (state.values[state.page][n] * 9) >> 4;
+    const v = (state.values[activePage()][n] * 9) >> 4;
     if (v === mu.ledSent[n]) continue;
     mu.ledSent[n] = v;
     for (const o of link.muOuts) try { o.send([0x90, n, v]); } catch (e) {}
@@ -924,22 +1779,30 @@ function handleCardMessage(m) {
   if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
   const cmd = m[2], p = m.slice(3);
   if (cmd === CMD.STATE) {
-    if (p.length !== 2 + PAGES * NP) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    if (p.length !== 3 + 4 * NP + 1) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
     if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '.', true); return; }
-    for (let b = 0; b < PAGES; b++) for (let n = 0; n < NP; n++) state.values[b][n] = clamp(p[2 + b * NP + n], 0, 127);
-    state.page = clamp(p[1], 0, PAGES - 1);
-    // Name it if it's one of the shapes
+    for (let b = 0; b < 4; b++) for (let n = 0; n < NP; n++) state.values[b][n] = clamp(p[3 + b * NP + n], 0, 127);
+    state.page = clamp(p[2], 0, PAGES - 1);
+    state.fmType = clamp(p[3 + 4 * NP], 0, 3);
+    // Name them if they're one of the shapes and examples
     const s = SHAPES.findIndex(sh => sh.v.every((row, b) => row.every((v, n) => v === state.values[b][n])));
     if (s >= 0) { state.shape = lastShape = s; } else markEdited();
+    state.example = EXAMPLES.findIndex(e => e.type === state.fmType && e.v.every((v, n) => v === state.values[FM_PAGE][n]));
+    setMode(clamp(p[1], 0, 1), false);
     repickup();
     changed();
-  } else if (cmd === CMD.STATUS && p.length >= 5) {
+  } else if (cmd === CMD.STATUS && p.length >= 11) {
     state.note = ((p[0] << 7) | p[1]) / 8;
     state.partials = 1 + p[2] * 7 / 127;
     state.stretch = p[3] / 127 * 0.5;
-    state.lock = !!(p[4] & 1);
+    state.lock = state.fmDrone = !!(p[4] & 1);
     state.muOnCard = !!(p[4] & 2);
+    state.fmType = clamp(p[6], 0, 3);
+    state.fmKnob = ((p[7] << 7) | p[8]) / 1000;
+    state.fmSteps = clamp(p[9], 0, 12);
+    fmEnv.value = p[10] / 127;
     link.lastStatus = performance.now();
+    if (p[5] !== state.mode) setMode(clamp(p[5], 0, 1), false);
     changed(false);
   }
 }
@@ -947,8 +1810,10 @@ function handleCardMessage(m) {
 function sendAll() {
   if (!link.cardOnline) return;
   const payload = [PROTOCOL_VERSION];
-  for (let b = 0; b < PAGES; b++) for (let n = 0; n < NP; n++) payload.push(state.values[b][n]);
+  for (let b = 0; b < 4; b++) for (let n = 0; n < NP; n++) payload.push(state.values[b][n]);
+  payload.push(state.fmType);
   sendRaw(sysex(CMD.SET_ALL, payload));
+  if (link.cardOnline) sendRaw(sysex(CMD.MODE, [state.mode]));
 }
 
 // ============================================================================
@@ -960,14 +1825,22 @@ class NestedCircles extends AudioWorkletProcessor {
     super();
     this.master = 0; this.ph = new Float64Array(8); this.g = new Float64Array(8); this.off = new Float64Array(8);
     this.wasH = new Array(8).fill(true);
-    this.t = { f0: 130.8, r: [1,2,3,4,5,6,7,8], a: new Array(8).fill(0), p: new Array(8).fill(0), h: new Array(8).fill(true), vol: 0.5 };
+    this.phc = 0; this.phm = 0; this.m1 = 0; this.m2 = 0; this.env = 0; this.lvl = 0;
+    this.t = { mode: 0, f0: 130.8, r: [1,2,3,4,5,6,7,8], a: new Array(8).fill(0), p: new Array(8).fill(0), h: new Array(8).fill(true), vol: 0.5 };
     this.port.onmessage = (e) => {
       if (e.data.sync) { this.master = 0; this.ph.fill(0); }
+      else if (e.data.trigger) { this.env = 1; this.phc = this.phm = this.m1 = this.m2 = 0; }
       else this.t = e.data;
     };
   }
   process(inputs, outputs) {
-    const out = outputs[0], L = out[0], t = this.t, inc = t.f0 / sampleRate, TAU = 2 * Math.PI;
+    const out = outputs[0], L = out[0], t = this.t;
+    if (t.mode === 1) this.fm(L, t); else this.additive(L, t);
+    for (let c = 1; c < out.length; c++) out[c].set(L);
+    return true;
+  }
+  additive(L, t) {
+    const inc = t.f0 / sampleRate, TAU = 2 * Math.PI;
     for (let n = 0; n < 8; n++) {
       if (this.wasH[n] && !t.h[n]) this.ph[n] = (this.master * (n + 1)) % 1;
       this.wasH[n] = t.h[n];
@@ -985,9 +1858,29 @@ class NestedCircles extends AudioWorkletProcessor {
         y += this.g[n] * Math.sin(TAU * this.ph[n] + this.off[n]);
       }
       L[i] = y * t.vol;
-      for (let c = 1; c < out.length; c++) out[c][i] = L[i];
     }
-    return true;
+  }
+  // As NestedCircles::FMSample
+  fm(L, t) {
+    const TAU = 2 * Math.PI, ic = t.fc / sampleRate, im = t.fm / sampleRate;
+    const coef = Math.exp(-1 / (t.decay * sampleRate));
+    for (let i = 0; i < L.length; i++) {
+      if (t.drone) this.env = 1; else this.env *= coef;
+      const d = Math.min(16, t.depthBase + t.depthEnv * this.env);
+      this.phm += im; this.phm -= Math.floor(this.phm);
+      const m = Math.sin(TAU * this.phm + t.fb * (this.m1 + this.m2) / 2);
+      this.m2 = this.m1; this.m1 = m;
+      let inc = ic;
+      if (t.type === 0) inc = Math.max(0, ic * (1 + d * m));
+      else if (t.type === 2) inc = ic * (1 + d * m);
+      else if (t.type === 1) inc = ic * Math.pow(2, 0.4 * d * m);
+      inc = Math.max(-0.5, Math.min(0.5, inc));
+      this.phc += inc; this.phc -= Math.floor(this.phc);
+      const y = t.type === 3 ? Math.sin(TAU * this.phc + d * m) : Math.sin(TAU * this.phc);
+      const lvl = 1 - t.lvlEnv + t.lvlEnv * this.env;
+      this.lvl += (lvl - this.lvl) * 0.01;
+      L[i] = y * this.lvl * t.vol;
+    }
   }
 }
 registerProcessor('nested-circles', NestedCircles);
@@ -1014,8 +1907,13 @@ async function toggleListen() {
 }
 function pushAudio() {
   if (!audio.node) return;
-  audio.node.port.postMessage({ f0: M.f0, r: M.c.map(p => p.ratio), a: M.c.map(p => p.amp), p: M.c.map(p => p.phase),
-                                h: M.c.map(p => p.harmonic), vol: 0.4 });
+  if (state.mode === 1) {
+    audio.node.port.postMessage({ mode: 1, fc: FM.fc, fm: FM.fm, type: FM.type, depthBase: FM.depthBase, depthEnv: FM.depthEnv,
+                                  fb: FM.fb, decay: FM.decay, lvlEnv: FM.lvlEnv, drone: state.fmDrone, vol: 0.35 });
+  } else {
+    audio.node.port.postMessage({ mode: 0, f0: M.f0, r: M.c.map(p => p.ratio), a: M.c.map(p => p.amp), p: M.c.map(p => p.phase),
+                                  h: M.c.map(p => p.harmonic), vol: 0.4 });
+  }
 }
 function sync() {
   view.tau = 0;
@@ -1029,10 +1927,18 @@ function sync() {
 function frame(now) {
   const dt = view.lastT ? Math.min(0.1, (now - view.lastT) / 1000) : 0;
   view.lastT = now;
-  if (!view.paused) view.tau += dt * view.turnsPerSec;
-  if (view.tau > 1e6) view.tau = 0;
-  drawHero();
-  drawMinis();
+  if (state.mode === 1) {
+    updateEnv(now);
+    FM = fmModel();
+    advanceHero(dt);
+    drawFMHero();
+    if (!state.fmDrone && fmMeasure(false)) { drawFMAll(); }
+  } else {
+    if (!view.paused) view.tau += dt * view.turnsPerSec;
+    if (view.tau > 1e6) view.tau = 0;
+    drawHero();
+    drawMinis();
+  }
   serviceEightmuLeds();
   if (link.cardOnline && link.lastStatus && now - link.lastStatus > 3000) {
     link.lastStatus = 0;
@@ -1046,8 +1952,8 @@ function frame(now) {
 // ============================================================================
 function init() {
   readColors();
-  const last = store.get('nestedcircles.last.v1', null);
-  if (last && Array.isArray(last.values) && last.values.length === PAGES &&
+  const last = store.get('nestedcircles.last.v2', null);
+  if (last && Array.isArray(last.values) && last.values.length === 4 &&
       last.values.every(r => Array.isArray(r) && r.length === NP && r.every(v => Number.isInteger(v) && v >= 0 && v <= 127))) {
     state.values = last.values;
     state.shape = Number.isInteger(last.shape) && last.shape < SHAPES.length ? last.shape : -1;
@@ -1056,13 +1962,31 @@ function init() {
     if (typeof last.partials === 'number') state.partials = clamp(last.partials, 1, 8);
     if (typeof last.stretch === 'number') state.stretch = clamp(last.stretch, 0, 0.5);
     state.lock = !!last.lock;
+    state.fmType = Number.isInteger(last.fmType) ? clamp(last.fmType, 0, 3) : state.fmType;
+    state.example = Number.isInteger(last.example) && last.example < EXAMPLES.length ? last.example : -1;
+    if (typeof last.fmKnob === 'number') state.fmKnob = clamp(last.fmKnob, 0, 10);
+    if (Number.isInteger(last.fmSteps)) state.fmSteps = clamp(last.fmSteps, 0, 12);
+    if (typeof last.fmDrone === 'boolean') state.fmDrone = last.fmDrone;
+    if (last.mode === 1) setTimeout(() => setMode(1, false));
   }
   buildFaders();
   view.turnsPerSec = Math.pow(10, +$('in-speed').value) * 25;
   $('btn-connect').addEventListener('click', connect);
   $('btn-rescan').addEventListener('click', connect);
   $('btn-listen').addEventListener('click', toggleListen);
-  $('btn-sync').addEventListener('click', sync);
+  $('btn-sync').addEventListener('click', () => state.mode === 1 ? fmTrigger() : sync());
+  document.querySelectorAll('nav.modes button').forEach((b, i) => b.addEventListener('click', () => setMode(i, true)));
+  buildTypes(); buildFMFaders();
+  $('fm-pitch').addEventListener('input', (e) => { state.note = +e.target.value; changed(); });
+  $('fm-knob').addEventListener('input', (e) => { state.fmKnob = +e.target.value; changed(); });
+  $('fm-steps').addEventListener('input', (e) => { state.fmSteps = +e.target.value; changed(); });
+  $('fm-speed').addEventListener('input', (e) => { hero.scroll = +e.target.value; changed(false); });
+  $('fm-drone').addEventListener('change', (e) => { state.fmDrone = e.target.checked; if (!state.fmDrone) fmTrigger(); changed(); });
+  $('fm-paused').addEventListener('change', (e) => { hero.paused = e.target.checked; });
+  $('fm-trigger').addEventListener('click', fmTrigger);
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && state.mode === 1 && !/INPUT|TEXTAREA|BUTTON/.test(e.target.tagName)) { e.preventDefault(); fmTrigger(); }
+  });
   $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its settings.'); });
   $('btn-send').addEventListener('click', () => { sendAll(); say('Sent these settings to the card.'); });
   $('in-pitch').addEventListener('input', (e) => { state.note = +e.target.value; changed(); });
@@ -1077,6 +2001,7 @@ function init() {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); changed(false); });
   if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. Everything else here works.');
   else say('Press “Connect card & 8mu” to reach the card. Until then this page works on its own: try “Listen in the browser”.');
+  FM = fmModel();
   changed(false);
   requestAnimationFrame(frame);
 }

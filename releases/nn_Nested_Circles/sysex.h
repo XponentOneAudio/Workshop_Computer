@@ -6,27 +6,42 @@
 // (7D is the MIDI 'non-commercial' manufacturer ID, 4E is 'N').
 // All values are 7-bit; wider values are sent as two bytes, high 7 bits first.
 //
-// Partial values are in 8mu fader units, 0-127, sent page by page (3 pages
-// of 8 partials): LEVEL, PHASE, FREQUENCY.
+// Fader values are in 8mu fader units, 0-127, sent page by page (4 pages
+// of 8): the additive pages LEVEL, PHASE, FREQUENCY, then the FM faders
+// (carrier ratio, modulator ratio, modulator fine, depth, feedback, decay,
+// env > depth, env > level).
 //
 // Web -> card
 //   HELLO    01                       card replies with STATE
-//   SET      03 page partial value    one partial value
-//   SET_ALL  04 version values[24]    every partial value
-//   PAGE     05 page                  page shown on the Computer's LEDs
-//   SHAPE    06 shape                 load a built-in shape (0-5, as kShapes
+//   SET      03 page fader value      one fader value (page 0-3)
+//   SET_ALL  04 version values[32] type   every fader value, and the FM type
+//   PAGE     05 page                  additive page (0-2) shown on the LEDs
+//   SHAPE    06 shape                 load an additive shape (0-5, as kShapes
 //                                     in main.cpp); card replies with STATE
 //   PING     09                       sent every second; STATUS flows while
 //                                     pings keep arriving
-//   SYNC     0A                       reset every circle to its start phase
+//   SYNC     0A                       additive: every circle to its start;
+//                                     FM: trigger the envelope
+//   MODE     0B mode                  0 additive, 1 FM; card replies with STATE
+//   FM_TYPE  0C type                  0 linear, 1 exponential, 2 through-zero,
+//                                     3 phase modulation
+//   EXAMPLE  0D example               load an FM example (0-5, as kExamples
+//                                     in main.cpp); card replies with STATE
 //
 // Card -> web
-//   STATE    02 version page values[24]
-//   STATUS   07 note(2) partials stretch flags
+//   STATE    02 version mode page values[32] type
+//            sent in reply, and whenever the card's shape, example, FM type
+//            or mode changes from its own panel or 8mu
+//   STATUS   07 note(2) partials stretch flags mode type depth(2) steps env
 //            note        base pitch in 1/8 semitones (MIDI note * 8)
-//            partials    how many partials sound, 0-127 for 1 to 8
-//            stretch     stretch setting, 0-127 for 0 to 0.5
-//            flags       bit 0 switch up (harmonic lock), bit 1 8mu on card
+//            partials    additive: how many partials sound, 0-127 for 1 to 8
+//            stretch     additive: stretch, 0-127 for 0 to 0.5
+//            flags       bit 0 switch up (harmonic lock / drone),
+//                        bit 1 8mu on card
+//            mode, type  as MODE and FM_TYPE
+//            depth       FM: depth from X and CV In 2, in thousandths
+//            steps       FM: modulator ratio steps added by Y, 0-12
+//            env         FM: envelope, 0-127
 
 #ifndef NESTED_SYSEX_H
 #define NESTED_SYSEX_H
@@ -38,8 +53,8 @@ namespace sysex
 
 static constexpr uint8_t kMfr = 0x7D;
 static constexpr uint8_t kProduct = 0x4E;
-static constexpr uint8_t kVersion = 1;
-static constexpr int kNumValues = 24;
+static constexpr uint8_t kVersion = 2;
+static constexpr int kNumValues = 32;
 
 enum Cmd : uint8_t
 {
@@ -52,6 +67,9 @@ enum Cmd : uint8_t
 	Status = 0x07,
 	Ping = 0x09,
 	Sync = 0x0A,
+	Mode = 0x0B,
+	FMType = 0x0C,
+	Example = 0x0D,
 };
 
 // Collects one SysEx message from a byte stream.  Feed() returns true when
@@ -59,7 +77,7 @@ enum Cmd : uint8_t
 // then in cmd, payload and length.
 struct Parser
 {
-	static constexpr int kMax = 40;
+	static constexpr int kMax = 48;
 	uint8_t buf[kMax];
 	int n = 0;
 	bool in = false;
@@ -117,8 +135,8 @@ inline int Put14(uint8_t *out, int32_t v)
 	return 2;
 }
 
-static constexpr int kStateLen = 4 + 2 + kNumValues + 1;
-static constexpr int kStatusLen = 4 + 2 + 3 + 1;
+static constexpr int kStateLen = 4 + 3 + kNumValues + 1 + 1;
+static constexpr int kStatusLen = 4 + 2 + 5 + 2 + 2 + 1;
 
 } // namespace sysex
 

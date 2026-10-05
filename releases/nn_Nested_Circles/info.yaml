@@ -1,9 +1,9 @@
 draft: false
 Name: Nested Circles
-short-description: "An additive oscillator - eight sine waves drawn as circles turning on circles - edited from a Music Thing 8mu, with a web app that animates the circles and explains the Fourier series behind them"
+short-description: "Additive and FM synthesis, explained - eight sine waves drawn as circles turning on circles, or two operators bending each other four ways - edited from a Music Thing 8mu, with a web app that animates and explains both"
 Language: C++ (ComputerCard)
 Creator: XponentOneAudio
-Version: "0.1.0"
+Version: "0.2.0"
 Status: Beta
 License: MIT
 Editor: web
@@ -20,47 +20,54 @@ contact:
 
 uf2:
   - path: UF2/nested_circles.uf2
-    name: Nested Circles 0.1.0
+    name: Nested Circles 0.2.0
 
 tags:
   - synth
   - oscillator
   - additive
+  - fm
   - educational
   - usb-host
   - midi
   - 8mu
 
 summary: |
-  An additive oscillator, made to be looked at as well as listened to. Eight
-  sine waves - partials - are added together. Each is a circle turning at its
-  own speed, and the circles are nested, each riding on the rim of the one
-  before, so the outermost point traces a more complicated waveform. That is a
-  Fourier series, and the web app draws it, slowed right down, alongside its
-  spectrum and short explanations with links to read further.<br><br>
+  Two ways of building complex sounds from sine waves, made to be looked at
+  as well as listened to. Hold the switch down for a second (or the 8mu's
+  button D) to swap between them. The web app animates each, slowed right
+  down, with its spectrum, explanations and links to read further, and plays
+  them in the browser too.<br><br>
 
-  The eight partials are edited from a Music Thing 8mu. Its faders are the
-  eight partials and its buttons choose what they change: A is LEVEL (each
-  circle's size), B is PHASE (where it starts) and C is FREQUENCY (how fast it
-  turns). Frequency defaults to the harmonic series - the middle of each
-  fader is exactly partial n at n times the fundamental - and either side
-  detunes it by up to 12 semitones, for inharmonic, bell-like sounds. D loads
-  the next of six built-in shapes: saw, square, triangle, sine, pulse and bell.
-  After a page change the faders pick up, so nothing jumps.<br><br>
+  <b>Additive.</b> Eight sine waves - partials - are added together. Each is a
+  circle turning at its own speed, and the circles are nested, each riding on
+  the rim of the one before, so the outermost point traces a more complicated
+  waveform: a Fourier series. The 8mu's faders are the eight partials and its
+  buttons choose what they change: A is LEVEL, B is PHASE and C is FREQUENCY,
+  which defaults to the harmonic series, either side detuning a partial by up
+  to 12 semitones. D loads the next of six shapes: saw, square, triangle,
+  sine, pulse and bell. X fades the partials in one by one and Y stretches
+  the harmonic series as stiff piano strings do.<br><br>
 
-  The X knob fades the partials in one by one, to hear and see a Fourier
-  series converge, and Y stretches the harmonic series as stiff piano strings
-  do. Audio Out 2 is the same circles read on the other axis, so the two
-  outputs into a scope's X-Y mode draw the circles' path.<br><br>
+  <b>FM.</b> Two operators: a modulator bends a carrier, in one of four ways,
+  chosen by the 8mu's buttons - A linear FM (stopping at 0Hz, as an ordinary
+  oscillator does), B exponential FM (in octaves, as 1V/oct), C through-zero
+  FM, and D phase modulation, as in Yamaha's DX7. The faders set the carrier
+  and modulator ratios, fine tune, depth, feedback and a decaying envelope on
+  depth and level, triggered at Pulse In 1. Six examples - vibrato, clarinet,
+  electric piano, bell, feedback and a deep 1:1 to compare the four types -
+  load from Pulse In 2.<br><br>
 
-  Without an 8mu the card plays a sawtooth, under the panel controls.
+  After a page, mode or example change the faders pick up, so nothing jumps.
+  Without an 8mu the card starts as a sawtooth (additive) or the clarinet
+  (FM), under the panel controls.
 
 panel:
   inputs:
     - id: AudioIn1
-      name: Stretch
-      type: cv
-      description: Added to the Y knob.
+      name: Stretch / FM in
+      type: audio
+      description: "Additive: stretch, added to Y. FM: an external modulator, added to the modulator."
     - id: AudioIn2
       name: Unused
     - id: CVIn1
@@ -68,26 +75,26 @@ panel:
       type: cv
       description: 1V/oct, added to the Main knob.
     - id: CVIn2
-      name: Partials
+      name: Partials / Depth
       type: cv
-      description: Added to the X knob.
+      description: "Added to the X knob: partials (additive) or depth (FM)."
     - id: PulseIn1
-      name: Sync
+      name: Sync / Trigger
       type: pulse
-      description: Every circle back to its start phase.
+      description: "Additive: every circle back to its start phase. FM: starts the envelope, with both operators from 0."
     - id: PulseIn2
-      name: Next shape
+      name: Next shape / example
       type: pulse
-      description: Loads the next built-in shape.
+      description: Loads the next additive shape, or the next FM example.
   outputs:
     - id: AudioOut1
       name: Out
       type: audio
-      description: The sum of the partials - the height of the outermost circle.
+      description: "Additive: the sum of the partials, the height of the outermost circle. FM: the carrier, modulated."
     - id: AudioOut2
-      name: Shadow
+      name: Shadow / Modulator
       type: audio
-      description: The same partials as cosines - the outermost circle's position across. Into a scope's X-Y mode with Audio Out 1, it draws the circles' path.
+      description: "Additive: the partials as cosines - into a scope's X-Y mode with Audio Out 1, it draws the circles' path. FM: the modulator."
     - id: CVOut1
       name: Pitch
       type: cv
@@ -97,46 +104,46 @@ panel:
     - id: PulseOut1
       name: Square
       type: pulse
-      description: Square wave at the fundamental, high for the first half of each turn of the first circle.
+      description: Square wave at the pitch.
     - id: PulseOut2
       name: Unused
 
 controls:
   switch:
     up:
-      name: Harmonic lock
-      description: Every partial at its exact harmonic, ignoring the FREQUENCY page and stretch.
+      name: Lock / Drone
+      description: "Additive: harmonic lock, every partial at its exact harmonic. FM: drone, the envelope held at its peak."
     middle:
-      name: Free
-      description: The FREQUENCY page and stretch apply.
+      name: Free / Envelope
+      description: "Additive: the FREQUENCY page and stretch apply. FM: the envelope decays after each trigger at Pulse In 1."
     down:
-      name: Next shape
-      description: Momentary. Each tap loads the next shape - saw, square, triangle, sine, pulse, bell.
+      name: Next / Swap mode
+      description: "Momentary. A tap loads the next additive shape, or the next FM type. Held for a second, it swaps between additive and FM."
   knobs:
     - main:
         name: Pitch
         description: C1 to C7.
       x:
-        name: Partials
-        description: How many partials sound, 1 to 8, each fading in as the knob turns.
+        name: Partials / Depth
+        description: "Additive: how many partials sound, 1 to 8, each fading in. FM: depth, added to fader 4."
       y:
-        name: Stretch
-        description: Moves partial n from n times the fundamental to n^(1 + stretch) times, stretch 0 to 0.5. Switch in the middle.
+        name: Stretch / Ratio
+        description: "Additive: stretch, partial n at n^(1 + stretch) times the fundamental, 0 to 0.5. FM: up to 12 steps up the modulator ratio list."
   leds:
     - display: list
       items:
         - id: LED0
-          name: Page A / partial 1
-          description: With an 8mu or the web app, LEDs 0-2 show the page (A-C) and LED 3 flashes when a shape loads. Without one, LEDs 0-3 show the levels of partials 1-4.
+          name: Page or type A
+          description: "Additive with an 8mu or the web app: LEDs 0-2 show the page (A-C) and LED 3 flashes when a shape loads; without, LEDs 0-3 show partials 1-4's levels. FM: LEDs 0-3 show the FM type. All light briefly on a mode swap."
         - id: LED1
-          name: Page B / partial 2
+          name: Page or type B
         - id: LED2
-          name: Page C / partial 3
+          name: Page or type C
         - id: LED3
-          name: Shape / partial 4
+          name: Shape or type D
         - id: LED4
-          name: Square
-          description: Follows Pulse Out 1.
+          name: Square / Envelope
+          description: "Additive: follows Pulse Out 1. FM: the envelope."
         - id: LED5
           name: 8mu / web app
           description: Lit while an 8mu, or the web app, is connected.
