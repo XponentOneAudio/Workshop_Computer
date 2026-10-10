@@ -269,7 +269,9 @@ Each bird is one **syrinx voice**, computed per sample at 48 kHz:
 ## 5. Roadmap
 
 **Phase 0: Analysis toolchain (offline, Python). This is the key step for
-"convincing".**
+"convincing".** *Toolchain built: see
+[`tools/budgie_analysis`](../../tools/budgie_analysis/README.md). It still
+needs real recordings and threshold calibration.*
 
 - Collect recordings: xeno-canto has many *Melopsittacus undulatus*
   recordings (check each one's licence; we export *parameters*, not samples).
