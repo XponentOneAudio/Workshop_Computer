@@ -1,0 +1,13 @@
+# Cycle benchmark for budgie_voice.h. Not part of the card firmware.
+cmake_minimum_required(VERSION 3.13)
+include(../../pico_sdk_import.cmake)
+project(budgie_bench C CXX ASM)
+set(CMAKE_CXX_STANDARD 17)
+pico_sdk_init()
+add_executable(budgie_bench bench.cpp)
+target_include_directories(budgie_bench PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../..)
+target_link_libraries(budgie_bench pico_stdlib)
+pico_set_binary_type(budgie_bench copy_to_ram)
+pico_enable_stdio_uart(budgie_bench 1)
+pico_enable_stdio_usb(budgie_bench 0)
+pico_add_extra_outputs(budgie_bench)

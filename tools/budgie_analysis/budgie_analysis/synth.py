@@ -8,7 +8,7 @@ what the card would get.
 """
 
 import numpy as np
-from scipy.signal import butter, lfilter
+from scipy.signal import lfilter
 
 N_F0 = 5
 N_AMP = 4
@@ -45,6 +45,28 @@ def quantise(m):
     return q
 
 
+NOISE_MIN_HZ, NOISE_MAX_HZ = 200, 16000
+NOISE_MIN_BW = 200
+NOISE_Q_RANGE = (0.3, 20.0)
+
+
+def noise_filter(centre, bw, sr):
+    """RBJ band-pass (0 dB peak) at `centre` with bandwidth `bw`, plus the gain
+    that brings uniform [-1, 1] noise through it to the RMS of a unit sine.
+    The firmware uses exactly this design."""
+    c = float(np.clip(centre, NOISE_MIN_HZ, NOISE_MAX_HZ))
+    bw = float(max(NOISE_MIN_BW, bw))
+    Q = float(np.clip(c / bw, *NOISE_Q_RANGE))
+    w0 = 2 * np.pi * c / sr
+    alpha = np.sin(w0) / (2 * Q)
+    a0 = 1 + alpha
+    b = np.array([alpha, 0.0, -alpha]) / a0
+    a = np.array([1.0, -2 * np.cos(w0) / a0, (1 - alpha) / a0])
+    # noise bandwidth of this filter is (pi/2)(c/Q); uniform noise has variance 1/3
+    g = np.sqrt(1.5 * sr / (np.pi * c / Q))
+    return b, a, g
+
+
 def render(q, sr, rng, gain=None):
     """Render one quantised template. gain overrides the template's level."""
     n = max(1, int(round(q["dur_ms"] * sr / 1000)))
@@ -69,13 +91,8 @@ def render(q, sr, rng, gain=None):
     mix = q["noise_mix"] / 255 if nf else 1.0
     noise = np.zeros(n)
     if mix > 0:
-        c, bw = q["noise_centre_hz"], max(200, q["noise_bw_hz"])
-        lo, hi = max(100.0, c - bw / 2), min(0.45 * sr, c + bw / 2)
-        if hi <= lo:
-            lo, hi = 0.5 * hi, hi
-        b, a = butter(1, [lo, hi], btype="bandpass", fs=sr)
-        noise = lfilter(b, a, rng.standard_normal(n))
-        noise *= np.sqrt(0.5) / (np.sqrt(np.mean(noise ** 2)) + 1e-12)
+        b, a, g = noise_filter(q["noise_centre_hz"], q["noise_bw_hz"], sr)
+        noise = g * lfilter(b, a, rng.uniform(-1, 1, n))
     sig = (1 - mix) * tonal + mix * noise
     env = np.interp(tf, np.array(q["amp_t"]) / 255, np.array(q["amp"], float) / 255)
     fade = min(n // 2, int(0.0005 * sr))

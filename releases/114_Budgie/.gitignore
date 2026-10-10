@@ -1,0 +1,5 @@
+build-prof/
+host/render
+host/card_sim
+host/*.bin
+host/tour.wav

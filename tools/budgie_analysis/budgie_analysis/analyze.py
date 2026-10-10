@@ -73,6 +73,7 @@ def run(paths, out_dir, cfg, labels=None, clusters=0, resynth=False):
     trans = sequence.transition_matrix(seqs)
 
     chosen = export.choose_templates(all_els, X, cfg["export"]["max_templates_per_category"])
+    chosen.sort(key=lambda i: CATEGORIES.index(all_els[i]["label"]))  # header order
     templates = [synth.quantise(all_els[i]) for i in chosen]
     for i in chosen:
         all_els[i]["template"] = True

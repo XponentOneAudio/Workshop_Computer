@@ -1,0 +1,106 @@
+draft: true
+Name: Budgie
+short-description: A budgerigar voice built from analysed recordings. Phase 1 is the Phonetics Lab, for auditioning each type of warble element.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: WIP
+License: MIT
+date-created: 2026-10-10
+date-updated: 2026-10-10
+tags:
+  - synthesizer
+  - generative
+
+summary: |
+  Budgie synthesises budgerigar chirps and chatter from element templates measured from
+  recordings by the `tools/budgie_analysis` toolchain. This first version is the
+  **Phonetics Lab**. Main picks one of the seven warble element categories, X picks a
+  variant, Y bends its most telling parameter, and Z down or Pulse In 1 triggers it.
+  Out 1 plays the element on its own. Out 2 plays it as a whole syllable.
+  **The bundled data is a synthetic placeholder until real recordings are analysed.**
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: Pitch
+      description: Transposes both voices, roughly 1 V/oct
+      type: cv
+    - id: CVIn2
+      name: Length
+      description: Element duration, x0.5 to x2 across the CV range
+      type: cv
+    - id: PulseIn1
+      name: Trigger
+      description: Plays the selected element on Out 1, and the syllable on Out 2 unless Pulse In 2 is patched
+      type: pulse
+    - id: PulseIn2
+      name: Syllable trigger
+      description: When patched, triggers the syllable on Out 2 on its own
+      type: pulse
+
+  outputs:
+    - id: AudioOut1
+      name: Element
+      description: The selected element on its own
+      type: audio
+    - id: AudioOut2
+      name: Syllable
+      description: Consonant-like click, the element, then a softer, lower, longer coda
+      type: audio
+    - id: CVOut1
+      name: Pitch trace
+      description: Out 1 pitch contour, 1 V/oct with 0 V at 1 kHz, held through silences
+      type: cv
+    - id: CVOut2
+      name: Envelope
+      description: Out 1 amplitude envelope
+      type: cv
+    - id: PulseOut1
+      name: Onset
+      description: 2 ms trigger at the start of each Out 1 element
+      type: pulse
+    - id: PulseOut2
+      name: Gate
+      description: High while Out 1 is sounding
+      type: pulse
+
+controls:
+  switch:
+    up:
+      name: Auto
+      description: Plays the selection over and over, with a 250 ms rest between plays
+    middle:
+      name: Manual
+      description: Waits for Z down or Pulse In 1
+    tap:
+      name: Trigger
+      description: Plays the selected element (Out 1) and syllable (Out 2)
+
+  knobs:
+    - main:
+        name: Category
+        description: "Seven zones: A alarm-like, B contact-like, C long harmonic, D short harmonic, E noisy, F click, G soft call"
+      x:
+        name: Variant
+        description: Moves through the recorded templates in the category
+      y:
+        name: Bend
+        description: "Centre is as recorded. A: harshness. B and G: pitch excursion. C and D: upper harmonics. E: noise colour. F: left darker, right click trains."
+
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: A alarm-like
+        - id: LED1
+          name: B contact-like
+        - id: LED2
+          name: C long harmonic
+        - id: LED3
+          name: D short harmonic
+        - id: LED4
+          name: E noisy
+        - id: LED5
+          name: F click
+          description: Soft calls (G) light all six LEDs dimly. The lit LED follows the Out 1 envelope.

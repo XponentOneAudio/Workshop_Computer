@@ -191,10 +191,15 @@ Two boot modes, following the 105 Voder convention:
 | **Main** | Select category A–G (and Compound) |
 | **X** | Variant within category, moving through stored real contours |
 | **Y** | The "most important" dimension for that category: FM depth for B, harmonicity for C/D, noise colour for E, train rate for F |
-| **Z up / middle** | Single element / phonotactic syllable (onset + nucleus + coda) |
+| **Z up / middle** | Auto-play / wait for triggers |
 | **Z down / Pulse In 1** | Trigger |
 | **CV In 1/2** | Pitch / duration scaling |
-| **Outputs** | As in Aviary. The CV outs make it easy to scope the contours. |
+| **Outputs** | Out 1 plays the single element. Out 2 plays the phonotactic syllable (onset + nucleus + coda). The CV outs make it easy to scope the contours. |
+
+*As built (card 114):* the first draft used Z up/middle to choose between
+element and syllable. That doesn't work, because Z down is momentary and
+springs back to middle, so it can't trigger while the switch is latched up.
+Out 2 now always carries the syllable instead.
 
 This mode is the "explore the language" part of the brief. It's also the
 fastest way to tune each element against real recordings.
@@ -291,7 +296,8 @@ needs real recordings and threshold calibration.*
 
 **Phase 1: Element synth plus Phonetics Lab mode.** Two voices, the full
 element recipe set, and stored templates. Tune each category against Phase 0
-references.
+references. *Built: see [`releases/114_Budgie`](../../releases/114_Budgie/README.md).
+It still needs testing on hardware and real-recording data.*
 
 **Phase 2: Grammar.** Phonotactic syllables, the Markov/motif engine, rhythm,
 and the mood mapping. This produces Aviary Solo mode.
