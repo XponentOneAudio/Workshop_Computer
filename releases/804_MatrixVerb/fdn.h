@@ -133,41 +133,28 @@ public:
 		hinL[hinPos] = hinL[hinPos + kHist] = int16_t(Clip(inL48, 32767));
 		hinR[hinPos] = hinR[hinPos + kHist] = int16_t(Clip(inR48, 32767));
 
-		// The network's work is shared over each pair of samples: the first
-		// reads the lines, the second mixes them and writes them back.  The
-		// rate changes are shared the same way: the first sample makes the
-		// next input frame (from the pair just finished) and the in-between
-		// output sample; the second makes the wet frame.
+		// The network's work is shared over each pair of samples.  The first
+		// (which also has all the control work) reads the lines, makes the
+		// wet frame, and works out the output sample that goes between it
+		// and the last one; the second makes the input frame from the pair
+		// just finished, mixes the lines and writes them back.
 		int32_t wl, wr;
 		if (!odd)
 		{
-			const int16_t *pl = hinL + hinPos + kHist - (kHbTaps - 1);
-			const int16_t *pr = hinR + hinPos + kHist - (kHbTaps - 1);
-			frameL = Decimate(pl);
-			frameR = Decimate(pr);
 			ReadLines();
-			// The output between the last two frames' centre samples.  A
-			// proper interpolation can peak a little between two limited
-			// frames, as a true peak can, so it's held to the ceiling too.
-			const int16_t *ql = foutL + foutPos + kFrames - (2 * kHbK - 1);
-			const int16_t *qr = foutR + foutPos + kFrames - (2 * kHbK - 1);
-			int32_t c = ceiling;
-			wl = Interpolate(ql);
-			wr = Interpolate(qr);
-			wl = wl > c ? c : (wl < -c ? -c : wl);
-			wr = wr > c ? c : (wr < -c ? -c : wr);
-		}
-		else
-		{
-			WriteLines(frameL, frameR);
-			// The new wet frame: muted while clearing, DC removed, limited,
-			// then into the interpolator's history
-			int32_t w0 = Clip((int32_t(int64_t(accL) * outGain >> 12)), 1 << 20);
-			int32_t w1 = Clip((int32_t(int64_t(accR) * outGain >> 12)), 1 << 20);
-			w0 = int32_t((int64_t(w0) * wetMute) >> 15);
-			w1 = int32_t((int64_t(w1) * wetMute) >> 15);
-			w0 -= OnePole(dcL, w0, kDcCoef);
-			w1 -= OnePole(dcR, w1, kDcCoef);
+			// The new wet frame: level, muted while clearing, DC removed,
+			// limited, then into the interpolator's history.  Every step
+			// stays in 32 bits: the sum is at most 8 x full scale x 0.35,
+			// so times +12dB it fits, and it is held to 16 x full scale.
+			int32_t w0 = Clip((accL * outGain) >> 12, 1 << 19);
+			int32_t w1 = Clip((accR * outGain) >> 12, 1 << 19);
+			if (wetMute < 32768)
+			{
+				w0 = MulGain(w0, wetMute);
+				w1 = MulGain(w1, wetMute);
+			}
+			w0 -= DcBlock(dcL, w0);
+			w1 -= DcBlock(dcR, w1);
 			Limit(w0, w1);
 			foutPos = (foutPos + 1) & (kFrames - 1);
 			foutL[foutPos] = foutL[foutPos + kFrames] = int16_t(w0);
@@ -176,6 +163,22 @@ public:
 			// kHbK frames back (the filter's delay)
 			wl = foutL[foutPos + kFrames - kHbK];
 			wr = foutR[foutPos + kFrames - kHbK];
+			// The output between that frame and the next, for the second
+			// sample.  A proper interpolation can peak a little between two
+			// limited frames, as a true peak can, so it's held to the
+			// ceiling too.
+			Interpolate(foutL + foutPos + kFrames - (2 * kHbK - 1), foutR + foutPos + kFrames - (2 * kHbK - 1), midL, midR);
+			int32_t c = ceiling;
+			midL = midL > c ? c : (midL < -c ? -c : midL);
+			midR = midR > c ? c : (midR < -c ? -c : midR);
+		}
+		else
+		{
+			int32_t frL, frR;
+			Decimate(hinL + hinPos + kHist - (kHbTaps - 1), hinR + hinPos + kHist - (kHbTaps - 1), frL, frR);
+			WriteLines(frL, frR);
+			wl = midL;
+			wr = midR;
 		}
 
 		// Dry and wet
@@ -232,26 +235,41 @@ private:
 	int16_t hinL[2 * kHist] = {}, hinR[2 * kHist] = {};
 	int16_t foutL[2 * kFrames] = {}, foutR[2 * kFrames] = {};
 	int hinPos = 0, foutPos = 0;
-	int32_t frameL = 0, frameR = 0;           // the next input frame, Q15
+	int32_t midL = 0, midR = 0;               // the output between two wet frames
 
 	// 48kHz to 24kHz: the filter centred kHbTaps / 2 samples back, taken
-	// once a pair.  p holds the last kHbTaps samples, oldest first.
-	static inline int32_t Decimate(const int16_t *p)
+	// once a pair, for both channels at once.  l and r hold the last
+	// kHbTaps samples, oldest first.
+	static inline void Decimate(const int16_t *l, const int16_t *r, int32_t &outL, int32_t &outR)
 	{
-		const int16_t *c = p + 2 * kHbK - 1;
-		int32_t acc = 8192 * int32_t(*c);
-		for (int j = 0; j < kHbK; j++) acc += kHb[j] * (int32_t(c[-(2 * j + 1)]) + int32_t(c[2 * j + 1]));
-		return (acc + 8192) >> 14;
+		const int16_t *cl = l + 2 * kHbK - 1, *cr = r + 2 * kHbK - 1;
+		int32_t al = 8192 * int32_t(*cl), ar = 8192 * int32_t(*cr);
+#pragma GCC unroll 12
+		for (int j = 0; j < kHbK; j++)
+		{
+			int32_t k = kHb[j];
+			al += k * (int32_t(cl[-(2 * j + 1)]) + int32_t(cl[2 * j + 1]));
+			ar += k * (int32_t(cr[-(2 * j + 1)]) + int32_t(cr[2 * j + 1]));
+		}
+		outL = (al + 8192) >> 14;
+		outR = (ar + 8192) >> 14;
 	}
 
 	// 24kHz to 48kHz, the sample halfway between frames kHbK and kHbK - 1
 	// back (doubled, as half the samples are the zeros put between frames).
-	// q holds the last 2 kHbK frames, oldest first.
-	static inline int32_t Interpolate(const int16_t *q)
+	// l and r hold the last 2 kHbK frames, oldest first.
+	static inline void Interpolate(const int16_t *l, const int16_t *r, int32_t &outL, int32_t &outR)
 	{
-		int32_t acc = 0;
-		for (int j = 0; j < kHbK; j++) acc += kHb[j] * (int32_t(q[kHbK - 1 - j]) + int32_t(q[kHbK + j]));
-		return (acc + 4096) >> 13;
+		int32_t al = 0, ar = 0;
+#pragma GCC unroll 12
+		for (int j = 0; j < kHbK; j++)
+		{
+			int32_t k = kHb[j];
+			al += k * (int32_t(l[kHbK - 1 - j]) + int32_t(l[kHbK + j]));
+			ar += k * (int32_t(r[kHbK - 1 - j]) + int32_t(r[kHbK + j]));
+		}
+		outL = (al + 4096) >> 13;
+		outR = (ar + 4096) >> 13;
 	}
 
 	// Lines
@@ -261,14 +279,14 @@ private:
 	int32_t glide[kLines] = {};               // its length, glided, Q8
 	uint32_t lfo[kLines] = {};
 	int32_t lp[kLines] = {};                  // damping filter states, Q19
-	int64_t hp[kLines] = {};                  // low cut states, Q35
+	int32_t hp[kLines] = {};                  // low cut states, Q23
 	int32_t f[kLines] = {};                   // filtered, for the matrix, Q15
 	int32_t accL = 0, accR = 0;               // the wet sum, Q15
 
 	// Coefficients, glided to the design's
 	int32_t g[kLines] = {}, gEff[kLines] = {}, damp[kLines] = {};
 	int32_t inL[kLines] = {}, inR[kLines] = {}, outL[kLines] = {}, outR[kLines] = {};
-	int16_t matCur[64] = {}, matPrev[64] = {}, matTgt[64] = {};
+	int16_t matCur[64] = {}, matPrev[64] = {}, matTgt[64] = {};   // Q13
 	int32_t matT = 4096;
 	static constexpr int32_t kMatStep = 86;   // the matrix crossfades in ~30ms
 	int32_t hpA = 171, toneA = 65536;
@@ -278,7 +296,7 @@ private:
 	int32_t ceiling = 23197;
 
 	// Input chain
-	int64_t toneL = 0, toneR = 0;
+	int32_t toneL = 0, toneR = 0;
 	int pw = 0;                   // predelay write position
 	int32_t pdCur = 0;            // predelay now, Q8 samples
 	int apPos[2][kStages] = {};
@@ -291,8 +309,7 @@ private:
 	int32_t tankEnv = 0;
 	int guardOver = 0;
 	int32_t limMin = 32768;
-	int64_t dcL = 0, dcR = 0;
-	static constexpr int32_t kDcCoef = 86;            // ~5Hz at 24kHz, Q16
+	int32_t dcL = 0, dcR = 0;
 
 	// The limiter, at 24kHz: the wet signal delayed by kLook - 1 frames
 	// (1.3ms), each frame's gain needed (Q15), the gain held and released,
@@ -303,6 +320,8 @@ private:
 	int32_t limNeed[kLook], limBox[kLook];
 	int32_t limSum = 32768 * kLook, limHeld = 32768;
 	int limPos = 0, limHoldCount = 0;
+	int32_t limLeast = 32768;
+	int limLeastAge = 0;
 	bool limInit = false;
 
 	// Peaks over a control period
@@ -318,11 +337,30 @@ private:
 		if (v > p) p = v;
 	}
 
-	// One-pole low-pass, state Q16 of the signal
-	static inline int32_t OnePole(int64_t &y, int32_t x, int32_t a)
+	// One-pole low-pass for a signal within 16 bits, its state with 12
+	// more bits (Q16 coefficient)
+	static inline int32_t OnePole32(int32_t &y, int32_t x, int32_t a)
 	{
-		y += (((int64_t(x) << 16) - y) * a) >> 16;
-		return int32_t((y + 32768) >> 16);
+		y += (((x << 12) - y) >> 14) * (a >> 2);
+		return (y + 2048) >> 12;
+	}
+
+	// A sample (within 2^19) times a Q15 gain, in 32 bits: at full
+	// precision within twice full scale, which is nearly always, and with 4
+	// bits less beyond it
+	static inline int32_t MulGain(int32_t x, int32_t g)
+	{
+		if (x < 65536 && x > -65536) return (x * (g >> 1)) >> 14;
+		return ((x >> 4) * g) >> 11;
+	}
+
+	// DC blocker, a one-pole of about 4Hz at 24kHz (a coefficient of
+	// 1/1024, so it's all shifts), its state with 10 more bits than the
+	// signal (held to 2^19).  Returns the DC to take away.
+	static inline int32_t DcBlock(int32_t &y, int32_t x)
+	{
+		y += ((x << 10) - y) >> 10;
+		return y >> 10;
 	}
 
 	// tanh, Q15 in (32768 = 1.0) and out
@@ -380,9 +418,27 @@ private:
 		int32_t c = ceiling;
 		int32_t a = l < 0 ? -l : l, b = r < 0 ? -r : r;
 		if (b > a) a = b;
-		limNeed[limPos] = a > c ? int32_t((int64_t(c) << 15) / a) : 32768;
-		int32_t m = 32768;
-		for (int k = 0; k < kLook; k++) if (limNeed[k] < m) m = limNeed[k];
+		int32_t need = a > c ? (c << 15) / a : 32768;
+		limNeed[limPos] = need;
+		// The least need in the window, kept as frames come and go: only
+		// when the least one leaves is the window searched again (and while
+		// nothing is being limited, every need is 32768, so it never is)
+		if (need <= limLeast)
+		{
+			limLeast = need;
+			limLeastAge = 0;
+		}
+		else if (++limLeastAge >= kLook)
+		{
+			limLeast = 32768;
+			for (int k = 0; k < kLook; k++)
+			{
+				int age = (limPos - k) & (kLook - 1);
+				int32_t v = limNeed[k];
+				if (v < limLeast || (v == limLeast && age < limLeastAge)) {limLeast = v; limLeastAge = age;}
+			}
+		}
+		int32_t m = limLeast;
 		if (m <= limHeld)
 		{
 			limHeld = m;
@@ -396,13 +452,19 @@ private:
 		}
 		limSum += limHeld - limBox[limPos];
 		limBox[limPos] = limHeld;
-		int32_t gain = limSum / kLook;
+		int32_t gain = limSum >> 5;
+		static_assert(kLook == 32, "the moving average divides by shifting");
 		// The delay: write this frame, read the one kLook - 1 frames back
 		limDelL[limPos] = l;
 		limDelR[limPos] = r;
 		limPos = (limPos + 1) & (kLook - 1);
-		l = int32_t((int64_t(limDelL[limPos]) * gain) >> 15);
-		r = int32_t((int64_t(limDelR[limPos]) * gain) >> 15);
+		l = limDelL[limPos];
+		r = limDelR[limPos];
+		if (gain < 32768)
+		{
+			l = MulGain(l, gain);
+			r = MulGain(r, gain);
+		}
 		// (rounding down can leave a negative sample one past it)
 		l = l > c ? c : (l < -c ? -c : l);
 		r = r > c ? c : (r < -c ? -c : r);
@@ -463,11 +525,13 @@ private:
 			// Decay and damping: lp = g y, low-passed (Q19)
 			int32_t u = (y * gEff[i]) >> 11;
 			lp[i] += ((u - lp[i]) * damp[i]) >> 10;
-			// Low cut, its state with 16 more bits so that even at 10Hz it
-			// follows the smallest signal rather than sticking (which would
-			// leave a little DC circulating for ever)
-			hp[i] += ((int64_t(lp[i]) << 16) - hp[i]) * hpA >> 16;
-			f[i] = (lp[i] - int32_t((hp[i] + 32768) >> 16)) >> 4;
+			// Low cut.  Its state has 8 bits below the signal's, so that
+			// even at 10Hz it follows to within a step or so rather than
+			// sticking (which would leave DC circulating for ever); lp is
+			// at most 2^20 (Q19), so the state fits in 25 bits and the
+			// product (2^17 x a coefficient under 2^14) in 31.
+			hp[i] += ((((lp[i] << 4) - hp[i]) >> 8) * hpA) >> 8;
+			f[i] = (lp[i] - (hp[i] >> 4)) >> 4;
 		}
 		accL = sl >> 14;
 		accR = sr >> 14;
@@ -481,8 +545,8 @@ private:
 		int32_t xr = Clip((frR * gin) >> 12, 32767);
 		if (toneA < 65536)
 		{
-			xl = OnePole(toneL, xl, toneA);
-			xr = OnePole(toneR, xr, toneA);
+			xl = OnePole32(toneL, xl, toneA);
+			xr = OnePole32(toneR, xr, toneA);
 		}
 		gPre[0][pw] = int16_t(xl);
 		gPre[1][pw] = int16_t(xr);
@@ -517,10 +581,13 @@ private:
 		// The matrix, and back into the lines
 		for (int i = 0; i < kLines; i++)
 		{
+			// Q13: a row of a normalised matrix has length at most 1, so the
+			// sum is at most |f| (8^0.5 x 2^16) x 2^13, within 31 bits
 			const int16_t *row = matCur + i * kLines;
 			int32_t acc = 0;
-			for (int j = 0; j < kLines; j++) acc += (row[j] * f[j]) >> 3;
-			int32_t x = (acc >> 11) + ((xl * inL[i] + xr * inR[i]) >> 14);
+#pragma GCC unroll 8
+			for (int j = 0; j < kLines; j++) acc += row[j] * f[j];
+			int32_t x = (acc >> 13) + ((xl * inL[i] + xr * inR[i]) >> 14);
 			if (impLine == i) x += imp;
 			else if (impLine == -1) x += (imp * (inL[i] + inR[i])) >> 14;
 			Peak(peakX, x);

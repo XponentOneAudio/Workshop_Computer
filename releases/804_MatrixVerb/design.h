@@ -267,8 +267,8 @@ struct Controls
 
 struct Design
 {
-	int16_t mat[64];          // Q14: the matrix, normalised so it never gains
-	int16_t matFreeze[64];    // Q14: the same, normalised to lose (almost) nothing
+	int16_t mat[64];          // Q13: the matrix, normalised so it never gains
+	int16_t matFreeze[64];    // Q13: the same, normalised to lose (almost) nothing
 	uint16_t len[kLines];     // samples at 24kHz, pairwise coprime
 	int32_t g[kLines];        // Q15 decay gain at low frequencies, 32768 = 1
 	int32_t damp[kLines];     // Q10 damping one-pole coefficient, 1024 = none
@@ -309,7 +309,7 @@ public:
 		// norm is at most 1 (never gains), or exactly 1 with Normalise up
 		// (loses nothing, so the decay is all down to the Decay fader).
 		// Freeze always uses the lossless version.  0.999 leaves room for
-		// rounding to Q14 (at most 8 x 0.5/16384 = 0.00025).
+		// rounding to Q13 (at most 8 x 0.5/8192 = 0.0005).
 		bool matChanged = !haveMat || memcmp(c.v, lastMat, 64) != 0
 			|| lb[LbBlend] != lastBlend || lb[LbNormalise] != lastNorm;
 		if (matChanged)
@@ -337,8 +337,8 @@ public:
 			kf *= 0.999f;
 			for (int i = 0; i < 64; i++)
 			{
-				mat[i] = int16_t(lroundf(a[i] * k * 16384.0f));
-				matFreeze[i] = int16_t(lroundf(a[i] * kf * 16384.0f));
+				mat[i] = int16_t(lroundf(a[i] * k * 8192.0f));
+				matFreeze[i] = int16_t(lroundf(a[i] * kf * 8192.0f));
 			}
 			sigmaMilli = int32_t(lroundf(sigma * 1000.0f));
 			scaleMilli = int32_t(lroundf(k * 1000.0f));

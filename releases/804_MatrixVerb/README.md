@@ -294,6 +294,11 @@ card runs on its own either way. The protocol is documented in
   ```
   cd test && g++ -O2 -std=c++17 -I.. host_test.cpp -o host_test && ./host_test
   ```
+- `test/cycles` estimates the engine's CPU time on the RP2040 by running it,
+  built for the Cortex-M0+, in an emulator (`./build.sh && python3 emu.py
+  bench`; needs `pip install unicorn capstone`). The engine takes about 64%
+  of each sample's time on average, at most about 62% on the busier sample
+  of each pair, leaving the rest for the card's control work.
 
 ## Building
 

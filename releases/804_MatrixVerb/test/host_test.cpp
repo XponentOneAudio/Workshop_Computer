@@ -3,7 +3,7 @@
 //   g++ -O2 -std=c++17 -I.. host_test.cpp -o host_test && ./host_test
 //
 // Checks that the lengths are always pairwise coprime, that the normalised
-// matrix (as the audio uses it, in Q14) never amplifies, that the decay time
+// matrix (as the audio uses it, in Q13) never amplifies, that the decay time
 // comes out as set, and that no settings at all - random matrices, infinite
 // decay, full drive, +12dB in, loud noise - get the wet signal past the
 // ceiling or the network past full scale.  Pass a file name to also write
@@ -24,18 +24,18 @@ static uint32_t rng = 12345;
 static uint32_t Rand() {rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng;}
 static int32_t Noise(int32_t amp) {return int32_t((int64_t(int32_t(Rand())) * amp) >> 31);}
 
-// Spectral norm of a Q14 matrix, in double, by power iteration on A'A run
+// Spectral norm of a Q13 matrix, in double, by power iteration on A'A run
 // to convergence (fine for a test)
-static double NormQ14(const int16_t *m)
+static double NormQ13(const int16_t *m)
 {
 	double v[8], w[8];
 	for (int i = 0; i < 8; i++) v[i] = 1.0 + 0.1 * i;
 	double s = 0;
 	for (int it = 0; it < 3000; it++)
 	{
-		for (int i = 0; i < 8; i++) {w[i] = 0; for (int j = 0; j < 8; j++) w[i] += m[i * 8 + j] / 16384.0 * v[j];}
+		for (int i = 0; i < 8; i++) {w[i] = 0; for (int j = 0; j < 8; j++) w[i] += m[i * 8 + j] / 8192.0 * v[j];}
 		double n = 0;
-		for (int i = 0; i < 8; i++) {v[i] = 0; for (int j = 0; j < 8; j++) v[i] += m[j * 8 + i] / 16384.0 * w[j]; n += v[i] * v[i];}
+		for (int i = 0; i < 8; i++) {v[i] = 0; for (int j = 0; j < 8; j++) v[i] += m[j * 8 + i] / 8192.0 * w[j]; n += v[i] * v[i];}
 		n = sqrt(n);
 		if (n < 1e-300) return 0;
 		for (int i = 0; i < 8; i++) v[i] /= n;
@@ -89,7 +89,7 @@ static void TestNorm()
 		Designer dz;
 		Design d;
 		dz.Compute(Make(v), d);
-		double n = NormQ14(d.mat), nf = NormQ14(d.matFreeze);
+		double n = NormQ13(d.mat), nf = NormQ13(d.matFreeze);
 		if (n > worst) worst = n;
 		if (nf > worst) worst = nf;
 		CHECK(n < 1.0, "matrix norm %f >= 1 (test %d)", n, t);
