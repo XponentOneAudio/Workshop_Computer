@@ -192,13 +192,16 @@ card is built in layers:
 3. **A guard** watches the network: if it sits near full scale for a quarter
    of a second, the guard pulls every line's feedback down (about 50 dB a
    second) until it falls, then lets go over a second or so.
-4. **The wet signal** has its DC removed and passes a **peak limiter** with
-   an instant attack, so it never passes the **Ceiling** (−3 dBFS unless you
-   change it).
+4. **The wet signal** has its DC removed and passes a **look-ahead peak
+   limiter**: it sees peaks 1.3 ms ahead and turns the gain down smoothly
+   before they arrive, holds it for 30 ms, then lets it back over about
+   170 ms, so it never passes the **Ceiling** (−3 dBFS unless you change it)
+   and never clips the waveform.
 5. **Power-up, Clear, and loading a preset** mute the wet signal and empty
    the network, then fade back in, so a preset that sounds nothing like the
    last can't arrive with a bang.
-6. **The output is soft clipped**, dry and wet together.
+6. **The output is soft clipped** above three quarters of full scale, dry
+   and wet together.
 7. **Switch down is a panic button**: it mutes and empties the network for as
    long as it's held.
 

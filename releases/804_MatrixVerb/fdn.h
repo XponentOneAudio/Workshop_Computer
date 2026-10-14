@@ -22,11 +22,12 @@
 //   3. A guard watches the network's level: kept near full scale for a
 //      quarter of a second, it pulls every line's feedback down until the
 //      level falls, then lets go slowly.
-//   4. The wet signal has its DC removed and goes through a peak limiter
-//      with an instant attack, so it never passes the Ceiling.
+//   4. The wet signal has its DC removed and goes through a look-ahead peak
+//      limiter (1.3ms), which turns it down smoothly before a peak arrives,
+//      so it never passes the Ceiling and never clips.
 //   5. Power-up, Clear and loading a preset mute the wet signal and empty
 //      the network, then fade back in.
-//   6. The final output is soft clipped.
+//   6. The final output is soft clipped above three quarters of full scale.
 //
 // Nothing here touches the hardware, so test/host_test.cpp builds it on a
 // computer too.
@@ -146,43 +147,25 @@ public:
 		{
 			// The input's frame: the average of the pair, rounded to nearest
 			WriteLines((aaL[1] + prevL + 1) >> 1, (aaR[1] + prevR + 1) >> 1);
-			// The new wet frame; out at 48kHz, halfway from the last
+			// The new wet frame: muted while clearing, DC removed, limited,
+			// then out at 48kHz, halfway from the last (a point between two
+			// limited frames is under the ceiling too)
 			int32_t w0 = Clip((int32_t(int64_t(accL) * outGain >> 12)), 1 << 20);
 			int32_t w1 = Clip((int32_t(int64_t(accR) * outGain >> 12)), 1 << 20);
+			w0 = int32_t((int64_t(w0) * wetMute) >> 15);
+			w1 = int32_t((int64_t(w1) * wetMute) >> 15);
+			w0 -= OnePole(dcL, w0, kDcCoef);
+			w1 -= OnePole(dcR, w1, kDcCoef);
+			Limit(w0, w1);
 			wl = (wetPrevL + w0) >> 1;
 			wr = (wetPrevR + w1) >> 1;
 			wetPrevL = w0;
 			wetPrevR = w1;
 		}
 
-		// Wet: muted while clearing, DC removed, then the peak limiter.  The
-		// limiter's envelope jumps straight to any peak, so the gain it
-		// gives always holds the wet signal at or under the ceiling.
-		wl = int32_t((int64_t(wl) * wetMute) >> 15);
-		wr = int32_t((int64_t(wr) * wetMute) >> 15);
-		wl -= OnePole(dcL, wl, kDcCoef);
-		wr -= OnePole(dcR, wr, kDcCoef);
-		int32_t a = wl < 0 ? -wl : wl, b = wr < 0 ? -wr : wr;
-		if (b > a) a = b;
-		int32_t c = ceiling;
-		if (a > limEnv) limEnv = a;
-		else limEnv -= (limEnv >> 12) + 1;
-		if (limEnv < c) limEnv = c;
-		int32_t gain = 32768;
-		if (limEnv > c)
-		{
-			gain = int32_t((int64_t(c) << 15) / limEnv);
-			wl = int32_t((int64_t(wl) * gain) >> 15);
-			wr = int32_t((int64_t(wr) * gain) >> 15);
-		}
-		// (rounding down can leave a negative sample one past it)
-		wl = wl > c ? c : (wl < -c ? -c : wl);
-		wr = wr > c ? c : (wr < -c ? -c : wr);
-		if (gain < limMin) limMin = gain;
-
 		// Dry and wet
-		outLeft = SoftClip((inL48 * dryGain + wl * wetGain) >> 12);
-		outRight = SoftClip((inR48 * dryGain + wr * wetGain) >> 12);
+		outLeft = OutputClip((inL48 * dryGain + wl * wetGain) >> 12);
+		outRight = OutputClip((inR48 * dryGain + wr * wetGain) >> 12);
 
 		// Levels
 		Peak(peakIn, inL48); Peak(peakIn, inR48);
@@ -261,9 +244,20 @@ private:
 	static constexpr int32_t kGuardLevel = 22937;     // 0.7 of full scale
 	int32_t tankEnv = 0;
 	int guardOver = 0;
-	int32_t limEnv = 0, limMin = 32768;
+	int32_t limMin = 32768;
 	int64_t dcL = 0, dcR = 0;
-	static constexpr int32_t kDcCoef = 44;            // ~5Hz at 48kHz, Q16
+	static constexpr int32_t kDcCoef = 86;            // ~5Hz at 24kHz, Q16
+
+	// The limiter, at 24kHz: the wet signal delayed by kLook - 1 frames
+	// (1.3ms), each frame's gain needed (Q15), the gain held and released,
+	// and the last kLook held gains with their sum, for the moving average
+	static constexpr int kLook = 32;
+	static constexpr int kLimHold = 720;              // 30ms
+	int32_t limDelL[kLook] = {}, limDelR[kLook] = {};
+	int32_t limNeed[kLook], limBox[kLook];
+	int32_t limSum = 32768 * kLook, limHeld = 32768;
+	int limPos = 0, limHoldCount = 0;
+	bool limInit = false;
 
 	// Peaks over a control period
 	int32_t peakIn = 0, peakOut = 0, peakWet = 0, peakX = 0;
@@ -308,6 +302,65 @@ private:
 		if (a > 0x3FFFFF) a = 0x3FFFFF;
 		int32_t r = 16384 + (Tanh((a - 16384) * 2) >> 1);
 		return v < 0 ? -r : r;
+	}
+
+	// The very last stage, on dry and wet together: clean to three quarters
+	// of full scale, then rounding off into full scale
+	static inline int32_t OutputClip(int32_t v)
+	{
+		int32_t a = v < 0 ? -v : v;
+		if (a <= 24576) return v;
+		if (a > 0x3FFFFF) a = 0x3FFFFF;
+		int32_t r = 24576 + (Tanh((a - 24576) * 4) >> 2);
+		return v < 0 ? -r : r;
+	}
+
+	// The look-ahead limiter, on one frame of the wet signal at 24kHz.  Each
+	// frame's needed gain (ceiling / its peak) goes into a window of the
+	// next kLook frames; the gain held is the least in the window, so it
+	// comes down before any peak arrives.  A moving average over the same
+	// kLook frames turns that into a smooth ramp of 1.3ms, and since every
+	// gain it averages is at most what the frame leaving the delay needs,
+	// that frame is always at or under the ceiling, with no clipping.  The
+	// held gain stays down for 30ms after the last peak (so it doesn't
+	// ripple within a low note's cycle), then comes back over about 170ms.
+	void Limit(int32_t &l, int32_t &r)
+	{
+		if (!limInit)
+		{
+			limInit = true;
+			for (int k = 0; k < kLook; k++) limNeed[k] = limBox[k] = 32768;
+		}
+		int32_t c = ceiling;
+		int32_t a = l < 0 ? -l : l, b = r < 0 ? -r : r;
+		if (b > a) a = b;
+		limNeed[limPos] = a > c ? int32_t((int64_t(c) << 15) / a) : 32768;
+		int32_t m = 32768;
+		for (int k = 0; k < kLook; k++) if (limNeed[k] < m) m = limNeed[k];
+		if (m <= limHeld)
+		{
+			limHeld = m;
+			limHoldCount = kLimHold;
+		}
+		else if (limHoldCount > 0) limHoldCount--;
+		else
+		{
+			limHeld += ((32768 - limHeld) >> 12) + 1;
+			if (limHeld > m) limHeld = m;
+		}
+		limSum += limHeld - limBox[limPos];
+		limBox[limPos] = limHeld;
+		int32_t gain = limSum / kLook;
+		// The delay: write this frame, read the one kLook - 1 frames back
+		limDelL[limPos] = l;
+		limDelR[limPos] = r;
+		limPos = (limPos + 1) & (kLook - 1);
+		l = int32_t((int64_t(limDelL[limPos]) * gain) >> 15);
+		r = int32_t((int64_t(limDelR[limPos]) * gain) >> 15);
+		// (rounding down can leave a negative sample one past it)
+		l = l > c ? c : (l < -c ? -c : l);
+		r = r > c ? c : (r < -c ? -c : r);
+		if (gain < limMin) limMin = gain;
 	}
 
 	// Into a line: drive, the soft clip, and the level brought back down
