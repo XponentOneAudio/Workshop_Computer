@@ -1,0 +1,163 @@
+draft: false
+Name: MatrixVerb
+short-description: "An experimental reverb lab: an eight-line feedback delay network whose 8x8 matrix is played directly from a Music Thing 8mu, with coprime delay lengths, layered safety, flash presets and a web editor"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: web
+date-created: 2026-10-14
+date-updated: 2026-10-14
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/matrixverb.uf2
+    name: MatrixVerb 0.1.0
+
+tags:
+  - reverb
+  - effect
+  - stereo
+  - experimental
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  A laboratory for designing reverbs. It is a feedback delay network: eight
+  delay lines whose outputs are mixed back into their inputs by an 8x8
+  matrix, and every one of the matrix's 64 values is on a Music Thing 8mu,
+  one row per page, for direct control. It is for exploring how the matrix,
+  the delay lengths and the usual reverb controls shape the sound, rather
+  than an everyday reverb.<br><br>
+
+  The 8mu's button A steps through the eight matrix rows (the Computer's
+  top-left LED flashes the row's number: once for row 1, six times for row
+  6), B is the delay lengths, C the reverb controls (predelay, decay,
+  damping, low cut, tone, modulation, width, mix) and then a lab page
+  (normalise, blend, drive, diffuse, mod rate, levels and the limiter's
+  ceiling), and D each line's input, output and pan. Delay lengths are
+  always snapped so that no two share a factor. Holding B and moving a
+  fader loads one of eight matrix templates - Hadamard, Householder,
+  identity, a single loop, pairs, random orthogonal, negative and zero -
+  and holding C clicks into a line, to hear how the matrix spreads it.<br><br>
+
+  It is made to be safe whatever the settings: the matrix is normalised by
+  its spectral norm so it can never gain energy, every line saturates
+  softly, a guard pulls the feedback down if the network sits near full
+  scale, the wet signal passes a peak limiter, and power-up, presets and
+  the switch's clear position all start from silence.<br><br>
+
+  Eight presets live in the card's own flash, saved and loaded with the 8mu
+  alone. An optional web editor (web/index.html, Chrome or Edge) shows the
+  matrix as a grid you can drag, analyses it (singular values and
+  eigenvalues), lists each delay's prime factors, simulates the impulse
+  response to look at and listen to, keeps unlimited presets and backs up
+  the card's. With a computer plugged into the Computer's USB socket the
+  card becomes a USB MIDI device for the editor, and an 8mu plugged into
+  the computer is passed on through it.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Left in
+      type: audio
+      description: Left input. With nothing in Audio In 2, it feeds both sides.
+    - id: AudioIn2
+      name: Right in
+      type: audio
+      description: Right input. Unpatched, it takes a copy of Audio In 1.
+    - id: CVIn1
+      name: Decay
+      type: cv
+      description: Decay time, 1V/oct - each volt doubles it. Added to the Main knob.
+    - id: CVIn2
+      name: Size
+      type: cv
+      description: Every delay length, 1V/oct, snapped coprime again. Added to the X knob.
+    - id: PulseIn1
+      name: Click
+      type: pulse
+      description: A click into the network, through the input vector.
+    - id: PulseIn2
+      name: Freeze
+      type: pulse
+      description: Freezes the network while high.
+  outputs:
+    - id: AudioOut1
+      name: Left out
+      type: audio
+      description: Left output, dry and wet as the Mix fader sets.
+    - id: AudioOut2
+      name: Right out
+      type: audio
+      description: Right output, dry and wet as the Mix fader sets.
+    - id: CVOut1
+      name: Envelope
+      type: cv
+      description: Envelope of the wet signal, 0 to 5V.
+    - id: CVOut2
+      name: Safety
+      type: cv
+      description: How far the limiter and guard are turning the wet signal down, 0V (not at all) to 5V.
+    - id: PulseOut1
+      name: Limiting
+      type: pulse
+      description: High while the limiter or guard is acting (more than 1dB).
+    - id: PulseOut2
+      name: Frozen
+      type: pulse
+      description: High while frozen.
+
+controls:
+  switch:
+    up:
+      name: Freeze
+      description: The input is cut and the network holds what is in it.
+    middle:
+      name: Run
+      description: Normal running.
+    down:
+      name: Clear
+      description: >
+        Momentary. While held, the wet signal is muted and the network
+        emptied; on release it fades back in. A panic button.
+  knobs:
+    - main:
+        name: Decay
+        description: Multiplies the decay time, x1/4 (fully down) to x4 (fully up), x1 at the centre.
+      x:
+        name: Size
+        description: Multiplies every delay length, x1/4 to x4, x1 at the centre. The lengths are snapped coprime again and the lines glide to them, bending the pitch.
+      y:
+        name: Damping
+        description: Darker (down) or brighter (up) than the Damping fader.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page A / wet
+          description: With an 8mu or the web editor, LEDs 0-3 show the button whose page is selected. On the matrix pages (A) LED 0 flashes the row's number, then pauses. Without one, LED 0 is the wet level.
+        - id: LED1
+          name: Page B / network
+          description: Without an 8mu or editor, the network's level.
+        - id: LED2
+          name: Page C / frozen
+          description: C's pages (blinking for the second). Without an 8mu or editor, lit while frozen.
+        - id: LED3
+          name: Page D / safety
+          description: D's pages (blinking slowly for the second, fast for the third). Without an 8mu or editor, lit while the limiter or guard is acting.
+        - id: LED4
+          name: Input / freeze
+          description: The input level; fully lit while frozen.
+        - id: LED5
+          name: 8mu / editor
+          description: Lit while an 8mu, or the web editor, is connected. Blinks when a preset is saved or loaded, and flickers while the limiter or guard is acting.

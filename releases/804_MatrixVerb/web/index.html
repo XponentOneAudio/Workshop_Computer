@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MatrixVerb editor</title>
+<!--
+  MATRIXVERB - web editor for the Music Thing Modular Workshop Computer card.
+  One static file, no network needed. Talks to the card over WebMIDI + SysEx
+  (protocol: ../sysex.h). The card works without this page; the page adds a
+  picture of the matrix and an analysis of it, the delay lines, a simulated
+  impulse response to look at and listen to, preset management (in this
+  browser and in the card's own flash), and a way to use an 8mu plugged into
+  this computer rather than into the card.
+
+  The fader units (0-127, as an 8mu sends them) and every conversion below
+  mirror ../design.h. Visual style shared with the CVSeq, WaveSeq and
+  EightTrack editors.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --s0: #0b7d78; --s1: #3a6fb0; --s2: #7a55b0; --s3: #b0457a;
+    --s4: #b5560a; --s5: #8a7a12; --s6: #3f8a3a; --s7: #5a6470;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --s0: #4fd1c5; --s1: #7aa8f0; --s2: #b49af0; --s3: #f08ab8;
+      --s4: #f0a35e; --s5: #d8c85a; --s6: #84d07c; --s7: #a8b2bc;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  h3 { font-size: 12px; margin: 10px 0 4px; color: var(--muted); font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .muown { padding: 2px 8px; font-size: 12px; border-color: var(--accent); }
+  .muown.away { color: var(--muted); border-color: var(--line); border-style: dashed; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  button.on { background: var(--warm-soft); border-color: var(--warm); }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  #msg { padding: 6px 16px; min-height: 1.4em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 360px; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card > h2 { display: flex; align-items: center; gap: 8px; }
+  .card > h2 .fold { margin-left: auto; padding: 0 7px; min-width: 26px; height: 22px; line-height: 1; font-size: 14px;
+    color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  .card > h2 .fold:hover { color: var(--ink); border-color: var(--accent); }
+  .card.folded > :not(h2) { display: none; }
+  .card.folded > h2 { margin-bottom: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  .jacks { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+  .jacks th, .jacks td { text-align: left; vertical-align: top; padding: 4px 0; border-top: 1px solid var(--line); }
+  .jacks th { white-space: nowrap; padding-right: 10px; font-weight: 600; }
+  .jacks td { color: var(--muted); }
+  .jacks tr.grp th { border-top: 0; padding-top: 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .jacks tr.grp:first-child th { padding-top: 0; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .readout .sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .readout.alert { background: var(--warm-soft); border-color: var(--warm); }
+  .meter { display: grid; grid-template-columns: 2.6em 1fr; gap: 2px 6px; align-items: center; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .meter span.bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; position: relative; }
+  .meter span.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .notes { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .notes p { margin: 6px 0 0; }
+  .notes b { color: var(--ink); font-weight: 600; }
+  .notes .jacks { margin-top: 4px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+  /* Matrix */
+  .matrix-wrap { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); gap: 12px; }
+  @media (max-width: 640px) { .matrix-wrap { grid-template-columns: minmax(0, 1fr); } }
+  #matrix { aspect-ratio: 1 / 1; height: auto; touch-action: none; cursor: ns-resize; }
+  #analysis { height: 400px; }
+  .tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+
+  /* Fader pages */
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tab { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; background: var(--panel); }
+  .tab b { display: inline-block; min-width: 1.4em; padding: 0 3px; text-align: center; margin-right: 4px; border-radius: 4px; background: var(--track); }
+  .tab.on { border-color: var(--accent); background: var(--accent-soft); }
+  .tab.on b { background: var(--accent); color: var(--panel); }
+  .tab.rowtab { padding: 6px 7px; }
+  .tab.rowtab b { margin-right: 0; }
+  .tab.gap { margin-left: 8px; }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; }
+  .fader.diag { background: var(--accent-soft); }
+  .fader .name { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .fader .slot { position: relative; height: 150px; width: 32px; }
+  .fader input[type=range] {
+    writing-mode: vertical-lr; direction: rtl; width: 32px; height: 150px; margin: 0;
+    cursor: pointer;
+  }
+  .fader .ghost {
+    position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm);
+    pointer-events: none; display: none;
+  }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .fader .desc { font-size: 11px; color: var(--muted); text-align: center; min-height: 2.6em; overflow-wrap: anywhere; }
+  @media (max-width: 640px) { .faders { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+  #lines { height: 200px; }
+  #ir { height: 260px; }
+
+  /* Presets */
+  .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .slotbox { border: 1px solid var(--line); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .slotbox.cur { border-color: var(--accent); background: var(--accent-soft); }
+  .slotbox.empty canvas { opacity: .25; }
+  .slotbox .sn { font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; }
+  .slotbox .sn span { font-weight: 400; color: var(--muted); }
+  .slotbox canvas { height: 30px; }
+  .slotbox .acts { display: flex; gap: 3px; }
+  .slotbox .acts button { flex: 1; padding: 2px 0; font-size: 12px; min-width: 0; }
+  .slotbox .acts button[data-a=erase] { flex: 0 0 26px; }
+  #presets { list-style: none; padding: 0; margin: 0; max-height: 380px; overflow: auto; }
+  #presets li { display: flex; align-items: center; gap: 6px; padding: 4px; border-radius: 6px; }
+  #presets li:hover { background: var(--accent-soft); }
+  #presets li canvas { width: 30px; height: 30px; flex: none; }
+  #presets li .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #presets li .tag { font-size: 11px; color: var(--muted); }
+  #presets li button, #presets li select { padding: 2px 6px; font-size: 12px; }
+  #presets li select { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  .preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  details { margin-top: 16px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel); color: var(--ink); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MatrixVerb</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <button id="mu-owner" class="muown" hidden></button>
+  <div class="spacer"></div>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-read" disabled>Read from card</button>
+  <button id="btn-send" disabled>Send to card</button>
+  <button id="btn-freeze" title="Freeze: the input is cut and the network holds what's in it. Adds to the module's switch and Pulse In 2. (F)">Freeze</button>
+  <button id="btn-clear" title="Empty the network: the wet signal is muted until it has emptied, then fades back in. (X)">Clear</button>
+  <button id="btn-click" title="A click into the network, through the input vector, as Pulse In 1 does. (Space)">Click</button>
+  <button id="btn-reset">Reset</button>
+</header>
+<div id="msg"></div>
+
+<main>
+  <div style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Network</h2>
+      <div class="readouts">
+        <div class="readout"><div class="k">Decay (RT60)</div><div class="v" id="ro-decay">-</div><div class="sub" id="ro-decay-sub"></div></div>
+        <div class="readout"><div class="k">Size</div><div class="v" id="ro-size">-</div><div class="sub" id="ro-size-sub"></div></div>
+        <div class="readout"><div class="k">Damping</div><div class="v" id="ro-damp">-</div><div class="sub" id="ro-damp-sub"></div></div>
+        <div class="readout"><div class="k">Matrix</div><div class="v" id="ro-norm">-</div><div class="sub" id="ro-norm-sub"></div></div>
+        <div class="readout" id="ro-safety-box"><div class="k">Safety</div><div class="v" id="ro-safety">-</div><div class="sub" id="ro-safety-sub"></div></div>
+        <div class="readout"><div class="k">Levels</div>
+          <div class="meter"><span>In</span><span class="bar"><i id="m-in"></i></span><span>Net</span><span class="bar"><i id="m-tank"></i></span><span>Out</span><span class="bar"><i id="m-out"></i></span></div>
+          <div class="sub" id="ro-load" title="The longest the card's audio took over one sample lately, as a share of the time it has. Over 100% means samples are being missed (heard as digital noise)."></div>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Matrix</h2>
+      <div class="matrix-wrap">
+        <div>
+          <canvas id="matrix" aria-label="The feedback matrix: row r is what line r takes from each line. Teal is positive, orange negative. Drag a cell up or down to change it; double-click to zero it."></canvas>
+          <div class="caption" id="matrix-caption"></div>
+        </div>
+        <div>
+          <canvas id="analysis" aria-label="Analysis of the matrix: its singular values, and its eigenvalues on the unit circle"></canvas>
+          <div class="caption" id="analysis-caption"></div>
+        </div>
+      </div>
+      <h3>Templates (hold B and move a fader on the 8mu)</h3>
+      <div class="tools" id="templates"></div>
+      <h3>Tools</h3>
+      <div class="tools">
+        <button class="small" id="t-orth" title="Replace the matrix with the nearest orthogonal (lossless) matrix: the polar decomposition, quantised to the faders">Orthogonalise</button>
+        <button class="small" id="t-rand" title="A new random orthogonal matrix">Random orthogonal</button>
+        <button class="small" id="t-signs" title="Flip the signs of random rows and columns: an orthogonal matrix stays orthogonal">Random signs</button>
+        <button class="small" id="t-transpose" title="Swap rows and columns">Transpose</button>
+        <button class="small" id="t-negate" title="Every value times -1">Negate</button>
+        <button class="small" id="t-shift" title="Every line's row and column move one line on: the same network, with the lines renumbered">Rotate lines</button>
+        <button class="small" id="t-undo" title="Undo the last template or tool (Ctrl/⌘+Z)" disabled>Undo</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Faders</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="page-hint"></div>
+    </section>
+    <section class="card">
+      <h2>Delay lines</h2>
+      <canvas id="lines" aria-label="Each delay line's length, with its prime factors"></canvas>
+      <div class="caption" id="lines-caption"></div>
+    </section>
+    <section class="card">
+      <h2>Impulse response (simulated)</h2>
+      <canvas id="ir" aria-label="A simulated impulse response: the first 300 ms as an echogram, then the decay of the whole response in dB"></canvas>
+      <div class="row" style="margin-top:8px">
+        <button class="small" id="ir-hear" title="Play the simulated impulse response">Hear the impulse</button>
+        <button class="small" id="ir-burst" title="Play a short burst of noise through the simulated reverb, dry then wet">Hear a burst</button>
+        <button class="small" id="ir-stop">Stop</button>
+        <span class="caption" id="ir-caption" style="margin-top:0"></span>
+      </div>
+    </section>
+  </div>
+  <aside style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Card presets</h2>
+      <div class="slots" id="slots"></div>
+      <div class="preset-actions">
+        <button id="btn-slots" disabled>Read card presets</button>
+      </div>
+      <div class="caption">Eight presets kept in the card's own flash, which the card loads with the 8mu alone (hold A and move a fader), and saves (hold D and move a fader). At power-up the card loads the last one saved or loaded. <b>Save</b> puts the settings here into the slot.</div>
+    </section>
+    <section class="card">
+      <h2>Browser presets</h2>
+      <ul id="presets"></ul>
+      <div class="preset-actions">
+        <button id="btn-save">Save current…</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-import">Import</button>
+        <button id="btn-backup" disabled title="Copy the card's eight presets into this browser">Back up card</button>
+        <input type="file" id="import-file" accept=".json,application/json" hidden>
+      </div>
+      <div class="caption">Presets in this browser, as many as you like. Click a name to load it (and send it to the card). <b>&rarr; slot</b> copies one into a card preset without loading it. <b>Back up card</b> copies the card's presets here; <b>Export</b> saves them all to a file.</div>
+    </section>
+    <section class="card">
+      <h2>Inputs &amp; outputs</h2>
+      <table class="jacks">
+        <tr class="grp"><th colspan="2">Inputs</th></tr>
+        <tr><th>Audio In 1, 2</th><td>Left and right in. With only Audio In 1 patched, it feeds both sides</td></tr>
+        <tr><th>CV In 1</th><td>Decay, 1 V/oct: each volt doubles it (added to Main)</td></tr>
+        <tr><th>CV In 2</th><td>Size, 1 V/oct (added to X)</td></tr>
+        <tr><th>Pulse In 1</th><td>A click into the network, through the input vector</td></tr>
+        <tr><th>Pulse In 2</th><td>Freeze, while high</td></tr>
+        <tr class="grp"><th colspan="2">Outputs</th></tr>
+        <tr><th>Audio Out 1, 2</th><td>Left and right out, dry and wet as the Mix fader sets</td></tr>
+        <tr><th>CV Out 1</th><td>Envelope of the wet signal, 0 to 5 V</td></tr>
+        <tr><th>CV Out 2</th><td>Safety: how far the limiter and guard are turning the wet signal down, 0 V (not at all) to 5 V</td></tr>
+        <tr><th>Pulse Out 1</th><td>High while the limiter or guard is acting</td></tr>
+        <tr><th>Pulse Out 2</th><td>High while frozen</td></tr>
+        <tr class="grp"><th colspan="2">Panel</th></tr>
+        <tr><th>Main</th><td>Decay multiplier, &times;&frac14; to &times;4, &times;1 at the centre</td></tr>
+        <tr><th>X</th><td>Size: every delay length &times;&frac14; to &times;4 (&times;1 at the centre), made coprime again</td></tr>
+        <tr><th>Y</th><td>Damping: darker (down) or brighter (up) than the Damping fader</td></tr>
+        <tr><th>Switch up</th><td>Freeze</td></tr>
+        <tr><th>Switch down</th><td>Clear (momentary): the wet signal muted and the network emptied while held</td></tr>
+      </table>
+    </section>
+    <section class="card">
+      <h2>8mu</h2>
+      <div class="notes">
+        <p>The 8mu can plug into the module (no computer needed) or into this computer, which passes it on to the card. Its eight faders are the eight lines; its buttons are acted on <b>when you let go</b>.</p>
+        <table class="jacks">
+          <tr><th>Short press</th><td>The page. Press the same button again for its next page:<br>A <b>Row 1</b> &rarr; Row 2 &rarr; &hellip; Row 8 of the matrix. The Computer's top-left LED flashes the row's number<br>B <b>Length</b><br>C <b>Reverb</b> &rarr; Lab<br>D <b>Input</b> &rarr; Output &rarr; Pan</td></tr>
+          <tr><th>Long press<br>(&frac12; s)</th><td>A: the previous row. C: clear the network. D: freeze on or off</td></tr>
+          <tr><th>Hold A + move<br>a fader</th><td>Load card preset 1-8 (the fader's number). Its LED flashes three times</td></tr>
+          <tr><th>Hold B + move<br>a fader</th><td>Load matrix template 1-8. Its LED flashes twice</td></tr>
+          <tr><th>Hold C + move<br>a fader</th><td>A click into that line, to hear how the matrix spreads it</td></tr>
+          <tr><th>Hold D + move<br>a fader</th><td>Save the settings as card preset 1-8. Its LED blinks fast</td></tr>
+          <tr><th>Faders</th><td>Pick up: after a page change a fader does nothing until it reaches (or passes) the stored value. While one is waiting, a dashed line on its on-screen fader shows where it is</td></tr>
+          <tr><th>LEDs</th><td>The stored values; on two-sided pages (matrix, input, output, pan), how far from the centre</td></tr>
+          <tr><th>Tilt</th><td>Back lifted lengthens the decay (up to &times;4), front lifted shortens it. Tipping left darkens, right brightens. Both past a dead zone of about 15&deg;</td></tr>
+        </table>
+      </div>
+    </section>
+    <section class="card">
+      <h2>How it works</h2>
+      <div class="notes">
+        <p>Eight delay lines run in a loop. Every sample, each line's output goes through its <b>decay</b> gain and <b>damping</b> filter, then the <b>matrix</b> mixes the eight back into the eight lines, with a share of the <b>input</b>. Each line's <b>output</b> share is heard, at its <b>pan</b>.</p>
+        <p><b>Normalising.</b> A matrix can amplify, and in a loop that runs away. So before it's used, the matrix is scaled by its <i>spectral norm</i> (its largest singular value, shown as &sigma;), so it can never gain energy. With <b>Normalise</b> up, it's scaled to exactly &sigma; = 1, so it loses nothing and the decay is all down to the Decay fader; down, a matrix is only ever scaled down, so a weak one (say, mostly zeros) dies away on its own. A matrix with every singular value 1 is <i>orthogonal</i>: it mixes without losing anything, which is what a smooth reverb wants. Uneven singular values make some patterns die faster than others.</p>
+        <p><b>Blend</b> fades between the identity (each line feeds only itself: eight separate combs, metallic) and the matrix. The <b>eigenvalues</b> show the matrix's own patterns: on the unit circle, lossless; inside it, dying.</p>
+        <p><b>Coprime lengths.</b> If two lines' lengths share a factor, their echoes pile up on the same moments and ring. So every length is snapped to the nearest that shares no factor with the lines before it (line 1 first): the factors are shown under each line.</p>
+        <p><b>Safety.</b> On top of the normalising: every line is written through a soft saturation, so nothing can grow past full scale; a guard pulls the feedback down if the network sits near full scale for a quarter of a second; the wet signal has its DC removed and passes a peak limiter set by <b>Ceiling</b>; power-up, Clear and loading a preset start from silence and fade in; and the output is soft clipped.</p>
+      </div>
+    </section>
+    <section class="card">
+      <h2>How it connects</h2>
+      <div class="caption" style="margin-top:0">
+        The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page isn't used.
+        <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>MatrixVerb</b>, and an 8mu plugged
+        into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.
+      </div>
+      <details>
+        <summary>Help</summary>
+        <ul class="caption">
+          <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
+          <li>Press <kbd>Connect card &amp; 8mu</kbd> and allow MIDI with SysEx when the browser asks.</li>
+          <li>On-screen faders: drag, or focus one and use the arrow keys. Double-click resets one to its default.</li>
+          <li>Matrix: click a row to show it on the faders; drag a cell up or down to change it; double-click a cell to zero it.</li>
+          <li>Keys: <kbd>1</kbd>-<kbd>8</kbd> matrix rows, <kbd>B</kbd> <kbd>C</kbd> <kbd>D</kbd> as the 8mu's buttons, <kbd>F</kbd> freeze, <kbd>X</kbd> clear, <kbd>Space</kbd> click, <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> undo a matrix tool.</li>
+          <li>The impulse response is simulated in this page, from the settings (with the card's knobs when it's connected). It leaves out the modulation, drive and the limiter, so the card sounds a little different, but the shape is the same.</li>
+          <li>Without a card the page still edits, simulates and keeps presets.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+<script>
+'use strict';
+// ============================================================================
+// Constants mirroring the firmware (design.h, main.cpp, sysex.h)
+// ============================================================================
+const NL = 8;                                   // lines: one per fader
+const PAGES = 14;                               // 8 matrix rows, length, reverb, lab, input, output, pan
+const NVALUES = PAGES * NL;
+const NSLOTS = 8;
+const P_LENGTH = 8, P_REVERB = 9, P_LAB = 10, P_INPUT = 11, P_OUTPUT = 12, P_PAN = 13;
+const RV = { PREDELAY: 0, DECAY: 1, DAMPING: 2, LOWCUT: 3, TONE: 4, MODDEPTH: 5, WIDTH: 6, MIX: 7 };
+const LB = { NORMALISE: 0, BLEND: 1, DRIVE: 2, DIFFUSE: 3, MODRATE: 4, INPUT: 5, OUTPUT: 6, CEILING: 7 };
+const RATE = 24000, MAX_LEN = 8150, MIN_LEN = 16;
+const TAB_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const LONG_PRESS_MS = 500;
+const HOLD_MOVE = 20;     // fader travel (of 127) needed while a button is held, as on the card
+const isRow = (pg) => pg >= 0 && pg < 8;
+function buttonOf(pg) { return isRow(pg) ? 0 : pg === P_LENGTH ? 1 : (pg === P_REVERB || pg === P_LAB) ? 2 : 3; }
+function layerOf(pg) { return isRow(pg) ? pg : pg === P_LENGTH ? 0 : (pg === P_REVERB || pg === P_LAB) ? pg - P_REVERB : pg - P_INPUT; }
+const twoSided = (pg) => isRow(pg) || pg === P_INPUT || pg === P_OUTPUT || pg === P_PAN;
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x4D, PROTOCOL_VERSION = 1;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, RESET: 6, STATUS: 7, MOTION: 8, PING: 9,
+              FREEZE: 10, CLEAR: 11, IMPULSE: 12, SAVE: 13, LOAD: 14, GET_SLOTS: 15, SLOTS: 16, STORE: 17, ERASE: 18, TEMPLATE: 19 };
+const NO_SLOT = 127;
+const FIRST_FADER_CC = 34, FIRST_MOTION_CC = 42;
+const BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+
+// design.h kLenTable: 24 * (8150/24)^(v/127), rounded
+const LEN_TABLE = [
+  24, 25, 26, 28, 29, 30, 32, 33, 35, 36, 38, 40, 42, 44, 46, 48,
+  50, 52, 55, 57, 60, 63, 66, 69, 72, 76, 79, 83, 87, 91, 95, 100,
+  104, 109, 114, 120, 125, 131, 137, 144, 150, 158, 165, 173, 181, 189, 198, 207,
+  217, 227, 238, 249, 261, 273, 286, 299, 313, 328, 344, 360, 377, 394, 413, 432,
+  453, 474, 496, 519, 544, 569, 596, 624, 653, 684, 716, 750, 785, 822, 860, 901,
+  943, 987, 1034, 1082, 1133, 1186, 1242, 1300, 1361, 1425, 1492, 1562, 1636, 1712, 1793, 1877,
+  1965, 2057, 2154, 2255, 2361, 2472, 2588, 2709, 2837, 2970, 3109, 3255, 3408, 3568, 3736, 3911,
+  4095, 4287, 4488, 4699, 4920, 5151, 5393, 5646, 5911, 6188, 6479, 6783, 7102, 7435, 7784, 8150,
+];
+const RANDOM_ORTHOGONAL = [
+  21, 59, 49, 44, 58, 75, 40, 95, 88, 79, 70, 57, 59, 98, 88, 103,
+  62, 91, 34, 45, 80, 94, 62, 32, 60, 60, 61, 75, 6, 84, 60, 46,
+  61, 92, 43, 114, 69, 60, 49, 77, 94, 35, 18, 57, 58, 54, 56, 74,
+  40, 73, 42, 62, 54, 41, 113, 67, 80, 102, 67, 37, 44, 32, 47, 72,
+];
+const TEMPLATE_NAMES = ['Hadamard', 'Householder', 'Identity', 'Loop', 'Pairs', 'Random', 'Negative', 'Zero'];
+const TEMPLATE_HINTS = [
+  'Every line feeds every other equally, with signs: the densest mixing, and orthogonal (lossless).',
+  'Every line feeds every other, mostly itself: dense but gentler. Orthogonal.',
+  'Each line feeds only itself: eight separate comb filters, metallic and pitched.',
+  'Each line feeds the next, round all eight: one long loop, so echoes repeat in a pattern.',
+  'Four separate pairs, each a 45° rotation: four small reverbs side by side.',
+  'A random orthogonal matrix: dense, lossless, with no particular structure.',
+  'Each line feeds itself inverted: hollow combs, with odd harmonics only.',
+  'No feedback at all: each line is heard once, eight single echoes.',
+];
+
+// ============================================================================
+// What a value means (design.h's mappings)
+// ============================================================================
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+const bipolar = (v) => v > 65 ? (v - 65) / 62 : v < 63 ? -(63 - v) / 63 : 0;
+function faderOf(x) {
+  const v = x > 0 ? Math.round(65 + x * 62) : x < 0 ? Math.round(63 + x * 63) : 64;
+  return clamp(v, 0, 127);
+}
+const decaySeconds = (v) => v >= 126 ? Infinity : 0.1 * Math.pow(300, v / 125);
+const lowCutHz = (v) => 10 * Math.pow(100, v / 127);
+const toneHz = (v) => v >= 127 ? 0 : 200 * Math.pow(2, v * 6 / 127);
+const predelayMs = (v) => 170 * (v / 127) * (v / 127);
+const modDepthSamples = (v) => 36 * (v / 127) * (v / 127);
+const modRateHz = (v) => 0.05 * Math.pow(100, v / 127);
+const driveOf = (v) => Math.pow(2, v * 3 / 127);
+const diffuseOf = (v) => 0.7 * v / 127;
+const gainDb = (v) => (v - 95) * 0.375;
+const ceilingDb = (v) => -30 + v * 29 / 127;
+const dbToGain = (db) => Math.pow(10, db / 20);
+
+function template(n) {
+  const m = new Array(64).fill(64);
+  for (let r = 0; r < NL; r++) for (let c = 0; c < NL; c++) {
+    let x = 0;
+    switch (n) {
+      case 0: { let b = r & c, k = 0; while (b) { k ^= b & 1; b >>= 1; } x = k ? -0.35355339 : 0.35355339; break; }
+      case 1: x = (r === c ? 1 : 0) - 0.25; break;
+      case 2: x = r === c ? 1 : 0; break;
+      case 3: x = c === (r + NL - 1) % NL ? 1 : 0; break;
+      case 4: if ((r >> 1) === (c >> 1)) x = ((r & 1) === 0 && (c & 1) === 1) ? -0.70710678 : 0.70710678; break;
+      case 5: m[r * NL + c] = RANDOM_ORTHOGONAL[r * NL + c]; continue;
+      case 6: x = r === c ? -1 : 0; break;
+      default: break;
+    }
+    m[r * NL + c] = faderOf(x);
+  }
+  return m;
+}
+const DEFAULT_REST = [
+  [82, 85, 88, 91, 94, 97, 100, 103],
+  [44, 66, 40, 20, 112, 24, 127, 64],
+  [127, 127, 0, 48, 40, 87, 95, 118],
+  [112, 16, 112, 112, 16, 112, 16, 16],
+  [112, 112, 16, 112, 16, 16, 112, 16],
+  [8, 120, 24, 104, 40, 88, 56, 72],
+];
+function defaultFlat() { return template(0).concat(DEFAULT_REST.flat()); }
+function defaultRows() { const f = defaultFlat(), out = []; for (let p = 0; p < PAGES; p++) out.push(f.slice(p * NL, p * NL + NL)); return out; }
+
+const gcd = (a, b) => { while (b) { const t = a % b; a = b; b = t; } return a; };
+// design.h SnapLengths: line 1 first, each the nearest length to its target
+// (above before below) sharing no factor with the lines before it
+function snapLengths(targets) {
+  const out = [];
+  for (let i = 0; i < NL; i++) {
+    const t = clamp(targets[i], MIN_LEN, MAX_LEN);
+    let best = t;
+    for (let k = 0; k < 4 * MAX_LEN; k++) {
+      const n = t + ((k & 1) ? (k + 1) / 2 : -(k / 2));
+      if (n < MIN_LEN || n > MAX_LEN) continue;
+      if (out.every(L => gcd(n, L) === 1)) { best = n; break; }
+    }
+    out.push(best);
+  }
+  return out;
+}
+function factorise(n) {
+  const f = [];
+  for (let p = 2; p * p <= n; p++) while (n % p === 0) { f.push(p); n /= p; }
+  if (n > 1) f.push(n);
+  return f;
+}
+function factorText(n) {
+  const f = factorise(n);
+  if (f.length === 1) return 'prime';
+  const parts = [];
+  for (let i = 0; i < f.length;) { let j = i; while (j < f.length && f[j] === f[i]) j++; parts.push(f[i] + (j - i > 1 ? sup(j - i) : '')); i = j; }
+  return parts.join('·');
+}
+const sup = (k) => String(k).split('').map(d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]).join('');
+
+// ============================================================================
+// Matrix maths (for the analysis and the tools)
+// ============================================================================
+const MAT = {
+  get(values) { const a = []; for (let i = 0; i < 64; i++) a.push(bipolar(values[i])); return a; },
+  blended(a, blend) { return a.map((x, i) => blend * x + ((i >> 3) === (i & 7) ? 1 - blend : 0)); },
+  ata(a) { const b = new Array(64).fill(0); for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { let s = 0; for (let k = 0; k < 8; k++) s += a[k * 8 + i] * a[k * 8 + j]; b[i * 8 + j] = s; } return b; },
+  // Symmetric eigen decomposition by Jacobi rotations: eigenvalues and
+  // eigenvectors (columns of v)
+  jacobi(sym) {
+    const b = sym.slice(), v = new Array(64).fill(0);
+    for (let i = 0; i < 8; i++) v[i * 8 + i] = 1;
+    for (let sweep = 0; sweep < 50; sweep++) {
+      let off = 0; for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) off += b[i * 8 + j] * b[i * 8 + j];
+      if (off < 1e-24) break;
+      for (let p = 0; p < 7; p++) for (let q = p + 1; q < 8; q++) {
+        const bpq = b[p * 8 + q]; if (Math.abs(bpq) < 1e-300) continue;
+        const theta = (b[q * 8 + q] - b[p * 8 + p]) / (2 * bpq);
+        const t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+        const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+        for (let k = 0; k < 8; k++) { const x = b[k * 8 + p], y = b[k * 8 + q]; b[k * 8 + p] = c * x - s * y; b[k * 8 + q] = s * x + c * y; }
+        for (let k = 0; k < 8; k++) { const x = b[p * 8 + k], y = b[q * 8 + k]; b[p * 8 + k] = c * x - s * y; b[q * 8 + k] = s * x + c * y; }
+        for (let k = 0; k < 8; k++) { const x = v[k * 8 + p], y = v[k * 8 + q]; v[k * 8 + p] = c * x - s * y; v[k * 8 + q] = s * x + c * y; }
+      }
+    }
+    const vals = []; for (let i = 0; i < 8; i++) vals.push(b[i * 8 + i]);
+    return { vals, vecs: v };
+  },
+  singular(a) { return MAT.jacobi(MAT.ata(a)).vals.map(x => Math.sqrt(Math.max(0, x))).sort((x, y) => y - x); },
+  // The nearest orthogonal matrix: the polar factor A (A'A)^(-1/2)
+  orthogonalise(a) {
+    let { vals, vecs } = MAT.jacobi(MAT.ata(a));
+    if (Math.min(...vals) < 1e-9) return MAT.orthogonalise(a.map((x, i) => x + ((i >> 3) === (i & 7) ? 0.02 : 0)));
+    const inv = new Array(64).fill(0);
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { let s = 0; for (let k = 0; k < 8; k++) s += vecs[i * 8 + k] * vecs[j * 8 + k] / Math.sqrt(vals[k]); inv[i * 8 + j] = s; }
+    const q = new Array(64).fill(0);
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { let s = 0; for (let k = 0; k < 8; k++) s += a[i * 8 + k] * inv[k * 8 + j]; q[i * 8 + j] = s; }
+    return q;
+  },
+  randomOrthogonal() {
+    const g = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    const cols = [];
+    while (cols.length < 8) {
+      let x = Array.from({ length: 8 }, g);
+      for (const c of cols) { const d = x.reduce((s, xi, i) => s + xi * c[i], 0); x = x.map((xi, i) => xi - d * c[i]); }
+      const n = Math.hypot(...x); if (n < 1e-6) continue;
+      cols.push(x.map(xi => xi / n));
+    }
+    const m = new Array(64); for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) m[i * 8 + j] = cols[j][i];
+    return m;
+  },
+  // Eigenvalues of a general 8x8: reduction to Hessenberg form, then the
+  // shifted QR algorithm (after Numerical Recipes' elmhes and hqr)
+  eigen(m) {
+    const n = 8, a = [];
+    for (let i = 0; i <= n; i++) a.push(new Array(n + 1).fill(0));
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) a[i + 1][j + 1] = m[i * 8 + j];
+    for (let mm = 2; mm < n; mm++) {
+      let x = 0, i = mm;
+      for (let j = mm; j <= n; j++) if (Math.abs(a[j][mm - 1]) > Math.abs(x)) { x = a[j][mm - 1]; i = j; }
+      if (i !== mm) {
+        for (let j = mm - 1; j <= n; j++) { const t = a[i][j]; a[i][j] = a[mm][j]; a[mm][j] = t; }
+        for (let j = 1; j <= n; j++) { const t = a[j][i]; a[j][i] = a[j][mm]; a[j][mm] = t; }
+      }
+      if (x) for (i = mm + 1; i <= n; i++) {
+        let y = a[i][mm - 1];
+        if (y) { y /= x; a[i][mm - 1] = y; for (let j = mm; j <= n; j++) a[i][j] -= y * a[mm][j]; for (let j = 1; j <= n; j++) a[j][mm] += y * a[j][i]; }
+      }
+    }
+    const wr = new Array(n + 1).fill(0), wi = new Array(n + 1).fill(0);
+    const SIGN = (p, q) => q >= 0 ? Math.abs(p) : -Math.abs(p);
+    let anorm = 0;
+    for (let i = 1; i <= n; i++) for (let j = Math.max(i - 1, 1); j <= n; j++) anorm += Math.abs(a[i][j]);
+    let nn = n, t = 0, guard = 0;
+    while (nn >= 1 && guard++ < 1000) {
+      let its = 0, l;
+      do {
+        for (l = nn; l >= 2; l--) {
+          let s = Math.abs(a[l - 1][l - 1]) + Math.abs(a[l][l]);
+          if (s === 0) s = anorm;
+          if (Math.abs(a[l][l - 1]) + s === s) { a[l][l - 1] = 0; break; }
+        }
+        let x = a[nn][nn];
+        if (l === nn) { wr[nn] = x + t; wi[nn--] = 0; }
+        else {
+          let y = a[nn - 1][nn - 1], w = a[nn][nn - 1] * a[nn - 1][nn];
+          if (l === nn - 1) {
+            const p = 0.5 * (y - x), q = p * p + w; let z = Math.sqrt(Math.abs(q));
+            x += t;
+            if (q >= 0) { z = p + SIGN(z, p); wr[nn - 1] = wr[nn] = x + z; if (z) wr[nn] = x - w / z; wi[nn - 1] = wi[nn] = 0; }
+            else { wr[nn - 1] = wr[nn] = x + p; wi[nn - 1] = -(wi[nn] = z); }
+            nn -= 2;
+          } else {
+            if (its === 60) return null;
+            if (its === 10 || its === 20) {
+              t += x; for (let i = 1; i <= nn; i++) a[i][i] -= x;
+              const s = Math.abs(a[nn][nn - 1]) + Math.abs(a[nn - 1][nn - 2]);
+              y = x = 0.75 * s; w = -0.4375 * s * s;
+            }
+            ++its;
+            let mm, p, q, r, z;
+            for (mm = nn - 2; mm >= l; mm--) {
+              z = a[mm][mm]; r = x - z; let s = y - z;
+              p = (r * s - w) / a[mm + 1][mm] + a[mm][mm + 1]; q = a[mm + 1][mm + 1] - z - r - s; r = a[mm + 2][mm + 1];
+              s = Math.abs(p) + Math.abs(q) + Math.abs(r); p /= s; q /= s; r /= s;
+              if (mm === l) break;
+              const u = Math.abs(a[mm][mm - 1]) * (Math.abs(q) + Math.abs(r));
+              const v = Math.abs(p) * (Math.abs(a[mm - 1][mm - 1]) + Math.abs(z) + Math.abs(a[mm + 1][mm + 1]));
+              if (u + v === v) break;
+            }
+            for (let i = mm + 2; i <= nn; i++) { a[i][i - 2] = 0; if (i !== mm + 2) a[i][i - 3] = 0; }
+            for (let k = mm; k <= nn - 1; k++) {
+              if (k !== mm) {
+                p = a[k][k - 1]; q = a[k + 1][k - 1]; r = 0;
+                if (k !== nn - 1) r = a[k + 2][k - 1];
+                if ((x = Math.abs(p) + Math.abs(q) + Math.abs(r)) !== 0) { p /= x; q /= x; r /= x; }
+              }
+              const s = SIGN(Math.sqrt(p * p + q * q + r * r), p);
+              if (s !== 0) {
+                if (k === mm) { if (l !== mm) a[k][k - 1] = -a[k][k - 1]; } else a[k][k - 1] = -s * x;
+                p += s; x = p / s; y = q / s; z = r / s; q /= p; r /= p;
+                for (let j = k; j <= nn; j++) {
+                  p = a[k][j] + q * a[k + 1][j];
+                  if (k !== nn - 1) { p += r * a[k + 2][j]; a[k + 2][j] -= p * z; }
+                  a[k + 1][j] -= p * y; a[k][j] -= p * x;
+                }
+                const mmin = nn < k + 3 ? nn : k + 3;
+                for (let i = l; i <= mmin; i++) {
+                  p = x * a[i][k] + y * a[i][k + 1];
+                  if (k !== nn - 1) { p += z * a[i][k + 2]; a[i][k + 2] -= p * r; }
+                  a[i][k + 1] -= p * q; a[i][k] -= p;
+                }
+              }
+            }
+          }
+        }
+      } while (l < nn - 1);
+    }
+    const out = []; for (let i = 1; i <= n; i++) out.push([wr[i], wi[i]]);
+    return out;
+  },
+};
+
+// The design's numbers that the page shows and simulates with (design.h's
+// Designer::Compute, in double)
+function designOf(values, knobs) {
+  const rv = values.slice(P_REVERB * NL, P_REVERB * NL + NL), lb = values.slice(P_LAB * NL, P_LAB * NL + NL);
+  const blend = lb[LB.BLEND] / 127, n = lb[LB.NORMALISE] / 127;
+  const a = MAT.blended(MAT.get(values), blend);
+  const sv = MAT.singular(a), sigma = sv[0];
+  let k = 1;
+  if (sigma > 1e-6) { const down = sigma > 1 ? 1 / sigma : 1; k = (1 - n) * down + n / sigma; }
+  k *= 0.999;
+  const size = Math.pow(2, knobs.sizeOct);
+  const lengths = knobs.lengths || snapLengths(values.slice(P_LENGTH * NL, P_LENGTH * NL + NL).map(v => Math.round(LEN_TABLE[v] * size)));
+  let rt = decaySeconds(rv[RV.DECAY]);
+  if (rt < Infinity) rt = clamp(rt * Math.pow(2, knobs.decayOct), 0.05, 100);
+  const dm = clamp(rv[RV.DAMPING] / 127 + knobs.damp, 0, 1);
+  const ratio = Math.pow(2, -5 * dm);
+  const g = [], p = [];
+  for (let i = 0; i < NL; i++) {
+    const L = lengths[i];
+    const gdc = rt < Infinity ? Math.exp(-6.9077553 * L / (RATE * rt)) : 1;
+    g.push(gdc);
+    if (dm <= 0) p.push(0);
+    else { const gny = Math.exp(-6.9077553 * L / (RATE * (rt < Infinity ? rt : 100) * ratio)); p.push((gdc - gny) / (gdc + gny)); }
+  }
+  const width = rv[RV.WIDTH] / 127;
+  const inL = [], inR = [], outL = [], outR = [];
+  for (let i = 0; i < NL; i++) {
+    const pan = bipolar(values[P_PAN * NL + i]) * width, b = bipolar(values[P_INPUT * NL + i]), o = bipolar(values[P_OUTPUT * NL + i]) * 0.35;
+    inL.push(b * (1 - pan) / 2); inR.push(b * (1 + pan) / 2);
+    outL.push(o * (pan > 0 ? 1 - pan : 1)); outR.push(o * (pan < 0 ? 1 + pan : 1));
+  }
+  const m = rv[RV.MIX] >= 127 ? 1 : rv[RV.MIX] / 127;
+  return {
+    a, sv, sigma, k, mat: a.map(x => x * k), lengths, rt, dm, ratio, g, p, inL, inR, outL, outR,
+    hpHz: lowCutHz(rv[RV.LOWCUT]), toneHz: toneHz(rv[RV.TONE]), predelay: predelayMs(rv[RV.PREDELAY]) * 24,
+    diffuse: diffuseOf(lb[LB.DIFFUSE]), inGain: lb[LB.INPUT] ? dbToGain(gainDb(lb[LB.INPUT])) : 0,
+    outGain: lb[LB.OUTPUT] ? dbToGain(gainDb(lb[LB.OUTPUT])) : 0,
+    dry: m <= 0.5 ? 1 : (1 - m) * 2, wet: m >= 0.5 ? 1 : m * 2,
+  };
+}
+
+// ============================================================================
+// State
+// ============================================================================
+const PAGE_INFO = (() => {
+  const rows = [];
+  for (let r = 0; r < 8; r++) rows.push({ name: 'Row ' + (r + 1), letter: 'A' + (r + 1), hint: 'Matrix row ' + (r + 1) + ': how much line ' + (r + 1) + ' takes from each line (fader 1 = line 1, and so on), −1 (down) to +1 (up), 0 at the centre. The highlighted fader is line ' + (r + 1) + ' feeding itself. On the card, the top-left LED flashes ' + (r + 1) + ' time' + (r ? 's' : '') + ', then pauses.' });
+  return rows.concat([
+    { name: 'Length', letter: 'B', hint: 'Each line’s delay, 1 ms to 340 ms (times the X knob’s size), snapped so that no two lines share a factor: line 1 first, each later line to the nearest length that shares no factor with those before it.' },
+    { name: 'Reverb', letter: 'C', hint: 'Predelay before the network; Decay, the time to die away by 60 dB (top: infinite); Damping, how much faster the highs die than the lows; Low cut in the loop; Tone, a low-pass on the way in; Mod depth, a slow wobble of the line lengths that smooths ringing; Width; and the dry/wet Mix (dry only down, both full at the centre, wet only up).' },
+    { name: 'Lab', letter: 'C²', hint: 'Normalise: how the matrix is scaled (down: only ever scaled down, so a weak matrix dies on its own; up: scaled to lose nothing). Blend: the identity (eight separate combs) to the matrix. Drive: saturation in the loop. Diffuse: allpass smearing on the way in. Mod rate. Input and output level. Ceiling: the limiter on the wet signal.' },
+    { name: 'Input', letter: 'D', hint: 'How much of the input each line takes, −1 to +1. Signs matter: with a dense matrix, a mix of signs spreads the input across the network faster. A line takes its input from where it’s panned.' },
+    { name: 'Output', letter: 'D²', hint: 'How much of each line is heard, −1 to +1, at its pan. A line at zero still runs in the network; it’s only not heard directly.' },
+    { name: 'Pan', letter: 'D³', hint: 'Each line’s place, left (down) to right (up), times Width. A line takes its input from, and plays back at, its place.' },
+  ]);
+})();
+const REVERB_NAMES = ['Predelay', 'Decay', 'Damping', 'Low cut', 'Tone', 'Mod depth', 'Width', 'Mix'];
+const LAB_NAMES = ['Normalise', 'Blend', 'Drive', 'Diffuse', 'Mod rate', 'In level', 'Out level', 'Ceiling'];
+
+const state = {
+  values: defaultRows(),
+  page: 0,
+  lastRow: 0,
+  slot: NO_SLOT,
+  slots: null,                 // [{ valid, values[112] }] from the card
+  freeze: false,               // this page's freeze button
+  live: { frozen: false, clearing: false, guarding: false, limiting: false, muOnCard: false, held: false,
+          load: -1, lengths: null, decayCs: 0, sigma: 0, scale: 0, decayOct: 0, sizeOct: 0, damp: 0,
+          guard: 1, limit: 1, lvIn: 0, lvOut: 0, lvWet: 0, lvTank: 0 },
+};
+const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
+// 8mu pickup, mirroring MatrixVerb::HandleEightMU in the firmware
+const mu = { phys: new Array(NL).fill(-1), engaged: new Array(NL).fill(false), cc: new Array(16).fill(0),
+             ledSent: new Array(NL).fill(-1), lastBlinkOff: 0, motionTimer: 0, freeze: false,
+             press: [0, 1, 2, 3].map(() => ({ down: false, t0: 0, faders: [], used: false })),
+             flash: { until: 0, kind: '', value: 0 } };
+
+const $ = (id) => document.getElementById(id);
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const online = () => link.cardOnline && performance.now() - link.lastStatus < 1500;
+const flatValues = () => state.values.flat();
+function setFlat(vals) { for (let k = 0; k < NVALUES; k++) state.values[Math.floor(k / NL)][k % NL] = clamp(vals[k] | 0, 0, 127); }
+
+// The knobs as the card has them, or x1 without one
+function knobs() {
+  const L = state.live;
+  if (online()) return { decayOct: L.decayOct, sizeOct: L.sizeOct, damp: L.damp, lengths: L.lengths };
+  return { decayOct: 0, sizeOct: 0, damp: 0, lengths: null };
+}
+let designCache = null, designKey = '';
+function design() {
+  const k = knobs(), key = flatValues().join(',') + '|' + k.decayOct + '|' + k.sizeOct + '|' + k.damp + '|' + (k.lengths || []).join(',');
+  if (key !== designKey) { designKey = key; designCache = designOf(flatValues(), k); }
+  return designCache;
+}
+
+// ============================================================================
+// Formatting
+// ============================================================================
+function fmtMs(ms) { return ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : (ms < 10 ? ms.toFixed(1) : Math.round(ms)) + ' ms'; }
+function fmtHz(hz) { return hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + ' kHz' : Math.round(hz) + ' Hz'; }
+function fmtSec(s) { return s === Infinity ? '∞' : s >= 10 ? s.toFixed(1) + ' s' : s.toFixed(2) + ' s'; }
+function fmtDb(db) { return (db > 0 ? '+' : db < 0 ? '−' : '') + Math.abs(db).toFixed(1) + ' dB'; }
+const fmtSigned = (x) => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(2);
+function describe(page, i, v) {
+  if (isRow(page) || page === P_INPUT || page === P_OUTPUT) return fmtSigned(bipolar(v));
+  if (page === P_PAN) { const p = bipolar(v); return p === 0 ? 'centre' : Math.round(Math.abs(p) * 100) + '% ' + (p < 0 ? 'L' : 'R'); }
+  if (page === P_LENGTH) {
+    const d = design(), L = d.lengths[i];
+    return fmtMs(L / 24) + ' · ' + L + (L !== LEN_TABLE[v] && !online() ? ' (from ' + LEN_TABLE[v] + ')' : '');
+  }
+  if (page === P_REVERB) switch (i) {
+    case 0: return v === 0 ? 'none' : fmtMs(predelayMs(v));
+    case 1: return fmtSec(decaySeconds(v));
+    case 2: return v === 0 ? 'none' : 'highs ×' + Math.pow(2, -5 * v / 127).toFixed(2);
+    case 3: return fmtHz(lowCutHz(v));
+    case 4: return v >= 127 ? 'off' : fmtHz(toneHz(v));
+    case 5: return v === 0 ? 'off' : '±' + fmtMs(modDepthSamples(v) / 24);
+    case 6: return Math.round(v / 127 * 100) + '%';
+    default: return v <= 2 ? 'dry' : v >= 125 ? 'wet' : (v >= 62 && v <= 66) ? 'both' : v < 64 ? Math.round(v / 64 * 100) + '% wet' : Math.round((127 - v) / 63 * 100) + '% dry';
+  }
+  switch (i) {
+    case 0: return v === 0 ? 'scale down only' : v === 127 ? 'lossless' : Math.round(v / 127 * 100) + '% lossless';
+    case 1: return v === 0 ? 'combs only' : v === 127 ? 'matrix' : Math.round(v / 127 * 100) + '% matrix';
+    case 2: return v === 0 ? 'clean' : '×' + driveOf(v).toFixed(2);
+    case 3: return v === 0 ? 'off' : 'g ' + diffuseOf(v).toFixed(2);
+    case 4: return modRateHz(v).toFixed(modRateHz(v) < 1 ? 2 : 1) + ' Hz';
+    case 5: case 6: return v === 0 ? 'off' : fmtDb(gainDb(v));
+    default: return ceilingDb(v).toFixed(1) + ' dBFS';
+  }
+}
+function faderName(page, i) {
+  if (isRow(page)) return 'from ' + (i + 1);
+  if (page === P_REVERB) return REVERB_NAMES[i];
+  if (page === P_LAB) return LAB_NAMES[i];
+  return 'Line ' + (i + 1);
+}
+const lineColour = (i) => cssVar('--s' + i);
+
+// ============================================================================
+// Drawing
+// ============================================================================
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+function mixColour(hex, t) {
+  // hex colour faded towards the canvas background by 1 - t
+  const bg = cssVar('--wave-bg');
+  const p = (c) => [1, 3, 5].map(k => parseInt(c.slice(k, k + 2), 16));
+  const a = p(hex), b = p(bg);
+  return 'rgb(' + a.map((x, k) => Math.round(b[k] + (x - b[k]) * t)).join(',') + ')';
+}
+
+const matGeom = { pad: 22, cell: 0 };
+function drawMatrix() {
+  const { ctx, w, h } = setupCanvas($('matrix'));
+  ctx.clearRect(0, 0, w, h);
+  const pad = matGeom.pad, cell = (Math.min(w, h) - pad - 4) / 8;
+  matGeom.cell = cell;
+  const vals = state.values, acc = cssVar('--accent'), warm = cssVar('--warm');
+  ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let c = 0; c < 8; c++) { ctx.fillStyle = lineColour(c); ctx.fillText(String(c + 1), pad + cell * (c + 0.5), pad / 2); }
+  for (let r = 0; r < 8; r++) {
+    ctx.fillStyle = lineColour(r); ctx.fillText(String(r + 1), pad / 2, pad + cell * (r + 0.5));
+    for (let c = 0; c < 8; c++) {
+      const x = bipolar(vals[r][c]);
+      ctx.fillStyle = x === 0 ? cssVar('--wave-bg') : mixColour(x > 0 ? acc : warm, Math.min(1, Math.abs(x)));
+      ctx.fillRect(pad + cell * c + 1, pad + cell * r + 1, cell - 2, cell - 2);
+      if (cell > 34) {
+        ctx.fillStyle = Math.abs(x) > 0.6 ? cssVar('--panel') : cssVar('--muted');
+        ctx.fillText(x === 0 ? '·' : fmtSigned(x), pad + cell * (c + 0.5), pad + cell * (r + 0.5));
+      }
+    }
+  }
+  // the diagonal, and the row on the faders
+  ctx.strokeStyle = cssVar('--line'); ctx.lineWidth = 1;
+  for (let r = 0; r < 8; r++) ctx.strokeRect(pad + cell * r + 0.5, pad + cell * r + 0.5, cell - 1, cell - 1);
+  const row = isRow(state.page) ? state.page : state.lastRow;
+  ctx.strokeStyle = cssVar('--ink'); ctx.lineWidth = isRow(state.page) ? 2 : 1;
+  ctx.setLineDash(isRow(state.page) ? [] : [3, 3]);
+  ctx.strokeRect(pad - 1, pad + cell * row - 1, cell * 8 + 2, cell + 2);
+  ctx.setLineDash([]);
+  ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  $('matrix-caption').textContent = 'Row r is what line r takes from each line (columns). Teal positive, orange negative. ' +
+    (isRow(state.page) ? 'Row ' + (state.page + 1) + ' is on the faders.' : 'Click a row to put it on the faders.') + ' Drag a cell to change it.';
+}
+
+function drawAnalysis() {
+  const { ctx, w, h } = setupCanvas($('analysis'));
+  ctx.clearRect(0, 0, w, h);
+  const d = design();
+  ctx.font = '11px system-ui, sans-serif';
+  // Singular values: bars, before (outline) and after (filled) normalising
+  const top = 18, barH = Math.max(60, h * 0.36), x0 = 8, bw = (w - 16) / 8;
+  const maxS = Math.max(1.25, d.sv[0] * 1.05);
+  const yOf = (s) => top + barH - barH * Math.min(s, maxS) / maxS;
+  ctx.fillStyle = cssVar('--muted'); ctx.fillText('Singular values', x0, 12);
+  ctx.strokeStyle = cssVar('--line');
+  ctx.beginPath(); ctx.moveTo(x0, yOf(1)); ctx.lineTo(w - 8, yOf(1)); ctx.stroke();
+  ctx.fillText('1', w - 16, yOf(1) - 3);
+  for (let i = 0; i < 8; i++) {
+    const s = d.sv[i], sk = s * d.k;
+    ctx.fillStyle = cssVar('--accent');
+    ctx.fillRect(x0 + bw * i + 3, yOf(sk), bw - 6, top + barH - yOf(sk));
+    ctx.strokeStyle = cssVar('--muted'); ctx.setLineDash([2, 2]);
+    ctx.strokeRect(x0 + bw * i + 3.5, yOf(s) + 0.5, bw - 7, top + barH - yOf(s) - 0.5);
+    ctx.setLineDash([]);
+  }
+  // Eigenvalues of the matrix as used, in the complex plane
+  const ey = top + barH + 22, size = Math.min(w - 16, h - ey - 6);
+  if (size > 40) {
+    const cx = w / 2, cy = ey + size / 2, R = size / 2 * 0.8;
+    ctx.fillStyle = cssVar('--muted'); ctx.fillText('Eigenvalues', x0, ey - 6);
+    ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - R * 1.2, cy); ctx.lineTo(cx + R * 1.2, cy); ctx.moveTo(cx, cy - R * 1.2); ctx.lineTo(cx, cy + R * 1.2); ctx.stroke();
+    ctx.strokeStyle = cssVar('--line'); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
+    const ev = MAT.eigen(d.mat);
+    if (ev) {
+      ctx.fillStyle = cssVar('--warm');
+      for (const [re, im] of ev) {
+        const m = Math.hypot(re, im), sc = m > 1.15 ? 1.15 / m : 1;
+        ctx.beginPath(); ctx.arc(cx + re * sc * R, cy - im * sc * R, 3.5, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
+  }
+  const orth = d.sv[0] > 1e-6 ? d.sv[7] / d.sv[0] : 0;
+  $('analysis-caption').textContent = 'σ = ' + d.sigma.toFixed(3) + ', so the matrix is ×' + d.k.toFixed(3) + ' as used. ' +
+    (d.sigma < 1e-6 ? 'All zero: no feedback.' : orth > 0.97 ? 'Orthogonal, as near as the faders go: every pattern circulates equally.' :
+     orth < 0.02 ? 'Singular: some patterns are lost straight away.' : 'Singular values from ' + d.sv[7].toFixed(2) + ' to ' + d.sv[0].toFixed(2) + ' (dashed, before scaling): uneven, so some patterns die faster.');
+}
+
+function drawLines() {
+  const { ctx, w, h } = setupCanvas($('lines'));
+  ctx.clearRect(0, 0, w, h);
+  const d = design(), padL = 60, padR = 120, rowH = (h - 8) / 8;
+  const xOf = (L) => padL + (w - padL - padR) * L / MAX_LEN;
+  ctx.font = '11px system-ui, sans-serif';
+  for (let ms = 0; ms <= 340; ms += 50) {
+    const x = xOf(ms * 24);
+    ctx.strokeStyle = cssVar('--grid'); ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, h - 4); ctx.stroke();
+  }
+  let allCoprime = true;
+  for (let i = 0; i < NL; i++) {
+    const L = d.lengths[i], y = 4 + rowH * i;
+    for (let j = 0; j < i; j++) if (gcd(L, d.lengths[j]) !== 1) allCoprime = false;
+    ctx.fillStyle = lineColour(i);
+    ctx.fillRect(padL, y + 2, Math.max(2, xOf(L) - padL), rowH - 5);
+    ctx.fillText('Line ' + (i + 1), 4, y + rowH / 2 + 4);
+    ctx.fillStyle = cssVar('--muted');
+    ctx.fillText(fmtMs(L / 24) + '  ' + L + ' = ' + factorText(L), xOf(L) + 6, y + rowH / 2 + 4);
+  }
+  const total = d.lengths.reduce((s, L) => s + L, 0);
+  $('lines-caption').textContent = (online() ? 'As on the card, with its size knob (×' + Math.pow(2, state.live.sizeOct).toFixed(2) + '). ' : 'At size ×1. ') +
+    (allCoprime ? 'Every pair is coprime. ' : 'Some lengths share a factor! ') +
+    'Total ' + fmtMs(total / 24) + ' of delay, ' + fmtMs(total / 8 / 24) + ' a line on average.';
+}
+
+function drawReadouts() {
+  const live = online(), L = state.live, d = design();
+  $('ro-decay').textContent = fmtSec(d.rt);
+  $('ro-decay-sub').textContent = live ? 'Main ×' + Math.pow(2, L.decayOct).toFixed(2) : 'fader (Main ×1)';
+  $('ro-size').textContent = '×' + Math.pow(2, live ? L.sizeOct : 0).toFixed(2);
+  $('ro-size-sub').textContent = 'mean line ' + fmtMs(d.lengths.reduce((s, x) => s + x, 0) / 8 / 24);
+  $('ro-damp').textContent = d.dm <= 0 ? 'none' : 'highs ×' + d.ratio.toFixed(2);
+  $('ro-damp-sub').textContent = live && L.damp ? 'Y ' + (L.damp > 0 ? 'darker' : 'brighter') : 'of the decay time';
+  $('ro-norm').textContent = 'σ ' + (live ? L.sigma : d.sigma).toFixed(3);
+  $('ro-norm-sub').textContent = 'used ×' + (live ? L.scale : d.k).toFixed(3);
+  const safety = live && (L.guarding || L.limiting);
+  $('ro-safety-box').classList.toggle('alert', safety || (live && L.frozen));
+  $('ro-safety').textContent = !live ? '-' : L.frozen ? 'Frozen' : L.clearing ? 'Clearing' : L.guarding ? 'Guard' : L.limiting ? 'Limiting' : 'OK';
+  const lim = live ? 20 * Math.log10(Math.max(L.limit, 1 / 128)) : 0, gd = live ? 20 * Math.log10(Math.max(L.guard, 1 / 128)) : 0;
+  $('ro-safety-sub').textContent = !live ? '' : 'limiter ' + (lim > -0.1 ? '0' : lim.toFixed(1)) + ' dB · guard ' + (gd > -0.1 ? '0' : gd.toFixed(1)) + ' dB';
+  $('m-in').style.width = (live ? L.lvIn / 127 * 100 : 0) + '%';
+  $('m-tank').style.width = (live ? L.lvTank / 127 * 100 : 0) + '%';
+  $('m-out').style.width = (live ? L.lvOut / 127 * 100 : 0) + '%';
+  $('ro-load').textContent = live && L.load >= 0 ? 'CPU ' + (L.load >= 127 ? '127+' : L.load) + '%' : '';
+  $('ro-load').style.color = live && L.load > 90 ? cssVar('--bad') : '';
+  $('btn-freeze').classList.toggle('on', state.freeze || mu.freeze || (live && L.frozen));
+}
+
+// ============================================================================
+// Simulated impulse response (design.h and fdn.h, in floating point, without
+// the modulation, drive or limiter)
+// ============================================================================
+const sim = { L: null, R: null, rate: RATE, key: '', rt: 0, timer: 0 };
+function simulate(input, seconds) {
+  const d = design(), N = Math.round(seconds * RATE);
+  const outL = new Float32Array(N), outR = new Float32Array(N);
+  const SZ = 8192, buf = []; for (let i = 0; i < NL; i++) buf.push(new Float64Array(SZ));
+  const lp = new Float64Array(NL), hp = new Float64Array(NL), f = new Float64Array(NL), y = new Float64Array(NL);
+  const hpA = 1 - Math.exp(-2 * Math.PI * d.hpHz / RATE), toneA = d.toneHz ? 1 - Math.exp(-2 * Math.PI * d.toneHz / RATE) : 1;
+  const pre = [new Float64Array(4096), new Float64Array(4096)], pd = Math.round(d.predelay);
+  const AP = [[113, 167, 241, 337], [127, 179, 229, 349]], ap = AP.map(ch => ch.map(n => ({ b: new Float64Array(n), p: 0 })));
+  let w = 0, pw = 0, tl = 0, tr = 0;
+  const damp = d.p.map(p => 1 - p), gs = d.g, M = d.mat;
+  for (let n = 0; n < N; n++) {
+    let wl = 0, wr = 0;
+    for (let i = 0; i < NL; i++) {
+      const v = buf[i][(w - d.lengths[i] + SZ) & (SZ - 1)];
+      y[i] = v; wl += v * d.outL[i]; wr += v * d.outR[i];
+      lp[i] += (gs[i] * v - lp[i]) * damp[i];
+      hp[i] += (lp[i] - hp[i]) * hpA;
+      f[i] = lp[i] - hp[i];
+    }
+    let xl = input(n, 0) * d.inGain, xr = input(n, 1) * d.inGain;
+    tl += (xl - tl) * toneA; tr += (xr - tr) * toneA; xl = tl; xr = tr;
+    pre[0][pw] = xl; pre[1][pw] = xr;
+    xl = pre[0][(pw - pd + 4096) & 4095]; xr = pre[1][(pw - pd + 4096) & 4095];
+    pw = (pw + 1) & 4095;
+    if (d.diffuse > 0) for (let s = 0; s < 4; s++) {
+      for (let ch = 0; ch < 2; ch++) {
+        const a = ap[ch][s], z = a.b[a.p], x = ch ? xr : xl, v = x - z * d.diffuse;
+        a.b[a.p] = v; a.p = (a.p + 1) % a.b.length;
+        if (ch) xr = z + v * d.diffuse; else xl = z + v * d.diffuse;
+      }
+    }
+    for (let i = 0; i < NL; i++) {
+      let acc = xl * d.inL[i] + xr * d.inR[i];
+      for (let j = 0; j < NL; j++) acc += M[i * 8 + j] * f[j];
+      buf[i][w] = Math.max(-4, Math.min(4, acc));
+    }
+    w = (w + 1) & (SZ - 1);
+    outL[n] = wl * d.outGain; outR[n] = wr * d.outGain;
+  }
+  return { L: outL, R: outR };
+}
+function renderIr() {
+  const d = design(), key = designKey;
+  if (sim.key === key && sim.L) return;
+  const secs = clamp(d.rt === Infinity ? 6 : d.rt * 1.4 + d.predelay / RATE + 0.3, 1, 8);
+  const r = simulate((n, ch) => n === 0 ? 1 : 0, secs);
+  sim.L = r.L; sim.R = r.R; sim.key = key;
+  sim.rt = measureRt(r.L, r.R);
+}
+function measureRt(L, R) {
+  const N = L.length, edc = new Float64Array(N);
+  let s = 0; for (let i = N - 1; i >= 0; i--) { s += L[i] * L[i] + R[i] * R[i]; edc[i] = s; }
+  if (!(edc[0] > 0)) return NaN;
+  let i5 = -1, i25 = -1;
+  for (let i = 0; i < N; i++) { const db = 10 * Math.log10(edc[i] / edc[0] + 1e-30); if (i5 < 0 && db <= -5) i5 = i; if (db <= -25) { i25 = i; break; } }
+  return i5 >= 0 && i25 > i5 ? (i25 - i5) / RATE * 3 : NaN;
+}
+function drawIr() {
+  const card = $('ir').closest('.card'); if (card.classList.contains('folded')) return;
+  renderIr();
+  const { ctx, w, h } = setupCanvas($('ir'));
+  ctx.clearRect(0, 0, w, h);
+  const L = sim.L, R = sim.R, N = L.length;
+  ctx.font = '11px system-ui, sans-serif';
+  // Top: the first 300ms, |h| in dB, line by line as dots
+  const eh = h * 0.45, ew = w - 16, early = Math.min(N, Math.round(0.3 * RATE));
+  let peak = 1e-9; for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+  const dbY = (v, y0, hh, range) => y0 + hh * Math.min(1, -20 * Math.log10(Math.max(v, 1e-12) / peak) / range);
+  ctx.strokeStyle = cssVar('--grid');
+  for (let ms = 0; ms <= 300; ms += 50) { const x = 8 + ew * ms / 300; ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, eh); ctx.stroke(); ctx.fillStyle = cssVar('--muted'); ctx.fillText(ms + ' ms', x + 2, eh + 12); }
+  ctx.fillStyle = cssVar('--accent');
+  const step = Math.max(1, Math.floor(early / ew));
+  for (let i = 0; i < early; i += step) {
+    let m = 0; for (let k = i; k < Math.min(early, i + step); k++) m = Math.max(m, Math.abs(L[k]), Math.abs(R[k]));
+    if (m <= 0) continue;
+    const yy = dbY(m, 4, eh - 4, 48);
+    ctx.fillRect(8 + ew * i / early, yy, Math.max(1, ew * step / early), eh - yy);
+  }
+  // Bottom: the decay in dB, 10ms windows, against the set decay
+  const y0 = eh + 20, bh = h - y0 - 14, win = Math.round(RATE * 0.01), nw = Math.floor(N / win);
+  const secs = N / RATE;
+  ctx.strokeStyle = cssVar('--grid');
+  for (let db = 0; db <= 72; db += 12) { const yy = y0 + bh * db / 72; ctx.beginPath(); ctx.moveTo(8, yy); ctx.lineTo(w - 8, yy); ctx.stroke(); ctx.fillStyle = cssVar('--muted'); ctx.fillText('−' + db, w - 26, yy - 2); }
+  for (let t = 0; t <= secs; t += secs > 4 ? 1 : 0.5) { const x = 8 + ew * t / secs; ctx.fillStyle = cssVar('--muted'); ctx.fillText(t + ' s', x + 2, h - 2); }
+  let emax = 1e-30; const env = [];
+  for (let k = 0; k < nw; k++) { let e = 0; for (let i = k * win; i < (k + 1) * win; i++) e += L[i] * L[i] + R[i] * R[i]; env.push(e); emax = Math.max(emax, e); }
+  ctx.strokeStyle = cssVar('--s1'); ctx.lineWidth = 1.5; ctx.beginPath();
+  env.forEach((e, k) => { const x = 8 + ew * (k + 0.5) / nw, yy = y0 + bh * Math.min(1, -10 * Math.log10(e / emax + 1e-30) / 72); k ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy); });
+  ctx.stroke(); ctx.lineWidth = 1;
+  const d = design();
+  if (d.rt < Infinity) {
+    // the set decay: 60dB in rt seconds, from the loudest window
+    let kmax = 0; env.forEach((e, k) => { if (e === emax) kmax = k; });
+    const t0 = (kmax + 0.5) / nw * secs;
+    // 60dB every rt seconds, down to the bottom of the plot or its end
+    const t1 = Math.min(secs, t0 + d.rt * 72 / 60), db1 = (t1 - t0) / d.rt * 60;
+    ctx.strokeStyle = cssVar('--warm'); ctx.setLineDash([4, 3]); ctx.beginPath();
+    ctx.moveTo(8 + ew * t0 / secs, y0); ctx.lineTo(8 + ew * t1 / secs, y0 + bh * db1 / 72); ctx.stroke(); ctx.setLineDash([]);
+  }
+  $('ir-caption').textContent = 'Set ' + fmtSec(d.rt) + (isFinite(sim.rt) ? ', simulated ' + fmtSec(sim.rt) : '') + '. Dashed: the set decay.';
+}
+
+// Listening, through WebAudio at the network's 24kHz, normalised to -12dBFS
+let audio = { ctx: null, src: null };
+function play(L, R) {
+  stopAudio();
+  try {
+    if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let peak = 1e-9; for (let i = 0; i < L.length; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+    const g = 0.25 / peak, b = audio.ctx.createBuffer(2, L.length, RATE);
+    const l = b.getChannelData(0), r = b.getChannelData(1);
+    for (let i = 0; i < L.length; i++) { l[i] = L[i] * g; r[i] = R[i] * g; }
+    const src = audio.ctx.createBufferSource(); src.buffer = b; src.connect(audio.ctx.destination); src.start();
+    audio.src = src;
+  } catch (e) { say('Could not play audio here: ' + e.message, true); }
+}
+function stopAudio() { if (audio.src) { try { audio.src.stop(); } catch (e) {} audio.src = null; } }
+function hearImpulse() { renderIr(); play(sim.L, sim.R); }
+function hearBurst() {
+  // 60ms of noise, dry, then the reverb's wet response to it
+  const n0 = Math.round(0.06 * RATE), noise = Float32Array.from({ length: n0 }, () => Math.random() * 2 - 1), d = design();
+  const secs = clamp(d.rt === Infinity ? 6 : d.rt * 1.3 + 0.4, 1, 8);
+  const r = simulate((n) => n < n0 ? noise[n] * (1 - n / n0) : 0, secs);
+  let wp = 1e-9; for (let i = 0; i < r.L.length; i++) wp = Math.max(wp, Math.abs(r.L[i]), Math.abs(r.R[i]));
+  const gap = Math.round(0.4 * RATE), N = n0 + gap + r.L.length, L = new Float32Array(N), R = new Float32Array(N);
+  for (let i = 0; i < n0; i++) { L[i] = R[i] = noise[i] * (1 - i / n0) * wp * 1.4; }
+  for (let i = 0; i < r.L.length; i++) { L[n0 + gap + i] = r.L[i]; R[n0 + gap + i] = r.R[i]; }
+  play(L, R);
+}
+
+// ============================================================================
+// Faders
+// ============================================================================
+function buildTabs() {
+  const el = $('tabs'); el.innerHTML = '';
+  TAB_ORDER.forEach((i) => {
+    const p = PAGE_INFO[i];
+    const b = document.createElement('button');
+    b.className = 'tab' + (isRow(i) ? ' rowtab' : '') + (i === P_LENGTH ? ' gap' : '');
+    b.innerHTML = '<b>' + p.letter + '</b>' + (isRow(i) ? '' : p.name);
+    b.title = p.name;
+    b.addEventListener('click', () => selectPage(i, true));
+    el.appendChild(b);
+  });
+}
+function buildFaders() {
+  const el = $('faders'); el.innerHTML = '';
+  for (let i = 0; i < NL; i++) {
+    const f = document.createElement('div');
+    f.className = 'fader';
+    f.innerHTML = '<div class="name"></div><div class="slot"><input type="range" min="0" max="127" step="1"><div class="ghost"></div></div><div class="val"></div><div class="desc"></div>';
+    const inp = f.querySelector('input');
+    inp.addEventListener('input', () => userSetValue(state.page, i, +inp.value));
+    inp.addEventListener('dblclick', () => userSetValue(state.page, i, defaultRows()[state.page][i]));
+    el.appendChild(f);
+  }
+}
+function refreshFaders() {
+  const tabs = $('tabs').children;
+  for (let k = 0; k < tabs.length; k++) tabs[k].classList.toggle('on', TAB_ORDER[k] === state.page);
+  const fs = $('faders').children;
+  for (let i = 0; i < NL; i++) {
+    const f = fs[i], v = state.values[state.page][i];
+    const inp = f.querySelector('input');
+    if (document.activeElement !== inp || +inp.value !== v) inp.value = v;
+    inp.style.accentColor = (state.page === P_REVERB || state.page === P_LAB) ? cssVar('--accent') : lineColour(i);
+    f.classList.toggle('diag', isRow(state.page) && i === state.page);
+    f.querySelector('.name').textContent = faderName(state.page, i);
+    f.querySelector('.val').textContent = v;
+    f.querySelector('.desc').textContent = describe(state.page, i, v);
+    const g = f.querySelector('.ghost');
+    const waiting = link.muIns.length && owner.here && mu.phys[i] >= 0 && !mu.engaged[i];
+    g.style.display = waiting ? 'block' : 'none';
+    if (waiting) g.style.top = (150 - mu.phys[i] / 127 * 150) + 'px';
+  }
+  $('page-hint').textContent = PAGE_INFO[state.page].hint;
+}
+
+// ============================================================================
+// Changing values (from the screen, the 8mu, a preset or the card)
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+function userSetValue(page, i, v) {
+  v = clamp(Math.round(v), 0, 127);
+  if (state.values[page][i] === v) return;
+  state.values[page][i] = v;
+  queueSend('v' + page + '.' + i, sysex(CMD.SET, [page, i, v]));
+  changed();
+}
+function selectPage(p, send) {
+  state.page = clamp(p, 0, PAGES - 1);
+  if (isRow(state.page)) state.lastRow = state.page;
+  reengage();
+  if (send) sendRaw(sysex(CMD.PAGE, [state.page]));
+  requestRender();
+}
+// A short press of button b, as the card does it
+function nextPage(pg, b) {
+  switch (b) {
+    case 0: return isRow(pg) ? (pg + 1) % 8 : state.lastRow;
+    case 1: return P_LENGTH;
+    case 2: return pg === P_REVERB ? P_LAB : P_REVERB;
+    default: return pg === P_INPUT ? P_OUTPUT : pg === P_OUTPUT ? P_PAN : P_INPUT;
+  }
+}
+function reengage() {
+  for (let i = 0; i < NL; i++) mu.engaged[i] = mu.phys[i] >= 0 && Math.abs(mu.phys[i] - state.values[state.page][i]) <= 1;
+}
+function setFreeze(on) {
+  state.freeze = on;
+  sendRaw(sysex(CMD.FREEZE, [(state.freeze || mu.freeze) ? 1 : 0]));
+  requestRender();
+}
+function sendAll() {
+  if (!link.cardOnline) return;
+  sendRaw(sysex(CMD.SET_ALL, [PROTOCOL_VERSION, ...flatValues()]));
+}
+function clearNetwork() { sendRaw(sysex(CMD.CLEAR, [])); if (!link.cardOnline) say('Connect the card to clear it.', true); }
+function click(line) { sendRaw(sysex(CMD.IMPULSE, [line < 0 ? 8 : line])); if (!link.cardOnline) say('Connect the card to click into it.', true); }
+
+// Matrix tools, with undo
+const undoStack = [];
+function setMatrix(m, what) {
+  undoStack.push(state.values.slice(0, 8).map(r => r.slice()));
+  if (undoStack.length > 50) undoStack.shift();
+  for (let i = 0; i < 64; i++) state.values[i >> 3][i & 7] = clamp(m[i] | 0, 0, 127);
+  sendAll();
+  reengage();
+  say(what);
+  changed();
+}
+function undoMatrix() {
+  const m = undoStack.pop(); if (!m) return;
+  for (let r = 0; r < 8; r++) state.values[r] = m[r];
+  sendAll(); reengage(); say('Undone.'); changed();
+}
+function applyTemplate(n) { setMatrix(template(n), 'Matrix: ' + TEMPLATE_NAMES[n] + '. ' + TEMPLATE_HINTS[n]); }
+
+let renderQueued = false;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    refreshFaders(); drawMatrix(); drawReadouts(); renderSlots();
+    if (!$('analysis').closest('.card').classList.contains('folded')) drawAnalysis();
+    if (!$('lines').closest('.card').classList.contains('folded')) drawLines();
+    $('t-undo').disabled = !undoStack.length;
+    clearTimeout(sim.timer); sim.timer = setTimeout(drawIr, 150);
+  });
+}
+function changed() { requestRender(); }
+
+// Matrix canvas: click a row, drag a cell
+const drag = { on: false, r: 0, c: 0, y0: 0, v0: 0 };
+function cellAt(ev) {
+  const r = $('matrix').getBoundingClientRect(), x = ev.clientX - r.left - matGeom.pad, y = ev.clientY - r.top - matGeom.pad;
+  const c = Math.floor(x / matGeom.cell), row = Math.floor(y / matGeom.cell);
+  return (c >= 0 && c < 8 && row >= 0 && row < 8) ? { r: row, c } : null;
+}
+function setupMatrixCanvas() {
+  const cv = $('matrix');
+  cv.addEventListener('pointerdown', (ev) => {
+    const cell = cellAt(ev); if (!cell) return;
+    if (state.page !== cell.r) selectPage(cell.r, true);
+    drag.on = true; drag.r = cell.r; drag.c = cell.c; drag.y0 = ev.clientY; drag.v0 = state.values[cell.r][cell.c];
+    cv.setPointerCapture(ev.pointerId);
+  });
+  cv.addEventListener('pointermove', (ev) => {
+    if (!drag.on) return;
+    const dv = Math.round((drag.y0 - ev.clientY) / 2);
+    if (dv) userSetValue(drag.r, drag.c, drag.v0 + dv);
+  });
+  const end = () => { drag.on = false; };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  cv.addEventListener('dblclick', (ev) => { const cell = cellAt(ev); if (cell) userSetValue(cell.r, cell.c, 64); });
+}
+
+// ============================================================================
+// 8mu plugged into this computer
+// ============================================================================
+function eightmuFader(i, v) {
+  // While a button is held, moving a fader loads (A), templates (B), clicks
+  // (C) or saves (D)
+  const held = mu.press.findIndex(p => p.down);
+  if (held >= 0) {
+    const p = mu.press[held];
+    if (p.faders[i] < 0) p.faders[i] = v;
+    if (Math.abs(v - p.faders[i]) > HOLD_MOVE) {
+      p.faders[i] = v; p.used = true;
+      if (held === 0) loadSlot(i);
+      else if (held === 1) applyTemplate(i);
+      else if (held === 2) click(i);
+      else saveSlot(i);
+      mu.flash = { until: performance.now() + 900, kind: ['load', 'template', 'click', 'save'][held], value: i };
+    }
+    mu.phys[i] = v; mu.engaged[i] = false;
+    requestRender();
+    return;
+  }
+  const last = mu.phys[i], target = state.values[state.page][i];
+  mu.phys[i] = v;
+  if (!mu.engaged[i]) {
+    const near = Math.abs(v - target) <= 1;
+    const crossed = last >= 0 && ((last < target) !== (v < target));
+    if (!near && !crossed) { requestRender(); return; }
+    mu.engaged[i] = true;
+  }
+  userSetValue(state.page, i, v);
+}
+// Buttons, acted on when released, as on the card
+function eightmuButton(b, down) {
+  const p = mu.press[b];
+  if (down) { p.down = true; p.t0 = performance.now(); p.used = false; p.faders = mu.phys.slice(); return; }
+  if (!p.down) return;
+  p.down = false;
+  if (!p.used) {
+    const lng = performance.now() - p.t0 >= LONG_PRESS_MS;
+    if (lng && b === 0) selectPage(isRow(state.page) ? (state.page + 7) % 8 : state.lastRow, true);
+    else if (lng && b === 2) clearNetwork();
+    else if (lng && b === 3) { mu.freeze = !mu.freeze; setFreeze(state.freeze); }
+    else selectPage(nextPage(state.page, b), true);
+  }
+  for (let i = 0; i < NL; i++) mu.engaged[i] = false;
+  reengage();
+  requestRender();
+}
+// ---- Which editor the 8mu drives.  With several Workshop editors open, one
+// 8mu on this computer drives one of them: the one last clicked in (or
+// opened).  A page claims it by telling the others, over a BroadcastChannel
+// and through localStorage, and they let it go.
+const EDITOR_NAME = 'MatrixVerb';
+const OWNER_KEY = 'workshop.8mu.owner';
+const owner = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), here: true, other: '', chan: null };
+function claim8mu(announce) {
+  const was = owner.here;
+  owner.here = true;
+  const msg = { id: owner.id, name: EDITOR_NAME, t: Date.now() };
+  try { if (owner.chan) owner.chan.postMessage(msg); } catch (e) {}
+  try { localStorage.setItem(OWNER_KEY, JSON.stringify(msg)); } catch (e) {}
+  if (!was) { taken8mu(); if (announce && link.muIns.length) say('The 8mu now drives this editor.'); }
+  refreshOwner();
+}
+function heardClaim(msg) {
+  if (!msg || msg.id === owner.id) return;
+  owner.other = msg.name || '';
+  if (owner.here) {
+    owner.here = false;
+    for (const p of mu.press) p.down = false;
+    mu.engaged.fill(false);
+    requestRender();
+  }
+  refreshOwner();
+}
+function taken8mu() {
+  for (const p of mu.press) p.down = false;
+  mu.engaged.fill(false);
+  reengage();
+  mu.ledSent.fill(-1);
+  mu.lastBlinkOff = 0;
+  requestRender();
+}
+function refreshOwner() {
+  const b = $('mu-owner'); if (!b) return;
+  b.hidden = !link.muIns.length;
+  b.classList.toggle('away', !owner.here);
+  b.textContent = owner.here ? '8mu: here' : '8mu: elsewhere';
+  b.title = owner.here ? 'The 8mu on this computer drives this editor. Click in another editor to hand it over.'
+    : 'The 8mu is driving the ' + (owner.other || 'other') + ' editor. Click here, or anywhere on this page, to take it back.';
+}
+function setupOwnership() {
+  try { owner.chan = new BroadcastChannel('workshop-computer-8mu'); owner.chan.onmessage = (e) => heardClaim(e.data); } catch (e) {}
+  window.addEventListener('storage', (e) => { if (e.key === OWNER_KEY && e.newValue) { try { heardClaim(JSON.parse(e.newValue)); } catch (err) {} } });
+  const take = () => { if (!owner.here) claim8mu(true); };
+  window.addEventListener('pointerdown', take, true);
+  window.addEventListener('keydown', take, true);
+  window.addEventListener('focus', take);
+  $('mu-owner').addEventListener('click', () => claim8mu(true));
+  claim8mu(false);
+}
+function eightmuMessage(d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0;
+  if (!owner.here) {
+    if (type === 0xB0 && d[1] >= FIRST_FADER_CC && d[1] < FIRST_FADER_CC + NL) { mu.phys[d[1] - FIRST_FADER_CC] = d[2] & 0x7F; requestRender(); }
+    return;
+  }
+  if (type === 0xB0) {
+    const cc = d[1];
+    if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NL) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F);
+    else if (cc >= FIRST_MOTION_CC && cc < FIRST_MOTION_CC + 8) { mu.cc[cc - FIRST_MOTION_CC] = d[2] & 0x7F; scheduleMotion(); }
+  } else if (type === 0x90 || type === 0x80) {
+    const b = BUTTON_NOTES.indexOf(d[1]);
+    if (b >= 0) eightmuButton(b, type === 0x90 && d[2] > 0);
+  }
+}
+// Tilt, as EightMU::Pitch/Roll compute it: the difference of a pair of CCs
+function scheduleMotion() {
+  if (mu.motionTimer) return;
+  mu.motionTimer = setTimeout(() => {
+    mu.motionTimer = 0;
+    const pitch = (mu.cc[0] - mu.cc[1]) * 16, roll = (mu.cc[2] - mu.cc[3]) * 16;
+    const p = clamp(pitch + 2048, 0, 4095), r = clamp(roll + 2048, 0, 4095);
+    sendRaw(sysex(CMD.MOTION, [p >> 7, p & 127, r >> 7, r & 127]));
+  }, 33);
+}
+// The 8mu's own LEDs, as the card does them.  SysEx to the 8mu must travel
+// on its own, so LED notes pause around it.
+function serviceEightmuLeds() {
+  if (!link.muOuts.length || !owner.here) return;
+  const now = performance.now();
+  if (now - mu.lastBlinkOff > 2000) {
+    mu.lastBlinkOff = now;
+    for (const o of link.muOuts) try { o.send(EIGHTMU_BLINK_OFF); } catch (e) {}
+    mu.ledSent.fill(-1);
+    return;
+  }
+  if (now - mu.lastBlinkOff < 60) return;
+  const f = mu.flash, flashing = now < f.until, t = 900 - (f.until - now);
+  const two = twoSided(state.page);
+  for (let i = 0; i < NL; i++) {
+    let v;
+    if (flashing && i !== f.value) v = 0;
+    else if (flashing) {
+      const on = f.kind === 'load' ? Math.floor(t / 150) % 2 === 0 : f.kind === 'save' ? Math.floor(t / 50) % 2 === 0 :
+        f.kind === 'template' ? t < 600 && Math.floor(t / 150) % 2 === 0 : t < 200;
+      v = on ? 127 : 0;
+    } else {
+      const x = state.values[state.page][i];
+      v = two ? Math.min(127, Math.abs(x - 64) * 2) : (x * 9) >> 4;
+    }
+    if (v === mu.ledSent[i]) continue;
+    mu.ledSent[i] = v;
+    for (const o of link.muOuts) try { o.send([0x90, i, v]); } catch (e) {}
+  }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /matrix\s*verb/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
+  const outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  const unrecognised = ins.filter(p => p !== cardIn && !muIns.includes(p));
+
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+  for (const p of muIns) p.onmidimessage = (ev) => eightmuMessage(ev.data);
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut; link.muIns = muIns; link.muOuts = muOuts;
+  link.cardOnline = !!(cardIn && cardOut);
+  link.sysexBuf = []; link.sysexOn = false;
+  if (!muIns.length) mu.phys.fill(-1);
+  refreshOwner();
+  mu.lastBlinkOff = 0;
+
+  for (const id of ['btn-read', 'btn-send', 'btn-slots', 'btn-backup']) $(id).disabled = !link.cardOnline;
+  clearInterval(link.pingTimer);
+  const note = unrecognised.length ? ' Other MIDI inputs: ' + unrecognised.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : '';
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: MatrixVerb card' + (muIns.length ? ' + 8mu' : ''));
+    say(muIns.length ? 'The 8mu drives this page, and this page drives the card.' : 'Card connected. Drag the faders or the matrix, or plug an 8mu into this computer.' + note);
+    if (!wasOnline) { sendRaw(sysex(CMD.HELLO, [])); sendRaw(sysex(CMD.GET_SLOTS, [])); }   // the card is the source of truth: read it
+  } else if (muIns.length) {
+    setStatus('warn', 'Connected: 8mu only (no card)');
+    say('No “MatrixVerb” card found, so editing here only. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
+  }
+  requestRender();
+}
+
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 1200) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+
+const get14 = (p, k) => (p[k] << 7) | p[k + 1];
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3);
+  if (cmd === CMD.STATE) {
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '. Use the matching editor and firmware.', true); return; }
+    if (p.length !== 3 + NVALUES) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    state.page = clamp(p[1], 0, PAGES - 1);
+    if (isRow(state.page)) state.lastRow = state.page;
+    state.slot = p[2];
+    setFlat(p.slice(3));
+    reengage();
+    say('Read the settings from the card.');
+    changed();
+  } else if (cmd === CMD.STATUS && p.length >= 37) {
+    const L = state.live;
+    L.frozen = !!(p[0] & 1); L.clearing = !!(p[0] & 2); L.guarding = !!(p[0] & 4);
+    L.limiting = !!(p[0] & 8); L.muOnCard = !!(p[0] & 16); L.held = !!(p[0] & 32);
+    const pg = clamp(p[1], 0, PAGES - 1);
+    if (pg !== state.page) { state.page = pg; if (isRow(pg)) state.lastRow = pg; reengage(); }
+    state.slot = p[2];
+    L.load = p[3];
+    const lens = []; for (let i = 0; i < NL; i++) lens.push(get14(p, 4 + 2 * i));
+    L.lengths = lens.every(x => x >= MIN_LEN) ? lens : null;
+    const dc = get14(p, 20); L.decayCs = dc;
+    L.sigma = get14(p, 22) / 1000; L.scale = get14(p, 24) / 1000;
+    L.decayOct = (get14(p, 26) - 8192) / 256; L.sizeOct = (get14(p, 28) - 8192) / 256;
+    L.damp = (p[30] - 64) / 64;
+    L.guard = p[31] / 128; L.limit = p[32] / 128;
+    L.lvIn = p[33]; L.lvOut = p[34]; L.lvWet = p[35]; L.lvTank = p[36];
+    link.lastStatus = performance.now();
+    requestRender();
+  } else if (cmd === CMD.SLOTS && p.length >= NSLOTS + NSLOTS * NVALUES) {
+    state.slots = [];
+    for (let s = 0; s < NSLOTS; s++) state.slots.push({ valid: !!p[s], values: p.slice(NSLOTS + s * NVALUES, NSLOTS + (s + 1) * NVALUES) });
+    requestRender();
+  }
+}
+
+// ============================================================================
+// Card presets (flash slots)
+// ============================================================================
+function loadSlot(s) {
+  if (!link.cardOnline) { say('Connect the card to use its presets.', true); return; }
+  if (state.slots && !state.slots[s].valid) { say('Card preset ' + (s + 1) + ' is empty.', true); return; }
+  sendRaw(sysex(CMD.LOAD, [s]));            // the card replies with STATE
+  say('Loaded card preset ' + (s + 1) + '.');
+}
+function saveSlot(s) {
+  if (!link.cardOnline) { say('Connect the card to use its presets.', true); return; }
+  sendAll();
+  sendRaw(sysex(CMD.SAVE, [s]));            // the card replies with SLOTS
+  state.slot = s;
+  say('Saved as card preset ' + (s + 1) + '.');
+}
+function eraseSlot(s) {
+  if (!confirm('Empty card preset ' + (s + 1) + '?')) return;
+  sendRaw(sysex(CMD.ERASE, [s]));
+}
+function storeSlot(s, values) {
+  if (!link.cardOnline) { say('Connect the card to copy presets to it.', true); return; }
+  if (state.slots && state.slots[s].valid && !confirm('Replace card preset ' + (s + 1) + '?')) return;
+  sendRaw(sysex(CMD.STORE, [s, ...values]));
+  say('Copied to card preset ' + (s + 1) + '.');
+}
+// A preset's thumbnail: its matrix
+function presetThumb(cv, values) {
+  const { ctx, w, h } = setupCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const s = Math.min(w, h) / 8, x0 = (w - s * 8) / 2, acc = cssVar('--accent'), warm = cssVar('--warm');
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const x = bipolar(values[r * 8 + c]);
+    if (x === 0) continue;
+    ctx.fillStyle = mixColour(x > 0 ? acc : warm, Math.min(1, Math.abs(x)));
+    ctx.fillRect(x0 + c * s, r * s, s, s);
+  }
+}
+function renderSlots() {
+  const el = $('slots');
+  if (el.children.length !== NSLOTS) {
+    el.innerHTML = '';
+    for (let s = 0; s < NSLOTS; s++) {
+      const d = document.createElement('div');
+      d.className = 'slotbox';
+      d.innerHTML = '<div class="sn">' + (s + 1) + '<span></span></div><canvas></canvas><div class="acts"><button data-a="load">Load</button><button data-a="save">Save</button><button data-a="erase" title="Empty this slot">×</button></div>';
+      d.querySelector('[data-a=load]').addEventListener('click', () => loadSlot(s));
+      d.querySelector('[data-a=save]').addEventListener('click', () => {
+        if (state.slots && state.slots[s].valid && !confirm('Replace card preset ' + (s + 1) + ' with the settings here?')) return;
+        saveSlot(s);
+      });
+      d.querySelector('[data-a=erase]').addEventListener('click', () => eraseSlot(s));
+      el.appendChild(d);
+    }
+  }
+  for (let s = 0; s < NSLOTS; s++) {
+    const d = el.children[s], sl = state.slots && state.slots[s];
+    d.classList.toggle('cur', state.slot === s);
+    d.classList.toggle('empty', !sl || !sl.valid);
+    d.querySelector('.sn span').textContent = !link.cardOnline ? '' : !sl ? '?' : sl.valid ? (state.slot === s ? 'current' : '') : 'empty';
+    for (const b of d.querySelectorAll('button')) b.disabled = !link.cardOnline || (b.dataset.a !== 'save' && (!sl || !sl.valid));
+    presetThumb(d.querySelector('canvas'), sl && sl.valid ? sl.values : new Array(NVALUES).fill(64));
+  }
+}
+
+// ============================================================================
+// Browser presets (localStorage)
+// ============================================================================
+const store = {
+  get(k, d) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+const PRESET_KEY = 'matrixverb.presets.v1';
+let userPresets = [];
+function cleanPreset(o) {
+  if (!o || typeof o !== 'object' || !Array.isArray(o.values) || o.values.length !== NVALUES) return null;
+  return { name: String(o.name || 'Untitled').slice(0, 60), values: o.values.map(v => clamp(v | 0, 0, 127)) };
+}
+// A built-in preset: the defaults with a template and changes, given as
+// { page: { fader: value } } or { page: [eight values] }
+function made(name, tpl, changes) {
+  const v = template(tpl).concat(DEFAULT_REST.flat());
+  for (const [pg, ch] of Object.entries(changes || {})) {
+    if (Array.isArray(ch)) ch.forEach((x, i) => { v[+pg * NL + i] = x; });
+    else for (const [i, x] of Object.entries(ch)) v[+pg * NL + +i] = x;
+  }
+  return { name, values: v };
+}
+const BUILTIN = [
+  made('Default: Hadamard hall', 0),
+  made('Householder room', 1, { [P_LENGTH]: [64, 67, 70, 72, 74, 77, 79, 82], [P_REVERB]: { 0: 20, 1: 40, 2: 50 } }),
+  made('Eight metallic combs', 2, { [P_LENGTH]: [40, 44, 47, 50, 54, 57, 60, 63], [P_REVERB]: { 1: 75, 2: 20, 5: 0 }, [P_LAB]: { 3: 0 } }),
+  made('Hollow combs (negative)', 6, { [P_LENGTH]: [40, 44, 47, 50, 54, 57, 60, 63], [P_REVERB]: { 1: 75, 2: 20, 5: 0 }, [P_LAB]: { 3: 0 } }),
+  made('One long loop', 3, { [P_LENGTH]: [92, 94, 96, 98, 100, 102, 104, 106], [P_REVERB]: { 0: 0, 1: 90, 2: 30, 5: 0 }, [P_LAB]: { 3: 0 }, [P_INPUT]: [127, 64, 64, 64, 64, 64, 64, 64], [P_OUTPUT]: [127, 120, 110, 100, 90, 80, 70, 60] }),
+  made('Four small rooms (pairs)', 4, { [P_LENGTH]: [70, 74, 78, 82, 86, 90, 94, 98], [P_REVERB]: { 1: 55 }, [P_PAN]: [0, 0, 40, 40, 88, 88, 127, 127] }),
+  made('Random plate', 5, { [P_LENGTH]: [72, 76, 79, 83, 86, 89, 92, 95], [P_REVERB]: { 0: 10, 1: 85, 2: 25, 5: 50 }, [P_LAB]: { 3: 90, 4: 30 } }),
+  made('Eight echoes (zero matrix)', 7, { [P_LENGTH]: [90, 96, 100, 104, 108, 112, 116, 120], [P_REVERB]: { 0: 0, 5: 0 }, [P_LAB]: { 3: 0 } }),
+  made('Half mixed', 0, { [P_LAB]: { 1: 64 }, [P_REVERB]: { 1: 80 } }),
+  made('Sparse, scaled down only', 2, { [P_LAB]: { 0: 0 }, [P_REVERB]: { 1: 126 }, 0: [80, 64, 64, 64, 64, 64, 64, 50] }),
+  made('Infinite space', 5, { [P_REVERB]: { 1: 127, 2: 10, 5: 40 }, [P_LAB]: { 3: 80 } }),
+  made('Saturated loop', 1, { [P_REVERB]: { 1: 110, 2: 35 }, [P_LAB]: { 2: 90, 5: 105 } }),
+];
+function loadPresets() { userPresets = (store.get(PRESET_KEY, []) || []).map(cleanPreset).filter(Boolean); }
+function savePresets() { if (!store.set(PRESET_KEY, userPresets)) say('Could not save presets: browser storage is unavailable or full.', true); }
+function applyPreset(pr) {
+  setFlat(pr.values);
+  reengage();
+  sendAll();
+  if (link.cardOnline) sendRaw(sysex(CMD.CLEAR, []));
+  say('Loaded “' + pr.name + '”' + (link.cardOnline ? ' and sent it to the card.' : '.'));
+  changed();
+}
+function renderPresets() {
+  const el = $('presets'); el.innerHTML = '';
+  const all = BUILTIN.map(p => ({ p, builtin: true })).concat(userPresets.map((p, k) => ({ p, builtin: false, k })));
+  for (const { p, builtin, k } of all) {
+    const li = document.createElement('li');
+    const cv = document.createElement('canvas');
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = p.name; name.title = 'Load ' + p.name;
+    name.addEventListener('click', () => applyPreset(p));
+    li.appendChild(cv); li.appendChild(name);
+    if (builtin) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'built in'; li.appendChild(t); }
+    const sel = document.createElement('select');
+    sel.title = 'Copy into a card preset';
+    sel.innerHTML = '<option value="">→ slot</option>' + Array.from({ length: NSLOTS }, (_, s) => '<option value="' + s + '">' + (s + 1) + '</option>').join('');
+    sel.addEventListener('change', () => { if (sel.value !== '') storeSlot(+sel.value, p.values); sel.value = ''; });
+    li.appendChild(sel);
+    if (!builtin) {
+      const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete';
+      del.addEventListener('click', () => { if (confirm('Delete “' + p.name + '”?')) { userPresets.splice(k, 1); savePresets(); renderPresets(); } });
+      li.appendChild(del);
+    }
+    el.appendChild(li);
+    requestAnimationFrame(() => presetThumb(cv, p.values));
+  }
+}
+function saveCurrent() {
+  const name = prompt('Name for this preset:', 'My network');
+  if (name === null) return;
+  userPresets.push({ name: name.slice(0, 60) || 'Untitled', values: flatValues() });
+  savePresets(); renderPresets();
+}
+function exportPresets() {
+  const blob = new Blob([JSON.stringify({ matrixverb: 1, presets: userPresets }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'matrixverb-presets.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importPresets(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      const list = (Array.isArray(o) ? o : o.presets || []).map(cleanPreset).filter(Boolean);
+      if (!list.length) throw new Error('no presets in it');
+      userPresets.push(...list); savePresets(); renderPresets();
+      say('Imported ' + list.length + ' preset' + (list.length === 1 ? '' : 's') + '.');
+    } catch (e) { say('Could not import that file: ' + e.message, true); }
+  };
+  r.readAsText(file);
+}
+function backupCard() {
+  if (!state.slots) { say('Read the card presets first.', true); return; }
+  const stamp = new Date().toISOString().slice(0, 10);
+  let n = 0;
+  state.slots.forEach((sl, s) => { if (sl.valid) { userPresets.push({ name: 'Card ' + (s + 1) + ' (' + stamp + ')', values: sl.values.slice() }); n++; } });
+  savePresets(); renderPresets();
+  say(n ? 'Copied ' + n + ' card preset' + (n === 1 ? '' : 's') + ' into this browser. Export saves them to a file.' : 'The card has no presets to back up.');
+}
+
+// ============================================================================
+// Start
+// ============================================================================
+function buildCollapsers() {
+  for (const card of document.querySelectorAll('section.card')) {
+    const h = card.querySelector('h2'); if (!h) continue;
+    const key = 'matrixverb.fold.' + h.textContent.trim().toLowerCase().replace(/\W+/g, '-');
+    const b = document.createElement('button'); b.className = 'fold'; b.type = 'button';
+    const set = (f) => { card.classList.toggle('folded', f); b.textContent = f ? '+' : '−'; b.title = f ? 'Show' : 'Hide'; };
+    set(store.get(key, false));
+    b.addEventListener('click', () => { const f = !card.classList.contains('folded'); set(f); store.set(key, f); requestRender(); });
+    h.appendChild(b);
+  }
+}
+function buildTemplates() {
+  const el = $('templates');
+  TEMPLATE_NAMES.forEach((n, i) => {
+    const b = document.createElement('button'); b.className = 'small';
+    b.textContent = (i + 1) + ' ' + n; b.title = TEMPLATE_HINTS[i];
+    b.addEventListener('click', () => applyTemplate(i));
+    el.appendChild(b);
+  });
+}
+function frame() {
+  serviceEightmuLeds();
+  if (link.cardOnline && performance.now() - link.lastStatus > 1500 && link.lastStatus) { link.lastStatus = 0; requestRender(); }
+  requestAnimationFrame(frame);
+}
+function init() {
+  buildTabs(); buildFaders(); buildTemplates(); buildCollapsers();
+  setupMatrixCanvas();
+  loadPresets(); renderPresets();
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', scanPorts);
+  $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); sendRaw(sysex(CMD.GET_SLOTS, [])); });
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent the settings to the card.'); });
+  $('btn-slots').addEventListener('click', () => sendRaw(sysex(CMD.GET_SLOTS, [])));
+  $('btn-backup').addEventListener('click', backupCard);
+  $('btn-freeze').addEventListener('click', () => setFreeze(!state.freeze));
+  $('btn-clear').addEventListener('click', clearNetwork);
+  $('btn-click').addEventListener('click', () => click(-1));
+  $('btn-reset').addEventListener('click', () => {
+    if (!confirm('Reset every setting to the defaults?')) return;
+    state.values = defaultRows(); reengage();
+    sendRaw(sysex(CMD.RESET, []));
+    changed();
+  });
+  $('t-orth').addEventListener('click', () => setMatrix(MAT.orthogonalise(MAT.get(flatValues())).map(faderOf), 'Orthogonalised: the nearest lossless matrix, as near as the faders go.'));
+  $('t-rand').addEventListener('click', () => setMatrix(MAT.randomOrthogonal().map(faderOf), 'A new random orthogonal matrix.'));
+  $('t-signs').addEventListener('click', () => {
+    const rs = Array.from({ length: 8 }, () => Math.random() < 0.5 ? -1 : 1), cs = Array.from({ length: 8 }, () => Math.random() < 0.5 ? -1 : 1);
+    setMatrix(MAT.get(flatValues()).map((x, i) => faderOf(x * rs[i >> 3] * cs[i & 7])), 'Flipped the signs of random rows and columns.');
+  });
+  $('t-transpose').addEventListener('click', () => { const v = flatValues(); setMatrix(v.slice(0, 64).map((_, i) => v[(i & 7) * 8 + (i >> 3)]), 'Transposed.'); });
+  $('t-negate').addEventListener('click', () => setMatrix(MAT.get(flatValues()).map(x => faderOf(-x)), 'Negated.'));
+  $('t-shift').addEventListener('click', () => { const v = flatValues(); setMatrix(v.slice(0, 64).map((_, i) => v[(((i >> 3) + 7) % 8) * 8 + ((i & 7) + 7) % 8]), 'Lines renumbered: each row and column moved on one.'); });
+  $('t-undo').addEventListener('click', undoMatrix);
+  $('ir-hear').addEventListener('click', hearImpulse);
+  $('ir-burst').addEventListener('click', hearBurst);
+  $('ir-stop').addEventListener('click', stopAudio);
+  $('btn-save').addEventListener('click', saveCurrent);
+  $('btn-export').addEventListener('click', exportPresets);
+  $('btn-import').addEventListener('click', () => $('import-file').click());
+  $('import-file').addEventListener('change', (e) => { if (e.target.files[0]) importPresets(e.target.files[0]); e.target.value = ''; });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, select, textarea')) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoMatrix(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k >= '1' && k <= '8') selectPage(+k - 1, true);
+    else if (k === 'a') selectPage(nextPage(state.page, 0), true);
+    else if (k === 'b') selectPage(nextPage(state.page, 1), true);
+    else if (k === 'c') selectPage(nextPage(state.page, 2), true);
+    else if (k === 'd') selectPage(nextPage(state.page, 3), true);
+    else if (k === 'f') setFreeze(!state.freeze);
+    else if (k === 'x') clearNetwork();
+    else if (k === ' ') { e.preventDefault(); click(-1); }
+  });
+  window.addEventListener('resize', requestRender);
+  setupOwnership();
+  requestRender();
+  requestAnimationFrame(frame);
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. You can still edit, simulate and keep presets here.');
+  else say('Press “Connect card & 8mu” to reach the card. Until then this page edits, simulates and keeps presets on its own.');
+}
+init();
+</script>
+</body>
+</html>
