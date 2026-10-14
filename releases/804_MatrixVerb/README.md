@@ -279,6 +279,10 @@ card runs on its own either way. The protocol is documented in
 - The network runs at 24 kHz, half the sample rate, so that the eight lines
   (16-bit, 8192 samples each, 128 kB) fit the RP2040's RAM, up to 340 ms a
   line. Lines glide when their length changes, and read between samples.
+  Going between the two rates, a 47-tap half-band filter each way keeps the
+  input from aliasing into the network and the output from leaving an image
+  near the top of the audio range: flat to 10 kHz, at least 55 dB down from
+  14 kHz.
 - All the audio is fixed-point, on core0 ([`fdn.h`](fdn.h)). The design maths
   (the matrix's normalisation by Jacobi rotations, the coprime snapping, the
   decay and damping coefficients) is floating point and runs on core1, next

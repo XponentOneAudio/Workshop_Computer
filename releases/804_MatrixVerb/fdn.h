@@ -1,7 +1,8 @@
 // MatrixVerb: the feedback delay network, in fixed point.
 //
 // Eight delay lines run at 24kHz (half the sample rate, so that each can be
-// up to 340ms long in the RAM there is).  Every sample of the network:
+// up to 340ms long in the RAM there is), with a 47-tap half-band filter
+// each way between the two rates.  Every sample of the network:
 //
 //   y[i]  = line i read at its delay (between samples, gliding, modulated)
 //   wet  += y[i] x line i's output gain and pan
@@ -126,30 +127,41 @@ public:
 		else if ((slot & 3) == 2) ControlLine(slot >> 2);
 		else if (slot == 12) ControlMatrix();
 
-		// Input, low-passed at 48kHz and averaged down to one frame a pair
-		aaL[0] += ((inL48 - aaL[0]) * kAACoef + 2048) >> 12;
-		aaL[1] += ((aaL[0] - aaL[1]) * kAACoef + 2048) >> 12;
-		aaR[0] += ((inR48 - aaR[0]) * kAACoef + 2048) >> 12;
-		aaR[1] += ((aaR[0] - aaR[1]) * kAACoef + 2048) >> 12;
+		// The input's history at 48kHz, for the decimator (each sample
+		// stored twice, so a window of it is always in one piece)
+		hinPos = (hinPos + 1) & (kHist - 1);
+		hinL[hinPos] = hinL[hinPos + kHist] = int16_t(Clip(inL48, 32767));
+		hinR[hinPos] = hinR[hinPos + kHist] = int16_t(Clip(inR48, 32767));
 
 		// The network's work is shared over each pair of samples: the first
-		// reads the lines, the second mixes them and writes them back
+		// reads the lines, the second mixes them and writes them back.  The
+		// rate changes are shared the same way: the first sample makes the
+		// next input frame (from the pair just finished) and the in-between
+		// output sample; the second makes the wet frame.
 		int32_t wl, wr;
 		if (!odd)
 		{
-			prevL = aaL[1];
-			prevR = aaR[1];
+			const int16_t *pl = hinL + hinPos + kHist - (kHbTaps - 1);
+			const int16_t *pr = hinR + hinPos + kHist - (kHbTaps - 1);
+			frameL = Decimate(pl);
+			frameR = Decimate(pr);
 			ReadLines();
-			wl = wetPrevL;
-			wr = wetPrevR;
+			// The output between the last two frames' centre samples.  A
+			// proper interpolation can peak a little between two limited
+			// frames, as a true peak can, so it's held to the ceiling too.
+			const int16_t *ql = foutL + foutPos + kFrames - (2 * kHbK - 1);
+			const int16_t *qr = foutR + foutPos + kFrames - (2 * kHbK - 1);
+			int32_t c = ceiling;
+			wl = Interpolate(ql);
+			wr = Interpolate(qr);
+			wl = wl > c ? c : (wl < -c ? -c : wl);
+			wr = wr > c ? c : (wr < -c ? -c : wr);
 		}
 		else
 		{
-			// The input's frame: the average of the pair, rounded to nearest
-			WriteLines((aaL[1] + prevL + 1) >> 1, (aaR[1] + prevR + 1) >> 1);
+			WriteLines(frameL, frameR);
 			// The new wet frame: muted while clearing, DC removed, limited,
-			// then out at 48kHz, halfway from the last (a point between two
-			// limited frames is under the ceiling too)
+			// then into the interpolator's history
 			int32_t w0 = Clip((int32_t(int64_t(accL) * outGain >> 12)), 1 << 20);
 			int32_t w1 = Clip((int32_t(int64_t(accR) * outGain >> 12)), 1 << 20);
 			w0 = int32_t((int64_t(w0) * wetMute) >> 15);
@@ -157,10 +169,13 @@ public:
 			w0 -= OnePole(dcL, w0, kDcCoef);
 			w1 -= OnePole(dcR, w1, kDcCoef);
 			Limit(w0, w1);
-			wl = (wetPrevL + w0) >> 1;
-			wr = (wetPrevR + w1) >> 1;
-			wetPrevL = w0;
-			wetPrevR = w1;
+			foutPos = (foutPos + 1) & (kFrames - 1);
+			foutL[foutPos] = foutL[foutPos + kFrames] = int16_t(w0);
+			foutR[foutPos] = foutR[foutPos + kFrames] = int16_t(w1);
+			// On the frames themselves the interpolation is just the frame,
+			// kHbK frames back (the filter's delay)
+			wl = foutL[foutPos + kFrames - kHbK];
+			wr = foutR[foutPos + kFrames - kHbK];
 		}
 
 		// Dry and wet
@@ -202,10 +217,42 @@ private:
 	uint32_t sampleCount = 0;
 	int slot = 0;
 
-	// 2 x one-pole at ~10kHz on the input, before the network's 24kHz, Q12
-	static constexpr int32_t kAACoef = 2990;
-	int32_t aaL[2] = {}, aaR[2] = {};
-	int32_t prevL = 0, prevR = 0;
+	// Changing rate, 48kHz to 24kHz and back: a 47-tap half-band FIR each
+	// way, flat to 10kHz and at least 55dB down from 14kHz, so the input
+	// doesn't alias into the network and the output leaves no image near
+	// the top of the audio range.  Half its taps are zero, and it's
+	// symmetric, so each side tap (at odd distances 1, 3 ... 23 from the
+	// centre, Q14) is one multiply for a pair of samples.  A Kaiser-windowed
+	// sinc, beta 6.
+	static constexpr int kHbK = 12;
+	static constexpr int kHbTaps = 4 * kHbK - 1;
+	static constexpr int16_t kHb[kHbK] = {5188, -1659, 915, -575, 375, -245, 155, -94, 53, -27, 12, -3};
+	static constexpr int kHist = 64;          // input samples kept (at least kHbTaps)
+	static constexpr int kFrames = 32;        // wet frames kept (at least 2 kHbK)
+	int16_t hinL[2 * kHist] = {}, hinR[2 * kHist] = {};
+	int16_t foutL[2 * kFrames] = {}, foutR[2 * kFrames] = {};
+	int hinPos = 0, foutPos = 0;
+	int32_t frameL = 0, frameR = 0;           // the next input frame, Q15
+
+	// 48kHz to 24kHz: the filter centred kHbTaps / 2 samples back, taken
+	// once a pair.  p holds the last kHbTaps samples, oldest first.
+	static inline int32_t Decimate(const int16_t *p)
+	{
+		const int16_t *c = p + 2 * kHbK - 1;
+		int32_t acc = 8192 * int32_t(*c);
+		for (int j = 0; j < kHbK; j++) acc += kHb[j] * (int32_t(c[-(2 * j + 1)]) + int32_t(c[2 * j + 1]));
+		return (acc + 8192) >> 14;
+	}
+
+	// 24kHz to 48kHz, the sample halfway between frames kHbK and kHbK - 1
+	// back (doubled, as half the samples are the zeros put between frames).
+	// q holds the last 2 kHbK frames, oldest first.
+	static inline int32_t Interpolate(const int16_t *q)
+	{
+		int32_t acc = 0;
+		for (int j = 0; j < kHbK; j++) acc += kHb[j] * (int32_t(q[kHbK - 1 - j]) + int32_t(q[kHbK + j]));
+		return (acc + 4096) >> 13;
+	}
 
 	// Lines
 	int w = 0;                                // write position, shared
@@ -217,7 +264,6 @@ private:
 	int64_t hp[kLines] = {};                  // low cut states, Q35
 	int32_t f[kLines] = {};                   // filtered, for the matrix, Q15
 	int32_t accL = 0, accR = 0;               // the wet sum, Q15
-	int32_t wetPrevL = 0, wetPrevR = 0;
 
 	// Coefficients, glided to the design's
 	int32_t g[kLines] = {}, gEff[kLines] = {}, damp[kLines] = {};
