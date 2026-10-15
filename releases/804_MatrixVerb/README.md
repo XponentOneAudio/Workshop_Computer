@@ -250,8 +250,14 @@ card & 8mu**. It's a single file and needs no network.
   same. It works without a card too.
 - **Card presets** and **browser presets**.
 - **8mu on the computer**: its faders, buttons and tilt drive the page, with
-  the same pickup and gestures as the card. With another Workshop editor open
-  too, one 8mu drives whichever you last clicked in.
+  the same pickup and gestures as the card. With two 8mus and several
+  Workshop editors open (MatrixVerb, EightTrack, CVSeq, WaveSeq), each 8mu
+  drives one editor and each editor uses one 8mu: the one it had last time if
+  that's free, otherwise any free one. The picker at the top shows every 8mu
+  and who has it; choose one to take it, and **Identify** flashes its LEDs.
+  With one 8mu it drives whichever editor you last clicked in. Closing an
+  editor frees its 8mu. Use windows side by side rather than tabs: Chrome
+  slows background tabs.
 
 The card chooses its USB mode once, at power-up: if the port is supplying
 power (an 8mu, or nothing yet), it's a USB host for the 8mu; if a computer is
