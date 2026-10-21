@@ -1,0 +1,164 @@
+draft: true
+Name: Guided Wander
+short-description: "Two voices of random pitch CV, guided by probabilities set on a Music Thing 8mu - with gates, ratchets and envelopes"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: WIP
+License: MIT
+Editor: web
+date-created: 2026-10-21
+date-updated: 2026-10-21
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/guided_wander.uf2
+    name: Guided Wander 0.1.0
+
+tags:
+  - sequencer
+  - random
+  - quantiser
+  - generative
+  - cv
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  Random pitch CV in which the randomness is guided: the faders of a Music
+  Thing 8mu are probabilities. Two voices wander at once, and at every step
+  each draws a note of the scale, an octave, a gate length and a ratchet,
+  played as a 1V/oct pitch, a gate and an envelope.<br><br>
+
+  The 8mu's buttons choose the page: A the notes of the scale, B the octave,
+  C the gate length (a rest, then evenly up to 100%, which is tied) and D the
+  ratchet (1x, 1.5x, 2x or 3x on one note, or the same speeds drawing a new
+  note at every hit). Press a button again for its second page, voice 2's.
+  While a second page is all at zero, voice 2 draws from the first page too -
+  two different lines from the same probabilities; raise any fader on it and
+  voice 2 goes its own way. The 8mu's LEDs show the probabilities for three
+  seconds after a touch, then what is playing.<br><br>
+
+  32 scales, from the modes to 5-, 7-, 13-, 19-, 24- and 31-TET, just
+  intonation, the harmonic series and gamelan slendro and pelog. Clock it
+  from Pulse In 1, divided or multiplied, or let it keep its own time.<br><br>
+
+  An optional web editor (web/index.html, Chrome or Edge) shows both voices
+  and the probabilities, keeps presets, and passes on any 8mus plugged into
+  the computer.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Unused
+      type: audio
+      description: Not used.
+    - id: AudioIn2
+      name: Unused
+      type: audio
+      description: Not used.
+    - id: CVIn1
+      name: Unused
+      type: cv
+      description: Not used.
+    - id: CVIn2
+      name: Unused
+      type: cv
+      description: Not used.
+    - id: PulseIn1
+      name: Clock
+      type: pulse
+      description: Each step is one beat, divided or multiplied by X (switch up). Without a clock the card keeps its own 120 BPM.
+    - id: PulseIn2
+      name: Unused
+      type: pulse
+      description: Not used.
+  outputs:
+    - id: AudioOut1
+      name: Env 1
+      type: audio
+      description: Envelope of voice 1, 0 to 5V (uncalibrated), triggered by every hit.
+    - id: AudioOut2
+      name: Env 2
+      type: audio
+      description: Envelope of voice 2, 0 to 5V (uncalibrated), triggered by every hit.
+    - id: CVOut1
+      name: Pitch 1
+      type: cv
+      description: Pitch of voice 1, 1V/oct, C at 0V, slewed.
+    - id: CVOut2
+      name: Pitch 2
+      type: cv
+      description: Pitch of voice 2, 1V/oct, C at 0V, slewed.
+    - id: PulseOut1
+      name: Gate 1
+      type: pulse
+      description: Gate of voice 1.
+    - id: PulseOut2
+      name: Gate 2
+      type: pulse
+      description: Gate of voice 2.
+
+controls:
+  switch:
+    up:
+      name: Pitch
+      description: Main sets the scale, X the clock divide or multiply, Y the slew.
+    middle:
+      name: Envelope
+      description: Main sets the decay, X the attack, Y the pluckiness.
+    down:
+      name: Unused
+      description: Momentary; the knobs keep the settings of the position the switch came from.
+  knobs:
+    - when:
+        z: up
+      main:
+        name: Scale
+        description: >
+          32 scales: the modes, pentatonics, blues and other twelve-tone
+          scales, then 5-, 7-, 13-, 19-, 24- and 31-TET, just major, the
+          harmonic series and gamelan slendro and pelog.
+      x:
+        name: Clock
+        description: Eleven zones - /8, /6, /4, /3, /2, x1 (centre), x2, x3, x4, x6, x8. Each knob setting keeps its value; after the switch moves a knob picks up only once turned to its value.
+      y:
+        name: Slew
+        description: Off across the bottom of the knob, then 1ms to about 2s.
+    - when:
+        z: middle
+      main:
+        name: Decay
+        description: 5ms to about 5s.
+      x:
+        name: Attack
+        description: 0.5ms to about 1s.
+      y:
+        name: Pluck
+        description: From a straight fall to an exponential one, a fast drop with a long tail.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page A / gate 1
+          description: With an 8mu or the web editor, LEDs 0-3 show the button whose page is selected, steady for its first page and blinking for its second. Without one, LEDs 0-1 are the two gates and 2-3 the two envelopes.
+        - id: LED1
+          name: Page B / gate 2
+        - id: LED2
+          name: Page C / envelope 1
+        - id: LED3
+          name: Page D / envelope 2
+        - id: LED4
+          name: Step
+          description: Flashes at each step. With LEDs 0-3, shows the scale number in binary for a second when it changes.
+        - id: LED5
+          name: 8mu / editor
+          description: Lit while an 8mu, or the web editor, is connected. Blinks fast while a knob is waiting to pick up its setting.

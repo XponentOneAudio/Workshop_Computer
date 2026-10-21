@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guided Wander editor</title>
+<!--
+  GUIDED WANDER - web editor for the Music Thing Modular Workshop Computer card.
+  One static file, no network needed. Talks to the card over WebMIDI + SysEx
+  (protocol: ../sysex.h). The card works without this page; the page adds a
+  picture of the probabilities and what's playing, presets, and a way to use
+  an 8mu plugged into this computer rather than into the card.
+
+  The fader units (0-127, as an 8mu sends them), the scales, the ratchets and
+  the gates mirror ../wander.h and ../main.cpp. Visual style and 8mu handling
+  shared with the WaveSeq and CVSeq editors.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --v1: #0b7d78; --v2: #b5560a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --v1: #4fd1c5; --v2: #f0a35e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .muown { padding: 2px 8px; font-size: 12px; border-color: var(--accent); }
+  .muown.away { color: var(--muted); border-color: var(--line); border-style: dashed; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  #msg { padding: 6px 16px; min-height: 1.4em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 340px; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card > h2 { display: flex; align-items: center; gap: 8px; }
+  .card > h2 .fold { margin-left: auto; padding: 0 7px; min-width: 26px; height: 22px; line-height: 1; font-size: 14px;
+    color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  .card > h2 .fold:hover { color: var(--ink); border-color: var(--accent); }
+  .card.folded > :not(h2) { display: none; }
+  .card.folded > h2 { margin-bottom: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  .jacks { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+  .jacks th, .jacks td { text-align: left; vertical-align: top; padding: 4px 0; border-top: 1px solid var(--line); }
+  .jacks th { white-space: nowrap; padding-right: 10px; font-weight: 600; }
+  .jacks td { color: var(--muted); }
+  .jacks tr.grp th { border-top: 0; padding-top: 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .jacks tr.grp:first-child th { padding-top: 0; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .readout.waiting { outline: 2px dotted var(--warm); outline-offset: 2px; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .readout .sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .notes { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .notes p { margin: 6px 0 0; }
+  .notes b { color: var(--ink); font-weight: 600; }
+  .notes .jacks { margin-top: 4px; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .row .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-right: 4px; }
+  #sim-row[hidden] { display: none; }
+
+  /* Voices */
+  .voices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  @media (max-width: 640px) { .voices { grid-template-columns: 1fr; } }
+  .voice { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; border-left: 4px solid var(--vc); }
+  .voice.v1 { --vc: var(--v1); } .voice.v2 { --vc: var(--v2); }
+  .voice .head { display: flex; align-items: baseline; gap: 8px; }
+  .voice .head b { font-size: 13px; }
+  .voice .shares { font-size: 11px; color: var(--muted); }
+  .voice .big { font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .voice .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 4px; font-size: 12px; }
+  .voice .facts span { color: var(--muted); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .voice .lamps { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .lamp { width: 12px; height: 12px; border-radius: 50%; background: var(--track); }
+  .lamp.on { background: var(--vc); }
+  .env { flex: 1; height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  .env i { display: block; height: 100%; width: 0; background: var(--vc); }
+  #history { height: 170px; margin-top: 12px; }
+
+  /* Faders */
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+  .tabpair { display: flex; gap: 4px; }
+  .tab { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; background: var(--panel); text-align: left; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab b { display: inline-block; min-width: 1.4em; padding: 0 3px; text-align: center; margin-right: 4px; border-radius: 4px; background: var(--track); }
+  .tab.on { border-color: var(--accent); background: var(--accent-soft); }
+  .tab.on b { background: var(--accent); color: var(--panel); }
+  .tab.second { flex: 0 0 auto; font-size: 12px; }
+  .tab.second.shared { border-style: dashed; color: var(--muted); }
+  @media (max-width: 640px) { .tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  @media (max-width: 640px) { .faders { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; position: relative; }
+  .fader.unused { opacity: .35; }
+  .fader.play1 { background: color-mix(in srgb, var(--v1) 18%, transparent); }
+  .fader.play2 { box-shadow: inset 0 -3px 0 var(--v2); }
+  .fader .name { font-size: 12px; font-weight: 600; text-align: center; min-height: 1.4em; overflow-wrap: anywhere; }
+  .fader .slot { position: relative; height: 150px; width: 32px; }
+  .fader input[type=range] {
+    writing-mode: vertical-lr; direction: rtl; width: 32px; height: 150px; margin: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }
+  .fader .ghost { position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm); pointer-events: none; display: none; }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .fader .desc { font-size: 11px; color: var(--muted); text-align: center; min-height: 1.4em; }
+  .faderbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+  .shared-note { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--warm); border-radius: 6px; font-size: 12px; color: var(--muted); }
+  .shared-note[hidden] { display: none; }
+
+  /* Probabilities */
+  .dists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 640px) { .dists { grid-template-columns: 1fr; } }
+  .dist h3 { font-size: 12px; margin: 0 0 4px; font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
+  .dist h3 span { font-weight: 400; color: var(--muted); font-size: 11px; }
+  .dist canvas { height: 90px; cursor: pointer; }
+
+  /* Presets */
+  #presets { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow: auto; }
+  #presets li { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 6px; }
+  #presets li:hover { background: var(--accent-soft); }
+  #presets li .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #presets li .tag { font-size: 11px; color: var(--muted); }
+  #presets li button { padding: 2px 6px; font-size: 12px; }
+  .preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  details { margin-top: 16px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Guided Wander</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <button id="mu-owner" class="muown" hidden></button>
+  <div class="spacer"></div>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-read" disabled>Read from card</button>
+  <button id="btn-send" disabled>Send to card</button>
+  <button id="btn-reset">Reset</button>
+</header>
+<div id="msg"></div>
+
+<main>
+  <div style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Playing</h2>
+      <div class="readouts">
+        <div class="readout"><div class="k">Scale</div><div class="v" id="ro-scale">-</div><div class="sub" id="ro-scale-n"></div></div>
+        <div class="readout"><div class="k">Clock</div><div class="v" id="ro-clock">-</div><div class="sub" id="ro-step"></div></div>
+        <div class="readout"><div class="k">Slew</div><div class="v" id="ro-slew">-</div></div>
+        <div class="readout"><div class="k">Attack</div><div class="v" id="ro-attack">-</div></div>
+        <div class="readout"><div class="k">Decay</div><div class="v" id="ro-decay">-</div></div>
+        <div class="readout"><div class="k">Pluck</div><div class="v" id="ro-pluck">-</div></div>
+      </div>
+      <div class="row" id="sim-row">
+        <span class="k">Preview</span>
+        <span class="caption" style="margin:0">No card: the page plays on its own at 120 BPM. Scale</span>
+        <select id="sim-scale" aria-label="Scale for the preview"></select>
+      </div>
+      <div class="caption" id="knob-line"></div>
+      <div class="voices">
+        <div class="voice v1" id="voice0">
+          <div class="head"><b>Voice 1</b><span class="shares">CV Out 1 &middot; Audio Out 1 &middot; Pulse Out 1</span></div>
+          <div class="big" data-k="pitch">-</div>
+          <div class="facts">
+            <div><span>Note</span><b data-k="note">-</b></div>
+            <div><span>Octave</span><b data-k="oct">-</b></div>
+            <div><span>Gate</span><b data-k="gate">-</b></div>
+            <div><span>Ratchet</span><b data-k="ratchet">-</b></div>
+          </div>
+          <div class="lamps"><span class="lamp" data-k="gatelamp"></span>gate<div class="env"><i data-k="env"></i></div>envelope</div>
+        </div>
+        <div class="voice v2" id="voice1">
+          <div class="head"><b>Voice 2</b><span class="shares">CV Out 2 &middot; Audio Out 2 &middot; Pulse Out 2</span></div>
+          <div class="big" data-k="pitch">-</div>
+          <div class="facts">
+            <div><span>Note</span><b data-k="note">-</b></div>
+            <div><span>Octave</span><b data-k="oct">-</b></div>
+            <div><span>Gate</span><b data-k="gate">-</b></div>
+            <div><span>Ratchet</span><b data-k="ratchet">-</b></div>
+          </div>
+          <div class="lamps"><span class="lamp" data-k="gatelamp"></span>gate<div class="env"><i data-k="env"></i></div>envelope</div>
+        </div>
+      </div>
+      <canvas id="history" aria-label="The two voices' pitches over the last eight seconds"></canvas>
+      <div class="caption" id="history-caption"></div>
+    </section>
+
+    <section class="card">
+      <h2>Faders</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="faders" id="faders"></div>
+      <div class="shared-note" id="shared-note" hidden></div>
+      <div class="faderbar">
+        <button id="btn-flat" title="Every slider on this page to the same height (8mu units 100)">Even</button>
+        <button id="btn-zero" title="Every slider on this page to zero. On a second page, that gives voice 2 the first page's probabilities again">Zero</button>
+        <button id="btn-copy1" title="Copy the first page of this pair onto the second, as a starting point for voice 2">Copy first page to second</button>
+        <button id="btn-rand" title="Random probabilities on this page">Randomise</button>
+      </div>
+      <div class="caption" id="page-hint"></div>
+    </section>
+
+    <section class="card">
+      <h2>Probabilities</h2>
+      <div class="dists" id="dists"></div>
+      <div class="caption">Each slider's chance of being drawn, as each voice sees it: voice 1 solid, voice 2 outlined. When voice 2 shares a page the two are the same. Click a chart to edit its page.</div>
+    </section>
+  </div>
+
+  <aside style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Presets</h2>
+      <ul id="presets"></ul>
+      <div class="preset-actions">
+        <button id="btn-save">Save current…</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-import">Import</button>
+        <input type="file" id="import-file" accept=".json,application/json" hidden>
+      </div>
+      <div class="caption">Presets live in this browser. Loading one sends it to the card if one is connected. The card itself keeps nothing over power-off.</div>
+    </section>
+
+    <section class="card">
+      <h2>Inputs &amp; outputs</h2>
+      <table class="jacks">
+        <tr class="grp"><th colspan="2">Inputs</th></tr>
+        <tr><th>Pulse In 1</th><td>Clock. Each step is one beat, divided or multiplied by X (switch up). Followed from the second pulse; without one, or four periods (at least 2 s) after it stops, the card keeps its own 120 BPM</td></tr>
+        <tr><th>Others</th><td>Not used</td></tr>
+        <tr class="grp"><th colspan="2">Outputs</th></tr>
+        <tr><th>CV Out 1, 2</th><td>Pitch of voice 1, 2: 1 V/oct, C at 0 V, &minus;2 V to about +6 V, slewed by Y</td></tr>
+        <tr><th>Audio Out 1, 2</th><td>Envelope of voice 1, 2, 0 to 5 V (uncalibrated), retriggered by every hit</td></tr>
+        <tr><th>Pulse Out 1, 2</th><td>Gate of voice 1, 2</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>8mu</h2>
+      <div class="notes">
+        <p>The 8mu can plug into the module (no computer needed) or into this computer, which passes it on to the card. Its eight faders are <b>relative probabilities</b>: a fader at zero is never chosen, one twice as high as another twice as often. Buttons are acted on when you let go.</p>
+        <table class="jacks">
+          <tr><th>A</th><td><b>Notes</b> of the scale. Scales with fewer than eight notes ignore the extra faders. Again: <b>Notes 2</b></td></tr>
+          <tr><th>B</th><td><b>Octaves</b>, &minus;2 V to +5 V. Again: <b>Octaves 2</b></td></tr>
+          <tr><th>C</th><td><b>Gates</b>: 0% (a rest), evenly up to 100%, which is tied into the next note without a new envelope. Again: <b>Gates 2</b></td></tr>
+          <tr><th>D</th><td><b>Ratchets</b>: faders 1-4 play 1&times;, 1.5&times;, 2&times;, 3&times; the step on one note; faders 5-8 the same speeds, drawing a new note, octave and gate at every hit. Again: <b>Ratchets 2</b></td></tr>
+          <tr><th>Second pages</th><td>Voice 2's. While every fader on one is at zero, voice 2 draws from the first page, as a second line with the same probabilities; raise any fader and that page is voice 2's own. Each pair is separate.</td></tr>
+          <tr><th>Pickup</th><td>After a page change a fader does nothing until it reaches (or passes) the stored value. While it waits, a dashed line on its on-screen fader shows where it is.</td></tr>
+          <tr><th>LEDs</th><td>For 3 s after a fader or button is touched, the probabilities (the ratchets flash their speeds in time); then what is playing: the note or octave chosen, a bar to the gate length (the first LED dim for a rest), the ratchet flashing at each hit. On a first page voice 2 shows dimmer while it shares it.</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Panel</h2>
+      <div class="notes">
+        <table class="jacks">
+          <tr><th>Switch up</th><td>Main <b>scale</b> (32), X <b>clock</b> &divide;8 to &times;8, Y <b>slew</b> on the pitch (off, then 1 ms to 2 s)</td></tr>
+          <tr><th>Switch middle</th><td>Main <b>decay</b> (5 ms to 5 s), X <b>attack</b> (0.5 ms to 1 s), Y <b>pluck</b>: from a straight fall to a fast drop with a long tail</td></tr>
+          <tr><th>Switch down</th><td>Nothing; the knobs keep the settings of where it came from</td></tr>
+          <tr><th>Knob pickup</th><td>After the switch moves, a knob does nothing until it reaches its setting's value; the setting's box above has a dotted outline until it does</td></tr>
+          <tr><th>LEDs</th><td>1-4 the page (blinking for a second page) with an 8mu or this page, otherwise the gates and envelopes; the scale's number in binary (with LED 5) for a second when it changes. 5 flashes each step, 6 is lit with an 8mu or this page and blinks while a knob is waiting</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>How it connects</h2>
+      <div class="caption" style="margin-top:0">
+        The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page isn't used.
+        <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Guided Wander</b>, and any 8mu plugged
+        into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.
+      </div>
+      <details>
+        <summary>Help</summary>
+        <ul class="caption">
+          <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
+          <li>Press <kbd>Connect card &amp; 8mu</kbd> and allow MIDI with SysEx when the browser asks.</li>
+          <li>Every 8mu on this computer drives the page together; their LEDs all follow it.</li>
+          <li>With the WaveSeq or CVSeq editor open too, one 8mu drives whichever editor you last clicked in. The header shows <b>8mu: here</b> or <b>8mu: elsewhere</b>; click it, or anywhere on the page, to take it. Use separate windows side by side rather than tabs: Chrome slows a background tab.</li>
+          <li>On-screen faders: drag, or focus one and use the arrow keys. Double-click sets one to zero.</li>
+          <li>Without a card the page still edits, previews and keeps presets, playing on its own at 120 BPM in the scale you choose.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+// ============================================================================
+// Constants mirroring the firmware (wander.h, main.cpp, sysex.h)
+// ============================================================================
+const NS = 8, PAGES = 8;
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x47, PROTOCOL_VERSION = 1;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, RESET: 6, STATUS: 7, PING: 9 };
+const FIRST_FADER_CC = 34;
+const BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+const TOUCH_MS = 3000;
+const BASE_OCTAVE = -2;
+
+// Scales: name and cents above the root (kScales in wander.h)
+const SCALES = [
+  ['Major', [0, 200, 400, 500, 700, 900, 1100]],
+  ['Natural minor', [0, 200, 300, 500, 700, 800, 1000]],
+  ['Harmonic minor', [0, 200, 300, 500, 700, 800, 1100]],
+  ['Melodic minor', [0, 200, 300, 500, 700, 900, 1100]],
+  ['Dorian', [0, 200, 300, 500, 700, 900, 1000]],
+  ['Phrygian', [0, 100, 300, 500, 700, 800, 1000]],
+  ['Lydian', [0, 200, 400, 600, 700, 900, 1100]],
+  ['Mixolydian', [0, 200, 400, 500, 700, 900, 1000]],
+  ['Locrian', [0, 100, 300, 500, 600, 800, 1000]],
+  ['Major pentatonic', [0, 200, 400, 700, 900]],
+  ['Minor pentatonic', [0, 300, 500, 700, 1000]],
+  ['Blues', [0, 300, 500, 600, 700, 1000]],
+  ['Whole tone', [0, 200, 400, 600, 800, 1000]],
+  ['Octatonic', [0, 200, 300, 500, 600, 800, 900, 1100]],
+  ['Augmented', [0, 300, 400, 700, 800, 1100]],
+  ['Hirajoshi', [0, 200, 300, 700, 800]],
+  ['In-sen', [0, 100, 500, 700, 1000]],
+  ['Hungarian minor', [0, 200, 300, 600, 700, 800, 1100]],
+  ['Phrygian dominant', [0, 100, 400, 500, 700, 800, 1000]],
+  ['Double harmonic', [0, 100, 400, 500, 700, 800, 1100]],
+  ['Root and fifth', [0, 700]],
+  ['5-TET', [0, 240, 480, 720, 960]],
+  ['7-TET', [0, 171.43, 342.86, 514.29, 685.71, 857.14, 1028.57]],
+  ['13-TET (8 of 13)', [0, 184.62, 369.23, 461.54, 646.15, 830.77, 923.08, 1107.69]],
+  ['19-TET diatonic', [0, 189.47, 378.95, 505.26, 694.74, 884.21, 1073.68]],
+  ['Maqam Rast (24-TET)', [0, 200, 350, 500, 700, 900, 1050]],
+  ['Maqam Bayati (24-TET)', [0, 150, 300, 500, 700, 800, 1000]],
+  ['31-TET diatonic', [0, 193.55, 387.10, 503.23, 696.77, 890.32, 1083.87]],
+  ['Just major', [0, 203.91, 386.31, 498.04, 701.96, 884.36, 1088.27]],
+  ['Overtones 8-15', [0, 203.91, 386.31, 551.32, 701.96, 840.53, 968.83, 1088.27]],
+  ['Slendro (typical)', [0, 231, 474, 717, 955]],
+  ['Pelog (typical)', [0, 120, 258, 539, 675, 785, 943]],
+];
+const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+// A note's name: the nearest semitone, with how far off it is in cents when
+// that's more than a cent or two
+function noteName(cents) {
+  const semi = Math.round(cents / 100), off = Math.round(cents - semi * 100);
+  return NOTE_NAMES[((semi % 12) + 12) % 12] + (Math.abs(off) >= 2 ? (off > 0 ? '+' : '−') + Math.abs(off) + '¢' : '');
+}
+const pitchMv = (scale, note, oct) => (oct + BASE_OCTAVE) * 1000 + Math.round(SCALES[scale][1][Math.min(note, SCALES[scale][1].length - 1)] * 1000 / 1200);
+const octName = (o) => { const v = o + BASE_OCTAVE; return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + ' V'; };
+const GATE_NAMES = ['rest', '14%', '29%', '43%', '57%', '71%', '86%', 'tied'];
+const RATCHET_NAMES = ['1×', '1.5×', '2×', '3×', '1× new', '1.5× new', '2× new', '3× new'];
+const RATE2 = [2, 3, 4, 6];
+const hitCount = (r2) => Math.floor((r2 + 1) / 2);
+const RATIOS = [[1, 8], [1, 6], [1, 4], [1, 3], [1, 2], [1, 1], [2, 1], [3, 1], [4, 1], [6, 1], [8, 1]];
+const ratioName = (r) => r[1] > 1 ? '÷' + r[1] : '×' + r[0];
+
+const KINDS = ['Notes', 'Octaves', 'Gates', 'Ratchets'];
+const LETTERS = ['A', 'B', 'C', 'D'];
+const PAGE_HINT = [
+  'Each note of the scale’s chance of being drawn. A scale with fewer than eight notes ignores the faders past its end. The note names are for a root of C (0 V).',
+  'Each octave’s chance: fader 1 is −2 V, fader 8 is +5 V.',
+  'Each gate length’s chance, of the time to the next hit: fader 1 is a rest (no gate, no envelope, though the pitch still moves), then evenly up to fader 8, tied: the gate stays up into the next note, which glides on without a new envelope.',
+  'Each ratchet’s chance. Faders 1-4 play 1×, 1.5×, 2× and 3× the step, every hit on the same note, octave and gate; faders 5-8 the same speeds, drawing a new note, octave and gate for every hit. 1.5× plays two hits in a step, the second two thirds through.',
+];
+
+// Default probabilities, as SetDefaults in main.cpp
+const DEFAULT_VALUES = [
+  [110, 50, 80, 40, 100, 45, 55, 30],
+  [0, 10, 70, 127, 90, 30, 0, 0],
+  [15, 20, 45, 80, 100, 60, 30, 12],
+  [110, 25, 35, 15, 0, 12, 20, 8],
+  [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0],
+];
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  values: DEFAULT_VALUES.map(r => r.slice()),
+  page: 0,
+  // live, from the card's STATUS (or simulated when there's no card)
+  live: { clocked: false, muOnCard: false, switchUp: true, knobWaiting: false, waitX: false, waitY: false, waitMain: false,
+          scale: 0, clock: 5, slew: 0, attack: 9, decay: 50, pluck: 64, progress: 0, stepMs: 500,
+          voices: [0, 1].map(() => ({ note: 0, oct: 2, gate: 4, ratchet: 0, hits: 0, gateOn: false, tied: false, env: 0, mv: 0, hitAt: 0 })) },
+  history: [],                                   // [time ms, mV1, mV2]
+  simScale: 0,
+};
+const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
+// 8mu pickup and LEDs, mirroring GuidedWander::HandleEightMU in the firmware
+const mu = { phys: new Array(NS).fill(-1), engaged: new Array(NS).fill(false), down: [false, false, false, false],
+             ledSent: new Array(NS).fill(-1), lastBlinkOff: 0, touchedAt: -Infinity };
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function fmtTime(s) { return s >= 1 ? s.toFixed(2) + ' s' : s >= 0.01 ? Math.round(s * 1000) + ' ms' : (s * 1000).toFixed(1) + ' ms'; }
+
+const scaleNow = () => link.cardOnline ? state.live.scale : state.simScale;
+const noteCount = () => SCALES[scaleNow()][1].length;
+// Voice 2 has a page of its own in this pair (any slider above zero)
+const ownPage = (pair) => state.values[4 + pair].some(v => v > 0);
+// The probabilities voice v draws from for one kind (BuildWeights in wander.h)
+function weights(v, kind) {
+  const page = v === 1 && ownPage(kind) ? 4 + kind : kind;
+  const w = state.values[page].slice();
+  if (kind === 0) for (let i = noteCount(); i < NS; i++) w[i] = 0;
+  return w;
+}
+const probs = (w) => { const t = w.reduce((a, b) => a + b, 0); return t > 0 ? w.map(x => x / t) : w.map(() => 1 / w.length); };
+
+// The label for slider i on page p
+function sliderName(p, i) {
+  const k = p & 3;
+  if (k === 0) { const c = SCALES[scaleNow()][1]; return i < c.length ? noteName(c[i]) : '–'; }
+  if (k === 1) return octName(i);
+  if (k === 2) return GATE_NAMES[i];
+  return RATCHET_NAMES[i];
+}
+
+// ============================================================================
+// Readouts and voices
+// ============================================================================
+function drawReadouts() {
+  const L = state.live, on = link.cardOnline;
+  const sc = scaleNow();
+  $('ro-scale').textContent = SCALES[sc][0];
+  $('ro-scale-n').textContent = (sc + 1) + ' of ' + SCALES.length + ' · ' + SCALES[sc][1].length + ' notes';
+  $('ro-clock').textContent = ratioName(RATIOS[L.clock]) + (L.clocked ? ' clock' : ' of 120 BPM');
+  $('ro-step').textContent = 'step ' + fmtTime(L.stepMs / 1000);
+  const s = L.slew * 32;
+  $('ro-slew').textContent = s < 140 ? 'off' : fmtTime(0.001 * Math.pow(2, (s - 140) * 11 / (4095 - 140)));
+  $('ro-attack').textContent = fmtTime(0.0005 * Math.pow(2, 11 * L.attack * 32 / 4095));
+  $('ro-decay').textContent = fmtTime(0.005 * Math.pow(2, 10 * L.decay * 32 / 4095));
+  $('ro-pluck').textContent = Math.round(L.pluck / 127 * 100) + '%';
+  // A dotted box round each setting whose knob is waiting to pick it up
+  const knobs = L.switchUp ? ['ro-clock', 'ro-slew', 'ro-scale'] : ['ro-attack', 'ro-pluck', 'ro-decay'];
+  const waiting = new Set([L.waitX && knobs[0], L.waitY && knobs[1], L.waitMain && knobs[2]].filter(Boolean));
+  for (const id of ['ro-clock', 'ro-slew', 'ro-scale', 'ro-attack', 'ro-pluck', 'ro-decay']) {
+    const box = $(id).parentElement, w = waiting.has(id) && on;
+    if (box.classList.contains('waiting') !== w) { box.classList.toggle('waiting', w); box.title = w ? 'The knob for this is waiting: turn it to (or past) this value to pick it up' : ''; }
+  }
+  $('sim-row').hidden = on;
+  $('knob-line').textContent = !on ? '' : 'Switch ' + (L.switchUp ? 'up: Main = scale, X = clock, Y = slew' : 'middle: Main = decay, X = attack, Y = pluck') +
+    (L.knobWaiting ? '. A knob is waiting to pick up its value.' : '.');
+  L.voices.forEach((v, k) => {
+    const el = $('voice' + k), q = (n) => el.querySelector('[data-k="' + n + '"]');
+    const c = SCALES[sc][1];
+    q('pitch').textContent = (v.mv / 1000 >= 0 ? '+' : '−') + Math.abs(v.mv / 1000).toFixed(3) + ' V';
+    q('note').textContent = (v.note + 1) + ' · ' + noteName(c[Math.min(v.note, c.length - 1)]);
+    q('oct').textContent = octName(v.oct);
+    q('gate').textContent = GATE_NAMES[v.gate];
+    q('ratchet').textContent = RATCHET_NAMES[v.ratchet];
+    q('gatelamp').classList.toggle('on', v.gateOn);
+    q('env').style.width = Math.round(v.env / 127 * 100) + '%';
+  });
+}
+
+// Both pitches over the last eight seconds
+function drawHistory(now) {
+  const cv = $('history'), { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const SPAN = 8000, lo = -2500, hi = 6000, y = (mv) => H - 4 - ((mv - lo) / (hi - lo)) * (H - 8);
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1; ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui';
+  for (let v = -2; v <= 5; v++) { ctx.beginPath(); ctx.moveTo(0, y(v * 1000)); ctx.lineTo(W, y(v * 1000)); ctx.stroke(); ctx.fillText((v > 0 ? '+' : '') + v + ' V', 4, y(v * 1000) - 2); }
+  state.history = state.history.filter(p => now - p[0] <= SPAN);
+  [1, 2].forEach((k) => {
+    ctx.strokeStyle = cssVar(k === 1 ? '--v1' : '--v2'); ctx.lineWidth = 2; ctx.beginPath();
+    state.history.forEach((p, n) => { const px = W - (now - p[0]) / SPAN * W; if (n === 0) ctx.moveTo(px, y(p[k])); else ctx.lineTo(px, y(p[k])); });
+    ctx.stroke();
+  });
+  $('history-caption').textContent = 'Voice 1 and voice 2, the last eight seconds' + (link.cardOnline ? ', from the card.' : ' (simulated).');
+}
+
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+
+// Probability charts: one per kind, voice 1 filled and voice 2 outlined
+const distEls = [];
+function buildDists() {
+  KINDS.forEach((name, k) => {
+    const d = document.createElement('div'); d.className = 'dist';
+    d.innerHTML = '<h3>' + LETTERS[k] + ' ' + name + ' <span></span></h3><canvas></canvas>';
+    const cv = d.querySelector('canvas');
+    cv.addEventListener('click', () => selectPage(k, true));
+    $('dists').appendChild(d);
+    distEls.push({ cv, note: d.querySelector('h3 span') });
+  });
+}
+function drawDists() {
+  const L = state.live;
+  distEls.forEach(({ cv, note }, k) => {
+    const { ctx, w: W, h: H } = setupCanvas(cv);
+    ctx.clearRect(0, 0, W, H);
+    const p1 = probs(weights(0, k)), p2 = probs(weights(1, k)), own = ownPage(k), bw = W / NS, top = 4, base = H - 16;
+    const mx = Math.max(0.0001, ...p1, ...p2);
+    note.textContent = own ? 'voice 2 has its own' : 'shared';
+    for (let i = 0; i < NS; i++) {
+      const x = i * bw, h1 = (p1[i] / mx) * (base - top), h2 = (p2[i] / mx) * (base - top);
+      ctx.fillStyle = cssVar('--v1'); ctx.globalAlpha = 0.75; ctx.fillRect(x + bw * 0.18, base - h1, bw * 0.64, h1); ctx.globalAlpha = 1;
+      if (own) { ctx.strokeStyle = cssVar('--v2'); ctx.lineWidth = 2; ctx.strokeRect(x + bw * 0.12, base - h2, bw * 0.76, h2); }
+      // the slider each voice drew last
+      const pick = [L.voices[0], L.voices[1]].map(v => [v.note, v.oct, v.gate, v.ratchet][k]);
+      [0, 1].forEach(vk => { if (pick[vk] === i) { ctx.fillStyle = cssVar(vk ? '--v2' : '--v1'); ctx.beginPath(); ctx.arc(x + bw / 2 + (vk ? 5 : -5), base + 7, 3.5, 0, Math.PI * 2); ctx.fill(); } });
+      ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+      if (k === 0 && i >= noteCount()) ctx.fillText('–', x + bw / 2, base - 2);
+    }
+    ctx.textAlign = 'left';
+  });
+}
+
+// ============================================================================
+// Faders
+// ============================================================================
+const faderEls = [], tabEls = [];
+function buildFaders() {
+  const tabs = $('tabs');
+  for (let k = 0; k < 4; k++) {
+    const pair = document.createElement('div'); pair.className = 'tabpair';
+    for (const p of [k, k + 4]) {
+      const t = document.createElement('button'); t.className = 'tab' + (p >= 4 ? ' second' : '');
+      t.innerHTML = p < 4 ? '<b>' + LETTERS[k] + '</b>' + KINDS[k] : '<b>' + LETTERS[k] + '2</b>';
+      t.title = p < 4 ? KINDS[k] + ': both voices, or voice 1 when voice 2 has its own' : KINDS[k] + ' 2: voice 2’s own, while any slider is above zero';
+      t.addEventListener('click', () => selectPage(p, true));
+      pair.appendChild(t); tabEls[p] = t;
+    }
+    tabs.appendChild(pair);
+  }
+  const el = $('faders');
+  for (let i = 0; i < NS; i++) {
+    const f = document.createElement('div'); f.className = 'fader';
+    f.innerHTML = '<div class="name"></div><div class="slot"><input type="range" min="0" max="127" step="1">' +
+      '<div class="ghost"></div></div><div class="val"></div><div class="desc"></div>';
+    const input = f.querySelector('input');
+    input.addEventListener('input', () => { userSetValue(state.page, i, +input.value); touched(); });
+    input.addEventListener('dblclick', () => { userSetValue(state.page, i, 0); touched(); });
+    el.appendChild(f);
+    faderEls.push({ root: f, input, name: f.querySelector('.name'), ghost: f.querySelector('.ghost'), val: f.querySelector('.val'), desc: f.querySelector('.desc') });
+  }
+}
+function refreshFaders() {
+  const p = state.page, k = p & 3, L = state.live;
+  tabEls.forEach((t, n) => {
+    t.classList.toggle('on', n === p);
+    if (n >= 4) t.classList.toggle('shared', !ownPage(n - 4));
+  });
+  $('page-hint').textContent = PAGE_HINT[k];
+  const pr = probs(weights(p >= 4 ? 1 : 0, k));
+  const showsVoice2 = p >= 4 || !ownPage(k);
+  faderEls.forEach((f, i) => {
+    const v = state.values[p][i];
+    if (document.activeElement !== f.input || +f.input.value !== v) f.input.value = v;
+    f.name.textContent = sliderName(p, i);
+    f.input.setAttribute('aria-label', KINDS[k] + (p >= 4 ? ' 2' : '') + ': ' + sliderName(p, i));
+    f.val.textContent = v;
+    // the share of the draws: on a shared second page, of the first page's
+    const usesThis = p < 4 || ownPage(k);
+    f.desc.textContent = usesThis ? (k === 0 && i >= noteCount() ? 'not in scale' : Math.round(pr[i] * 100) + '%') : '';
+    f.root.classList.toggle('unused', k === 0 && i >= noteCount());
+    const picks = L.voices.map(vv => [vv.note, vv.oct, vv.gate, vv.ratchet][k]);
+    f.root.classList.toggle('play1', p < 4 && picks[0] === i);
+    f.root.classList.toggle('play2', showsVoice2 && picks[1] === i);
+    const ph = mu.phys[i], waiting = link.muIns.length > 0 && owner.here && ph >= 0 && !mu.engaged[i];
+    f.ghost.style.display = waiting ? 'block' : 'none';
+    if (waiting) f.ghost.style.top = ((1 - ph / 127) * 150) + 'px';
+  });
+  const note = $('shared-note');
+  if (p >= 4 && !ownPage(k)) {
+    note.hidden = false;
+    note.textContent = 'Every slider here is at zero, so voice 2 draws its ' + KINDS[k].toLowerCase() +
+      ' from the first page (' + LETTERS[k] + '), with the same probabilities as voice 1 but its own choices. Raise any slider to give voice 2 its own.';
+  } else if (p < 4 && ownPage(k)) {
+    note.hidden = false;
+    note.textContent = 'Voice 2 has its own ' + KINDS[k].toLowerCase() + ' page (' + LETTERS[k] + '2), so this page is voice 1’s alone. Set every slider on ' + LETTERS[k] + '2 to zero to share this page again.';
+  } else note.hidden = true;
+  $('btn-copy1').disabled = p < 4;
+}
+
+// ============================================================================
+// Changing values (from the screen, the 8mu, a preset or the card)
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+
+function userSetValue(page, i, v) {
+  v = clamp(v | 0, 0, 127);
+  if (state.values[page][i] === v) return;
+  state.values[page][i] = v;
+  if (page === state.page) mu.engaged[i] = false;      // a physical fader must meet it again
+  queueSend('v' + page + '.' + i, sysex(CMD.SET, [page, i, v]));
+  changed();
+}
+function setPage(page, vals, label) {
+  state.values[page] = vals.map(v => clamp(v | 0, 0, 127));
+  reengage(); sendAll(); touched(); changed();
+  if (label) say(label);
+}
+function selectPage(p, send) {
+  if (p !== state.page) { state.page = p; reengage(); if (send) queueSend('page', sysex(CMD.PAGE, [p])); }
+  touched(); changed();
+}
+// The probabilities show on the 8mu's LEDs for 3 s after a touch
+function touched() { mu.touchedAt = performance.now(); }
+function reengage() {
+  for (let i = 0; i < NS; i++) { const ph = mu.phys[i]; mu.engaged[i] = ph >= 0 && Math.abs(ph - state.values[state.page][i]) <= 1; }
+}
+
+let renderQueued = false, saveTimer = 0;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; refreshFaders(); renderPresets(); });
+}
+function changed() {
+  requestRender();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => store.set('wander.last.v1', { v: state.values, scale: state.simScale }), 400);
+}
+
+// A button on every card's heading folds the card down to the heading
+function buildCollapsers() {
+  const folded = new Set(store.get('wander.folded.v1', []) || []);
+  document.querySelectorAll('section.card').forEach((card) => {
+    const h = card.querySelector(':scope > h2'); if (!h) return;
+    const name = h.textContent.trim();
+    const b = document.createElement('button'); b.className = 'fold'; b.type = 'button';
+    const show = (f) => {
+      card.classList.toggle('folded', f);
+      b.textContent = f ? '+' : '−';
+      b.title = (f ? 'Show ' : 'Hide ') + name; b.setAttribute('aria-label', b.title);
+      b.setAttribute('aria-expanded', String(!f));
+    };
+    show(folded.has(name));
+    b.addEventListener('click', () => {
+      const f = !card.classList.contains('folded');
+      show(f);
+      if (f) folded.add(name); else folded.delete(name);
+      store.set('wander.folded.v1', [...folded]);
+      requestRender();
+    });
+    h.appendChild(b);
+  });
+}
+
+// ---- 8mu plugged into this computer -----------------------------------------
+function eightmuFader(i, v) {
+  if (mu.down.some(Boolean)) { mu.phys[i] = v; mu.engaged[i] = false; requestRender(); return; }
+  const last = mu.phys[i], target = state.values[state.page][i];
+  mu.phys[i] = v;
+  if (last >= 0 && last !== v) touched();
+  if (!mu.engaged[i]) {
+    const near = Math.abs(v - target) <= 1;
+    const crossed = last >= 0 && ((last < target) !== (v < target));
+    if (!near && !crossed) { requestRender(); return; }
+    mu.engaged[i] = true;
+  }
+  if (state.values[state.page][i] !== v) {
+    state.values[state.page][i] = v;
+    queueSend('v' + state.page + '.' + i, sysex(CMD.SET, [state.page, i, v]));
+    changed();
+  }
+}
+// Buttons, acted on when released, as on the card: A-D choose the page,
+// pressing the same one again its second page
+function eightmuButton(b, down) {
+  if (down) { mu.down[b] = true; return; }
+  if (!mu.down[b]) return;
+  mu.down[b] = false;
+  selectPage((state.page & 3) === b ? state.page ^ 4 : b, true);
+  mu.engaged.fill(false);
+  reengage();
+  requestRender();
+}
+
+// ---- Which editor the 8mu drives.  With the WaveSeq or CVSeq editor open
+// too, one 8mu on this computer drives one of them: the one last clicked in
+// (or opened).  A page claims it by telling the others, over a
+// BroadcastChannel and through localStorage, and they let it go.  A page
+// without it ignores its faders and buttons and leaves its LEDs alone, but
+// still follows where the faders are, so they pick up on return.
+const EDITOR_NAME = 'Guided Wander';
+const OWNER_KEY = 'workshop.8mu.owner';
+const owner = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), here: true, other: '', chan: null };
+function claim8mu(announce) {
+  const was = owner.here;
+  owner.here = true;
+  const msg = { id: owner.id, name: EDITOR_NAME, t: Date.now() };
+  try { if (owner.chan) owner.chan.postMessage(msg); } catch (e) {}
+  try { localStorage.setItem(OWNER_KEY, JSON.stringify(msg)); } catch (e) {}
+  if (!was) { taken8mu(); if (announce && link.muIns.length) say('The 8mu now drives this editor.'); }
+  refreshOwner();
+}
+function heardClaim(msg) {
+  if (!msg || msg.id === owner.id) return;
+  owner.other = msg.name || '';
+  if (owner.here) { owner.here = false; mu.down.fill(false); mu.engaged.fill(false); requestRender(); }
+  refreshOwner();
+}
+function taken8mu() {
+  mu.down.fill(false);
+  mu.engaged.fill(false);
+  reengage();
+  mu.ledSent.fill(-1);
+  mu.lastBlinkOff = 0;
+  touched();
+  requestRender();
+}
+function refreshOwner() {
+  const b = $('mu-owner'); if (!b) return;
+  b.hidden = !link.muIns.length;
+  b.classList.toggle('away', !owner.here);
+  const n = link.muIns.length;
+  b.textContent = (n > 1 ? n + ' 8mus: ' : '8mu: ') + (owner.here ? 'here' : 'elsewhere');
+  b.title = owner.here ? 'The 8mu on this computer drives this editor. Click in another editor to hand it over.'
+    : 'The 8mu is driving the ' + (owner.other || 'other') + ' editor. Click here, or anywhere on this page, to take it back.';
+}
+function setupOwnership() {
+  try { owner.chan = new BroadcastChannel('workshop-computer-8mu'); owner.chan.onmessage = (e) => heardClaim(e.data); } catch (e) {}
+  window.addEventListener('storage', (e) => { if (e.key === OWNER_KEY && e.newValue) { try { heardClaim(JSON.parse(e.newValue)); } catch (err) {} } });
+  const take = () => { if (!owner.here) claim8mu(true); };
+  window.addEventListener('pointerdown', take, true);
+  window.addEventListener('keydown', take, true);
+  window.addEventListener('focus', take);
+  $('mu-owner').addEventListener('click', () => claim8mu(true));
+  claim8mu(false);
+}
+
+function eightmuMessage(d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0;
+  if (!owner.here) {
+    if (type === 0xB0 && d[1] >= FIRST_FADER_CC && d[1] < FIRST_FADER_CC + NS) { mu.phys[d[1] - FIRST_FADER_CC] = d[2] & 0x7F; requestRender(); }
+    return;
+  }
+  if (type === 0xB0) {
+    const cc = d[1];
+    if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NS) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F);
+  } else if (type === 0x90 || type === 0x80) {
+    const b = BUTTON_NOTES.indexOf(d[1]);
+    if (b >= 0) eightmuButton(b, type === 0x90 && d[2] > 0);
+  }
+}
+
+// The 8mu LEDs, as DriveEightMuLeds in main.cpp: probabilities for 3 s after
+// a touch (the ratchets flashing their speeds), then what's playing.
+// Values 0-127 as the 8mu takes them.
+function eightmuLeds(now) {
+  const p = state.page, k = p & 3, vi = p >> 2, L = state.live, led = new Array(NS).fill(0);
+  const w = state.values[p].map((x, i) => (k === 0 && i >= noteCount()) ? 0 : x);
+  const mx = Math.max(...w);
+  const rel = (x) => x <= 0 || mx <= 0 ? 0 : Math.round(5 + 122 * x / mx);
+  if (now - mu.touchedAt < TOUCH_MS) {
+    const u = clamp(L.progress, 0, 0.9999);
+    for (let i = 0; i < NS; i++) {
+      if (k !== 3) { led[i] = rel(w[i]); continue; }
+      if (w[i] <= 0) continue;
+      const r2 = RATE2[i & 3], n = hitCount(r2);
+      const h = Math.min(n - 1, Math.floor(u * r2 / 2));
+      const start = h * 2 / r2, end = h + 1 < n ? (h + 1) * 2 / r2 : 1;
+      led[i] = (u - start) < (end - start) * 0.4 ? Math.round(19 + 108 * w[i] / mx) : 0;
+    }
+  } else {
+    const a = L.voices[vi], b = L.voices[1], both = vi === 0 && !ownPage(k);
+    if (k === 0 || k === 1) {
+      const pick = (v) => k === 0 ? v.note : v.oct;
+      led[pick(a)] = 127;
+      if (both && led[pick(b)] < 40) led[pick(b)] = 40;
+    } else if (k === 2) {
+      for (let i = 0; i <= a.gate; i++) led[i] = a.gate === 0 ? 22 : 127;
+    } else {
+      const pulse = (v) => Math.max(0, Math.round(127 * (1 - (now - v.hitAt) / 100)));
+      led[a.ratchet] = pulse(a);
+      if (both) led[b.ratchet] = Math.max(led[b.ratchet], Math.round(pulse(b) / 3));
+    }
+  }
+  return led;
+}
+// SysEx to the 8mu must travel on its own, so LED notes pause around it
+function serviceEightmuLeds(now) {
+  if (!link.muOuts.length || !owner.here) return;
+  if (now - mu.lastBlinkOff > 2000) {
+    mu.lastBlinkOff = now;
+    for (const o of link.muOuts) try { o.send(EIGHTMU_BLINK_OFF); } catch (e) {}
+    mu.ledSent.fill(-1);
+    return;
+  }
+  if (now - mu.lastBlinkOff < 60) return;
+  const led = eightmuLeds(now);
+  for (let i = 0; i < NS; i++) {
+    if (led[i] === mu.ledSent[i]) continue;
+    mu.ledSent[i] = led[i];
+    for (const o of link.muOuts) try { o.send([0x90, i, led[i]]); } catch (e) {}
+  }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /guided\s*wander/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
+  const outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  const unrecognised = ins.filter(p => p !== cardIn && !muIns.includes(p));
+
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+  for (const p of muIns) p.onmidimessage = (ev) => eightmuMessage(ev.data);
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut; link.muIns = muIns; link.muOuts = muOuts;
+  link.cardOnline = !!(cardIn && cardOut);
+  link.sysexBuf = []; link.sysexOn = false;
+  if (!muIns.length) mu.phys.fill(-1);
+  refreshOwner();
+  mu.lastBlinkOff = 0;
+
+  $('btn-read').disabled = $('btn-send').disabled = !link.cardOnline;
+  clearInterval(link.pingTimer);
+  const note = unrecognised.length ? ' Other MIDI inputs: ' + unrecognised.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : '';
+  const muWord = muIns.length > 1 ? muIns.length + ' 8mus' : '8mu';
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: Guided Wander card' + (muIns.length ? ' + ' + muWord : ''));
+    say(muIns.length ? 'The ' + muWord + ' drive' + (muIns.length > 1 ? '' : 's') + ' this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug an 8mu into this computer.' + note);
+    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));       // the card is the source of truth: read it
+  } else if (muIns.length) {
+    setStatus('warn', 'Connected: ' + muWord + ' only (no card)');
+    say('No “Guided Wander” card found, so editing here only. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
+  }
+  requestRender();
+}
+
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 200) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3);
+  if (cmd === CMD.STATE) {
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '. Use the matching editor and firmware.', true); return; }
+    if (p.length !== 2 + PAGES * NS) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    for (let q = 0; q < PAGES; q++) for (let i = 0; i < NS; i++) state.values[q][i] = clamp(p[2 + q * NS + i], 0, 127);
+    state.page = clamp(p[1], 0, PAGES - 1);
+    reengage();
+    say('Read the probabilities from the card.');
+    changed();
+  } else if (cmd === CMD.STATUS && p.length >= 13 + 14) {
+    const L = state.live, now = performance.now();
+    L.clocked = !!(p[0] & 1); L.muOnCard = !!(p[0] & 2); L.switchUp = !!(p[0] & 4); L.knobWaiting = !!(p[0] & 8);
+    L.waitX = !!(p[1] & 1); L.waitY = !!(p[1] & 2); L.waitMain = !!(p[1] & 4);
+    L.scale = Math.min(SCALES.length - 1, p[3]); L.clock = Math.min(RATIOS.length - 1, p[4]);
+    L.slew = p[5]; L.attack = p[6]; L.decay = p[7]; L.pluck = p[8];
+    L.progress = p[9] / 127;
+    L.stepMs = (p[10] << 14) | (p[11] << 7) | p[12];
+    for (let k = 0; k < 2; k++) {
+      const o = 13 + k * 7, v = L.voices[k];
+      v.note = p[o] & 7; v.oct = (p[o] >> 3) & 7; v.gate = p[o + 1] & 7; v.ratchet = (p[o + 1] >> 3) & 7;
+      if (p[o + 2] !== v.hits) { v.hits = p[o + 2]; v.hitAt = now; }
+      v.gateOn = !!(p[o + 3] & 1); v.tied = !!(p[o + 3] & 2);
+      v.env = p[o + 4]; v.mv = ((p[o + 5] << 7) | p[o + 6]) - 8192;
+    }
+    link.lastStatus = now;
+    state.history.push([now, L.voices[0].mv, L.voices[1].mv]);
+    requestRender();
+  }
+}
+
+function sendAll() {
+  if (!link.cardOnline) return;
+  const payload = [PROTOCOL_VERSION];
+  for (let q = 0; q < PAGES; q++) for (let i = 0; i < NS; i++) payload.push(state.values[q][i]);
+  sendRaw(sysex(CMD.SET_ALL, payload));
+}
+
+// ============================================================================
+// Preview with no card: the engine of wander.h at 120 BPM, a step a beat,
+// with the envelope at the card's default attack and decay
+// ============================================================================
+function pick(w) {
+  const t = w.reduce((a, b) => a + b, 0);
+  if (t <= 0) return Math.floor(Math.random() * w.length);
+  let x = Math.random() * t;
+  for (let i = 0; i < w.length; i++) { if (x < w[i]) return i; x -= w[i]; }
+  return w.length - 1;
+}
+const sim = { last: 0, stepAt: 0, voices: [0, 1].map(() => ({ ratchet: 0, hit: 1, prevTied: false, gateUntil: 0, envAt: -1e9 })) };
+const SIM_STEP = 500;
+function simDraw(k) {
+  const v = state.live.voices[k];
+  v.note = pick(weights(k, 0)); v.oct = pick(weights(k, 1)); v.gate = pick(weights(k, 2));
+}
+function simFire(k, now, start, interval) {
+  const v = state.live.voices[k], s = sim.voices[k];
+  v.mv = pitchMv(state.simScale, v.note, v.oct);
+  v.hits = (v.hits + 1) & 127; v.hitAt = now;
+  const rest = v.gate === 0, tied = v.gate === 7;
+  if (rest) { s.gateUntil = 0; v.tied = false; }
+  else {
+    s.gateUntil = tied ? Infinity : start + Math.max(2, Math.min(interval - 1, interval * v.gate / 7));
+    v.tied = tied;
+    if (!(s.prevTied)) s.envAt = now;
+  }
+  s.prevTied = tied && !rest;
+}
+function simulate(now) {
+  const L = state.live;
+  if (!sim.last) { sim.last = now; sim.stepAt = now - SIM_STEP; }
+  sim.last = now;
+  if (now - sim.stepAt >= SIM_STEP) {
+    sim.stepAt += SIM_STEP * Math.floor((now - sim.stepAt) / SIM_STEP);
+    for (let k = 0; k < 2; k++) {
+      const s = sim.voices[k], v = L.voices[k];
+      v.ratchet = pick(weights(k, 3)); s.ratchet = v.ratchet; s.hit = 0;
+      simDraw(k);
+    }
+  }
+  const t = now - sim.stepAt;
+  for (let k = 0; k < 2; k++) {
+    const s = sim.voices[k], v = L.voices[k], r2 = RATE2[s.ratchet & 3], n = hitCount(r2);
+    while (s.hit < n && t >= s.hit * SIM_STEP * 2 / r2) {
+      if (s.hit > 0 && s.ratchet >= 4) simDraw(k);
+      const start = sim.stepAt + s.hit * SIM_STEP * 2 / r2;
+      const next = s.hit + 1 < n ? sim.stepAt + (s.hit + 1) * SIM_STEP * 2 / r2 : sim.stepAt + SIM_STEP;
+      s.hit++;
+      simFire(k, now, start, next - start);
+    }
+    v.gateOn = now < s.gateUntil;
+    if (v.tied && now - sim.stepAt > SIM_STEP * 1.5) v.gateOn = false;
+    // A plucky envelope: 10 ms up, then about 150 ms down
+    const e = now - s.envAt;
+    v.env = e < 10 ? Math.round(127 * e / 10) : Math.max(0, Math.round(127 * Math.exp(-(e - 10) / 150)));
+  }
+  Object.assign(L, { clocked: false, switchUp: true, knobWaiting: false, waitX: false, waitY: false, waitMain: false,
+    scale: state.simScale, clock: 5, slew: 0, attack: 9, decay: 50, pluck: 64, progress: t / SIM_STEP, stepMs: SIM_STEP });
+  state.history.push([now, L.voices[0].mv, L.voices[1].mv]);
+}
+
+let lastPicks = '';
+function frame(now) {
+  if (!link.cardOnline || now - link.lastStatus > 3000) simulate(now);
+  drawReadouts(); drawHistory(now); drawDists();
+  const picks = state.live.voices.map(v => [v.note, v.oct, v.gate, v.ratchet].join()).join('|');
+  if (picks !== lastPicks) { lastPicks = picks; refreshFaders(); }
+  serviceEightmuLeds(now);
+  requestAnimationFrame(frame);
+}
+
+// ============================================================================
+// Presets (localStorage)
+// ============================================================================
+const store = {
+  get(k, d) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+// A preset: 8 pages of 8 probabilities (0-127)
+function cleanPreset(o) {
+  if (!o || typeof o !== 'object' || !Array.isArray(o.v) || o.v.length !== PAGES) return null;
+  const v = o.v.map(r => Array.isArray(r) && r.length === NS ? r.map(x => clamp(Math.round(+x) || 0, 0, 127)) : null);
+  if (v.some(r => !r)) return null;
+  return { name: String(o.name || 'Preset').slice(0, 60), v };
+}
+const Z = [0, 0, 0, 0, 0, 0, 0, 0];
+const P = (name, v1, v2) => cleanPreset({ name, v: [...v1, ...(v2 || [Z, Z, Z, Z])] });
+const BUILTIN = [
+  P('Default', DEFAULT_VALUES.slice(0, 4)),
+  P('Even wander', [[100, 100, 100, 100, 100, 100, 100, 100], [0, 0, 100, 100, 100, 0, 0, 0], [0, 0, 0, 100, 100, 100, 0, 0], [127, 0, 0, 0, 0, 0, 0, 0]]),
+  P('Root and fifth, slow', [[127, 0, 0, 0, 90, 0, 0, 0], [0, 40, 127, 60, 0, 0, 0, 0], [0, 0, 0, 0, 30, 60, 90, 127], [127, 0, 0, 0, 0, 0, 0, 0]]),
+  P('Bass and lead', [[127, 0, 40, 0, 80, 0, 20, 0], [0, 127, 30, 0, 0, 0, 0, 0], [20, 0, 40, 80, 60, 0, 0, 0], [100, 0, 30, 0, 0, 0, 0, 0]],
+    [[40, 90, 60, 90, 50, 80, 70, 30], [0, 0, 0, 60, 127, 50, 0, 0], [30, 60, 90, 40, 20, 0, 0, 30], [70, 20, 30, 15, 0, 10, 25, 20]]),
+  P('Ratchet spray', [[80, 50, 90, 30, 100, 40, 70, 20], [0, 0, 60, 127, 60, 0, 0, 0], [10, 60, 100, 60, 20, 0, 0, 0], [30, 20, 40, 30, 10, 40, 80, 70]]),
+  P('Legato drift', [[100, 60, 80, 50, 100, 60, 70, 40], [0, 0, 80, 127, 50, 0, 0, 0], [0, 0, 0, 0, 20, 40, 60, 127], [127, 30, 0, 0, 0, 0, 0, 0]]),
+  P('Sparse plucks', [[127, 0, 70, 0, 100, 0, 50, 0], [0, 30, 100, 127, 60, 20, 0, 0], [127, 30, 40, 0, 0, 0, 0, 0], [110, 0, 20, 10, 0, 0, 0, 0]]),
+  P('Call and response', [[127, 60, 90, 0, 0, 0, 0, 0], [0, 0, 127, 50, 0, 0, 0, 0], [60, 40, 100, 50, 0, 0, 0, 0], [127, 0, 30, 0, 0, 0, 0, 0]],
+    [[0, 0, 0, 40, 127, 60, 90, 80], [0, 0, 0, 80, 127, 0, 0, 0], [60, 40, 100, 50, 0, 0, 0, 0], [0, 0, 0, 0, 127, 0, 60, 0]]),
+];
+let userPresets = [];
+function loadPresets() { userPresets = (store.get('wander.presets.v1', []) || []).map(cleanPreset).filter(Boolean); }
+function savePresets() { if (!store.set('wander.presets.v1', userPresets)) say('Could not save presets: browser storage is unavailable or full.', true); }
+function applyPreset(pr) {
+  state.values = pr.v.map(r => r.slice());
+  reengage(); sendAll(); touched();
+  say('Loaded “' + pr.name + '”' + (link.cardOnline ? ' and sent it to the card.' : '.'));
+  changed();
+}
+let presetSig = '';
+function renderPresets() {
+  const sig = JSON.stringify(userPresets);
+  if (sig === presetSig) return;
+  presetSig = sig;
+  const ul = $('presets'); ul.innerHTML = '';
+  const add = (pr, idx) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = pr.name; name.title = 'Load';
+    const indep = [0, 1, 2, 3].filter(k => pr.v[4 + k].some(x => x > 0)).length;
+    li.append(name);
+    name.addEventListener('click', () => applyPreset(pr));
+    const t = document.createElement('span'); t.className = 'tag';
+    t.textContent = (indep ? 'own voice 2' : 'shared') + (idx < 0 ? ' · built in' : '');
+    li.append(t);
+    if (idx >= 0) {
+      const mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.addEventListener('click', fn); li.append(b); };
+      mk('Update', 'Overwrite with what is on screen now', () => { userPresets[idx].v = state.values.map(r => r.slice()); savePresets(); requestRender(); say('Updated “' + pr.name + '”.'); });
+      mk('Rename', 'Rename', () => { const n = prompt('New name', pr.name); if (n) { userPresets[idx].name = n.slice(0, 60); savePresets(); requestRender(); } });
+      mk('✕', 'Delete', () => { if (confirm('Delete “' + pr.name + '”?')) { userPresets.splice(idx, 1); savePresets(); requestRender(); } });
+    }
+    ul.append(li);
+  };
+  BUILTIN.forEach(pr => add(pr, -1));
+  userPresets.forEach((pr, i) => add(pr, i));
+}
+function saveCurrent() {
+  const n = prompt('Name for this preset', 'My wander ' + (userPresets.length + 1));
+  if (!n) return;
+  userPresets.push({ name: n.slice(0, 60), v: state.values.map(r => r.slice()) });
+  savePresets(); requestRender(); say('Saved “' + n + '”.');
+}
+function exportPresets() {
+  const blob = new Blob([JSON.stringify({ format: 'guided-wander-presets', version: 1, presets: userPresets }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'guided-wander-presets.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importPresets(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      const list = (Array.isArray(o) ? o : o.presets || []).map(cleanPreset).filter(Boolean);
+      if (!list.length) { say('No presets found in that file.', true); return; }
+      userPresets.push(...list); savePresets(); requestRender();
+      say('Imported ' + list.length + ' preset' + (list.length > 1 ? 's' : '') + '.');
+    } catch (e) { say('That file isn’t a presets file: ' + e.message, true); }
+  };
+  r.readAsText(file);
+}
+
+// ============================================================================
+// Start
+// ============================================================================
+function init() {
+  const last = store.get('wander.last.v1', null);
+  const lp = last && cleanPreset(last);
+  if (lp) state.values = lp.v;
+  if (last && Number.isInteger(last.scale)) state.simScale = clamp(last.scale, 0, SCALES.length - 1);
+  loadPresets();
+  buildFaders(); buildDists(); buildCollapsers();
+  const sel = $('sim-scale');
+  SCALES.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = (i + 1) + '. ' + s[0] + ' (' + s[1].length + ')'; sel.append(o); });
+  sel.value = state.simScale;
+  sel.addEventListener('change', () => { state.simScale = +sel.value; changed(); });
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', connect);
+  $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its probabilities.'); });
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent the probabilities to the card.'); });
+  $('btn-reset').addEventListener('click', () => {
+    if (!confirm('Reset every page to the defaults? Voice 2’s pages go to zero, so it shares voice 1’s.')) return;
+    state.values = DEFAULT_VALUES.map(r => r.slice());
+    reengage();
+    if (link.cardOnline) sendRaw(sysex(CMD.RESET, []));
+    changed();
+  });
+  $('btn-flat').addEventListener('click', () => setPage(state.page, new Array(NS).fill(100), 'Every slider on this page the same.'));
+  $('btn-zero').addEventListener('click', () => setPage(state.page, new Array(NS).fill(0),
+    state.page >= 4 ? 'Voice 2 now shares ' + LETTERS[state.page & 3] + ' (' + KINDS[state.page & 3].toLowerCase() + ') with voice 1.' : 'Every slider on this page at zero: every one is then as likely.'));
+  $('btn-copy1').addEventListener('click', () => { if (state.page >= 4) setPage(state.page, state.values[state.page - 4].slice(), 'Copied ' + LETTERS[state.page & 3] + ' to ' + LETTERS[state.page & 3] + '2: voice 2 now has its own, starting the same.'); });
+  $('btn-rand').addEventListener('click', () => setPage(state.page, Array.from({ length: NS }, () => Math.random() < 0.3 ? 0 : Math.floor(Math.random() * 128)), 'Randomised this page.'));
+  $('btn-save').addEventListener('click', saveCurrent);
+  $('btn-export').addEventListener('click', exportPresets);
+  $('btn-import').addEventListener('click', () => $('import-file').click());
+  $('import-file').addEventListener('change', (e) => { if (e.target.files[0]) importPresets(e.target.files[0]); e.target.value = ''; });
+  window.addEventListener('resize', () => requestRender());
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. You can still edit, preview and keep presets here.');
+  else say('Press “Connect card & 8mu” to reach the card. Until then this page edits and previews on its own.');
+  changed();
+  setupOwnership();
+  requestAnimationFrame(frame);
+}
+init();
+</script>
+</body>
+</html>
