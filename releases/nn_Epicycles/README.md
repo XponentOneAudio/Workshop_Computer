@@ -260,6 +260,11 @@ each edit as it's made, and follows the module's knobs, switch and mode. An
 8mu plugged into the computer drives the page, and through it the card, with
 the same buttons as on the card.
 
+The page finds the card by asking each MIDI port in turn (a SysEx HELLO),
+not by its name, because the card shares its USB IDs with other Computer
+cards and a computer may keep showing a name it saw before, such as
+"Sine Lab". If it finds a Computer running Sine Lab instead, it says so.
+
 The card and page talk SysEx; the protocol is documented in
 [`sysex.h`](sysex.h).
 
