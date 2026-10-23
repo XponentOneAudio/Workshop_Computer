@@ -21,8 +21,8 @@ your own drawings and pictures into circles for the card to play.
   the web app finds them for anything you draw, or for a picture, and sends
   them to the card.
 
-Partials mode was the additive half of the Sine Lab card, which now does FM
-only.
+Partials mode is the additive mode of the Sine Lab card, extended here with
+the drawing mode; Sine Lab keeps it too.
 
 **Swapping mode.** Hold the switch down for a second, or hold the 8mu's
 button D for a second. All the Computer's LEDs light briefly. The web app has
