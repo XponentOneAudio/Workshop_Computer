@@ -1973,42 +1973,50 @@ async function connect() {
 // before (Sine Lab's, say), or a generic one.
 const SINE_LAB_HELLO = [0xF0, 0x7D, 0x53, 0x01, 0xF7];
 const likely = (p) => /epicycles|sine\s*lab|computer|music\s*thing|workshop/i.test((p.name || '') + ' ' + (p.manufacturer || ''));
-function probeCard(ins, outs, seq) {
-  return new Promise((resolve) => {
-    if (!ins.length || !outs.length) { resolve({ card: null, sineLab: false }); return; }
-    let answered = null, sineLab = false;
-    // Listen on every input for this card's STATE (or Sine Lab's)
-    for (const inp of ins) {
-      let buf = [], on = false;
-      inp.onmidimessage = (ev) => {
-        for (const b of ev.data) {
-          if (b === 0xF0) { on = true; buf = []; continue; }
-          if (!on) continue;
-          if (b === 0xF7) {
-            on = false;
-            if (buf[0] === SYSEX_MFR && buf[2] === CMD.STATE) {
-              if (buf[1] === SYSEX_PRODUCT && !answered) answered = inp;
-              else if (buf[1] === 0x53) sineLab = true;
-            }
-            continue;
+async function probeCard(ins, outs, seq) {
+  const result = { card: null, sineLab: false, heard: new Map() };
+  if (!ins.length || !outs.length) return result;
+  // Listen on every input for this card's STATE (or Sine Lab's), and note
+  // whatever else each one says, to report if nothing answers
+  let answered = null;
+  for (const inp of ins) {
+    let buf = [], on = false;
+    inp.onmidimessage = (ev) => {
+      const h = result.heard.get(inp) || { bytes: 0, sysex: [] };
+      h.bytes += ev.data.length; result.heard.set(inp, h);
+      for (const b of ev.data) {
+        if (b === 0xF0) { on = true; buf = []; continue; }
+        if (!on) continue;
+        if (b === 0xF7) {
+          on = false;
+          if (h.sysex.length < 4) h.sysex.push(buf.slice(0, 4).map(x => x.toString(16).padStart(2, '0')).join(' '));
+          if (buf[0] === SYSEX_MFR && buf[2] === CMD.STATE) {
+            if (buf[1] === SYSEX_PRODUCT && !answered) answered = inp;
+            else if (buf[1] === 0x53) result.sineLab = true;
           }
-          if (b & 0x80) { if (b < 0xF8) on = false; continue; }
-          if (buf.length < 80) buf.push(b); else on = false;
+          continue;
         }
-      };
-    }
-    const order = outs.slice().sort((a, b) => likely(b) - likely(a));
-    let k = 0;
-    const tryNext = () => {
-      if (seq !== scanSeq) { resolve(null); return; }
-      if (answered) { resolve({ card: { in: answered, out: order[k - 1] }, sineLab }); return; }
-      if (k >= order.length) { resolve({ card: null, sineLab }); return; }
-      const out = order[k++];
-      try { out.send(sysex(CMD.HELLO, [])); out.send(SINE_LAB_HELLO); } catch (e) {}
-      setTimeout(tryNext, 400);
+        if (b & 0x80) { if (b < 0xF8) on = false; continue; }
+        if (buf.length < 80) buf.push(b); else on = false;
+      }
     };
-    tryNext();
-  });
+  }
+  // Open every port first: on Windows an input can take a moment to open,
+  // and a reply arriving before then is lost
+  await Promise.all([...ins, ...outs].map(p => p.open ? p.open().catch(() => {}) : null));
+  await new Promise(r => setTimeout(r, 150));
+  const order = outs.slice().sort((a, b) => likely(b) - likely(a));
+  // Twice round, the second time waiting longer for each
+  for (const wait of [400, 1200]) {
+    for (const out of order) {
+      if (seq !== scanSeq) return null;
+      try { out.send(sysex(CMD.HELLO, [])); out.send(SINE_LAB_HELLO); } catch (e) {}
+      for (let t = 0; t < wait && !answered; t += 50) await new Promise(r => setTimeout(r, 50));
+      if (answered) { result.card = { in: answered, out }; return result; }
+    }
+    if (result.sineLab) return result;
+  }
+  return result;
 }
 
 let scanSeq = 0;
@@ -2027,14 +2035,14 @@ async function scanPorts() {
   mu.lastBlinkOff = 0;
 
   // Still the card we had?  Otherwise ask around.
-  let card = null, sineLab = false;
+  let card = null, sineLab = false, heard = new Map();
   if (link.card.in && link.card.out && otherIns.includes(link.card.in) && otherOuts.includes(link.card.out)) card = link.card;
   else if (otherIns.length && otherOuts.length) {
     setStatus('warn', 'Looking for the card…');
     say('Looking for the card on ' + otherOuts.length + (otherOuts.length === 1 ? ' MIDI port…' : ' MIDI ports…'));
     const r = await probeCard(otherIns, otherOuts, seq);
     if (!r || seq !== scanSeq) return;             // a newer scan has taken over
-    card = r.card; sineLab = r.sineLab;
+    card = r.card; sineLab = r.sineLab; heard = r.heard;
   }
   for (const p of otherIns) p.onmidimessage = null;
   if (card) card.in.onmidimessage = (ev) => onCardBytes(ev.data);
@@ -2047,7 +2055,13 @@ async function scanPorts() {
   $('btn-read').disabled = $('btn-send').disabled = !link.cardOnline;
   clearInterval(link.pingTimer);
   const others = otherIns.filter(p => !card || p !== card.in);
-  const note = others.length ? ' MIDI inputs seen: ' + others.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : ' No other MIDI devices were seen.';
+  const heardOf = (p) => {
+    const h = heard.get(p);
+    if (!h) return 'silent';
+    return h.bytes + ' bytes' + (h.sysex.length ? ', SysEx starting ' + h.sysex.join(' / ') : '');
+  };
+  const note = others.length ? ' Asked ' + otherOuts.map(p => '“' + (p.name || '?') + '”').join(', ') + '. Heard from: ' +
+    others.map(p => '“' + (p.name || '?') + '” ' + heardOf(p)).join('; ') + '.' : ' No other MIDI devices were seen.';
   const named = card && card.in.name ? ' “' + card.in.name + '”' : '';
   if (link.cardOnline) {
     link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
