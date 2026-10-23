@@ -135,6 +135,7 @@
   .drop.over { border-color: var(--accent); background: var(--accent-soft); }
   .drop input { max-width: 100%; }
   .tab:disabled, .shapes button:disabled { opacity: .45; }
+  #pick select { font: inherit; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); max-width: 220px; }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
   table.jacks { border-collapse: collapse; width: 100%; font-size: 12px; }
   table.jacks td { border-top: 1px solid var(--line); padding: 4px 6px 4px 0; vertical-align: top; }
@@ -153,6 +154,8 @@
   <button id="btn-listen">Listen in the browser</button>
   <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
   <button id="btn-rescan" hidden>Rescan</button>
+  <span id="pick" hidden><select id="pick-port" aria-label="MIDI port to use as the card"></select>
+    <button id="pick-use">Use this port</button></span>
   <button id="btn-read" disabled>Read from card</button>
   <button id="btn-send" disabled>Send to card</button>
   <button id="btn-sync">Sync</button>
@@ -1974,7 +1977,7 @@ async function connect() {
 const SINE_LAB_HELLO = [0xF0, 0x7D, 0x53, 0x01, 0xF7];
 const likely = (p) => /epicycles|sine\s*lab|computer|music\s*thing|workshop/i.test((p.name || '') + ' ' + (p.manufacturer || ''));
 async function probeCard(ins, outs, seq) {
-  const result = { card: null, sineLab: false, heard: new Map() };
+  const result = { card: null, sineLab: false, heard: new Map(), failed: new Map() };
   if (!ins.length || !outs.length) return result;
   // Listen on every input for this card's STATE (or Sine Lab's), and note
   // whatever else each one says, to report if nothing answers
@@ -2003,14 +2006,17 @@ async function probeCard(ins, outs, seq) {
   }
   // Open every port first: on Windows an input can take a moment to open,
   // and a reply arriving before then is lost
-  await Promise.all([...ins, ...outs].map(p => p.open ? p.open().catch(() => {}) : null));
+  // (Windows lets only one program at a time have a port open, so note
+  // any that won't open)
+  await Promise.all([...ins, ...outs].map(p => p.open ? p.open().catch((e) => result.failed.set(p, (e && (e.name || e.message)) || 'error')) : null));
   await new Promise(r => setTimeout(r, 150));
   const order = outs.slice().sort((a, b) => likely(b) - likely(a));
   // Twice round, the second time waiting longer for each
   for (const wait of [400, 1200]) {
     for (const out of order) {
       if (seq !== scanSeq) return null;
-      try { out.send(sysex(CMD.HELLO, [])); out.send(SINE_LAB_HELLO); } catch (e) {}
+      try { out.send(sysex(CMD.HELLO, [])); out.send(SINE_LAB_HELLO); }
+      catch (e) { if (!result.failed.has(out)) result.failed.set(out, (e && (e.name || e.message)) || 'error'); }
       for (let t = 0; t < wait && !answered; t += 50) await new Promise(r => setTimeout(r, 50));
       if (answered) { result.card = { in: answered, out }; return result; }
     }
@@ -2019,8 +2025,36 @@ async function probeCard(ins, outs, seq) {
   return result;
 }
 
+// Windows names an input and an output of one device alike, or wraps them as
+// MIDIIN2 (name) and MIDIOUT2 (name)
+const baseName = (n) => (n || '').replace(/^MIDI(IN|OUT)\d*\s*\((.*)\)$/i, '$2').trim().toLowerCase();
+function offerPick(ins, outs) {
+  const sel = $('pick-port');
+  sel.innerHTML = '';
+  for (const o of outs) {
+    const i = ins.find(p => baseName(p.name) === baseName(o.name));
+    if (!i) continue;
+    const opt = document.createElement('option');
+    opt.value = o.id; opt.textContent = o.name || '?';
+    opt.selected = likely(o);
+    sel.appendChild(opt);
+  }
+  $('pick').hidden = !sel.options.length;
+}
+// Use a port as the card without it having answered: for when it won't
+// answer.  It's sent HELLO and pings as usual; the card flashes all its LEDs
+// when a HELLO gets through.
+function usePicked() {
+  const acc = link.access, out = acc && acc.outputs.get($('pick-port').value);
+  if (!out) return;
+  const inp = [...acc.inputs.values()].find(p => baseName(p.name) === baseName(out.name));
+  if (!inp) return;
+  link.card.in = inp; link.card.out = out;
+  scanPorts(true);
+}
+
 let scanSeq = 0;
-async function scanPorts() {
+async function scanPorts(picked = false) {
   const acc = link.access; if (!acc) return;
   const seq = ++scanSeq;
   const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
@@ -2035,17 +2069,19 @@ async function scanPorts() {
   mu.lastBlinkOff = 0;
 
   // Still the card we had?  Otherwise ask around.
-  let card = null, sineLab = false, heard = new Map();
-  if (link.card.in && link.card.out && otherIns.includes(link.card.in) && otherOuts.includes(link.card.out)) card = link.card;
+  let card = null, sineLab = false, heard = new Map(), failed = new Map();
+  if (link.card.in && link.card.out && otherIns.includes(link.card.in) && otherOuts.includes(link.card.out)) card = { in: link.card.in, out: link.card.out };
   else if (otherIns.length && otherOuts.length) {
     setStatus('warn', 'Looking for the card…');
     say('Looking for the card on ' + otherOuts.length + (otherOuts.length === 1 ? ' MIDI port…' : ' MIDI ports…'));
     const r = await probeCard(otherIns, otherOuts, seq);
     if (!r || seq !== scanSeq) return;             // a newer scan has taken over
-    card = r.card; sineLab = r.sineLab; heard = r.heard;
+    card = r.card; sineLab = r.sineLab; heard = r.heard; failed = r.failed;
   }
   for (const p of otherIns) p.onmidimessage = null;
   if (card) card.in.onmidimessage = (ev) => onCardBytes(ev.data);
+  if (card) $('pick').hidden = true;
+  else offerPick(otherIns, otherOuts);
 
   const wasOnline = link.cardOnline;
   link.card.in = card ? card.in : null; link.card.out = card ? card.out : null;
@@ -2060,8 +2096,10 @@ async function scanPorts() {
     if (!h) return 'silent';
     return h.bytes + ' bytes' + (h.sysex.length ? ', SysEx starting ' + h.sysex.join(' / ') : '');
   };
-  const note = others.length ? ' Asked ' + otherOuts.map(p => '“' + (p.name || '?') + '”').join(', ') + '. Heard from: ' +
-    others.map(p => '“' + (p.name || '?') + '” ' + heardOf(p)).join('; ') + '.' : ' No other MIDI devices were seen.';
+  const blocked = [...failed.entries()].map(([p, e]) => '“' + (p.name || '?') + '” ' + (p.type === 'input' ? 'input' : 'output') + ' (' + e + ')');
+  const note = (others.length ? ' Asked ' + otherOuts.map(p => '“' + (p.name || '?') + '”').join(', ') + '. Heard from: ' +
+    others.map(p => '“' + (p.name || '?') + '” ' + heardOf(p)).join('; ') + '.' : ' No other MIDI devices were seen.') +
+    (blocked.length ? ' Couldn’t open: ' + blocked.join(', ') + '. Another program (a DAW, an editor, another browser) probably has it open: close it and press Rescan.' : '');
   const named = card && card.in.name ? ' “' + card.in.name + '”' : '';
   if (link.cardOnline) {
     link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
@@ -2069,14 +2107,17 @@ async function scanPorts() {
     setStatus('ok', 'Connected: Epicycles card' + (muIns.length ? ' + 8mu' : ''));
     say((muIns.length ? 'The 8mu drives this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug an 8mu into this computer.') +
         (named && !/epicycles/i.test(card.in.name) ? ' Found it as' + named + '.' : ''));
-    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));       // the card is the source of truth: read it
+    if (!wasOnline || picked) sendRaw(sysex(CMD.HELLO, []));   // the card is the source of truth: read it
+    if (picked) say('Using “' + card.out.name + '” as the card, though it didn’t answer. If the Computer’s LEDs all flashed just now, ' +
+                    'the card hears this page and only its replies are being lost; if they didn’t, nothing is reaching it.', true);
   } else if (sineLab) {
     setStatus('bad', 'Sine Lab firmware found');
     say('A Computer answered, but it is running Sine Lab, not Epicycles. Flash UF2/epicycles.uf2 onto the card, then power-cycle the module and press Rescan.', true);
   } else {
     setStatus('warn', muIns.length ? 'Connected: 8mu only (no card)' : 'No card or 8mu found');
     say('No Epicycles card answered, so this page works on its own. To reach the card: plug this computer into the Computer’s USB socket with a data cable, ' +
-        'power-cycle the module (it picks USB host or device only at power-up), close any other app using its MIDI port, then press Rescan.' + note, true);
+        'power-cycle the module (it picks USB host or device only at power-up), close any other app using its MIDI port, then press Rescan. ' +
+        'Or choose its port next to Rescan and press “Use this port”.' + note, true);
   }
   changed(false);
 }
@@ -2319,6 +2360,7 @@ function init() {
   dview.turnsPerSec = Math.pow(10, +$('d-speed').value);
   $('btn-connect').addEventListener('click', connect);
   $('btn-rescan').addEventListener('click', connect);
+  $('pick-use').addEventListener('click', usePicked);
   $('btn-listen').addEventListener('click', toggleListen);
   $('btn-sync').addEventListener('click', sync);
   document.querySelectorAll('nav.modes button').forEach((b, i) => b.addEventListener('click', () => setMode(i, true)));

@@ -294,6 +294,7 @@ private:
 	volatile int shapeRequest = -1, drawingRequest = -1, modeRequest = -1;
 	volatile uint32_t lastPingUs = 0;
 	volatile bool pinged = false;
+	volatile bool helloFlash = false; // HELLO arrived: show it on the LEDs
 
 	// Snapshot for the web app: written on core0, read on core1
 	volatile int32_t stNote = 0, stCircles = 0, stRotate = 0;
@@ -658,12 +659,19 @@ private:
 		stCircles = circlesCtl;
 		stRotate = rotateCtl;
 
-		// Computer LEDs, all lit for a moment after a mode change.
+		// Computer LEDs, all lit for a moment after a mode change, or when
+		// the web app says hello.
 		// Partials, with an 8mu or the web app: the page (A-C), with D
 		// flashing on a shape change; without, the levels of partials 1-4.
 		// LED 5 the square, LED 6 an 8mu or the web app.
 		// Drawing: a tiny scope.
 		if (shapeFlash > 0) shapeFlash--;
+		if (helloFlash)
+		{
+			// Every LED, briefly, so it can be seen the web app gets through
+			helloFlash = false;
+			flash = 300;
+		}
 		if (flash > 0) flash--;
 		if (drawing)
 		{
@@ -843,6 +851,7 @@ public:
 		switch (cmd)
 		{
 		case sysex::Hello:
+			helloFlash = true;
 			SendState();
 			if (drawingIndex == sysex::kCustomDrawing) SendDrawing();
 			break;
