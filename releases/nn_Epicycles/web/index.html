@@ -1,0 +1,2269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Epicycles</title>
+<!--
+  EPICYCLES - web app for the Music Thing Modular Workshop Computer card.
+  One static file, no network needed (the links to Wikipedia aside). Talks to
+  the card over WebMIDI + SysEx (protocol: ../sysex.h). The card works without
+  this page; the page draws what the card is doing, explains it, turns
+  drawings and pictures into circles for it, and passes on an 8mu plugged into
+  this computer.
+
+  Every conversion here (level, phase, frequency, partials, stretch, circles,
+  bands) and the six shapes mirror ../main.cpp. The built-in drawings are made
+  by the <script id="fourier"> block below, which ../make_drawings.js also
+  runs to build ../drawings.h.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8; --sum: #1c1b19;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --s0: #0b7d78; --s1: #3a6fb0; --s2: #7a55b0; --s3: #b0457a;
+    --s4: #b5560a; --s5: #8a7a12; --s6: #3f8a3a; --s7: #5a6470;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29; --sum: #ecebe6;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --s0: #4fd1c5; --s1: #7aa8f0; --s2: #b49af0; --s3: #f08ab8;
+      --s4: #f0a35e; --s5: #d8c85a; --s6: #84d07c; --s7: #a8b2bc;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  h3 { font-size: 15px; margin: 14px 0 4px; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  button.on { background: var(--accent-soft); border-color: var(--accent); }
+  #msg { padding: 6px 16px; min-height: 1.5em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 380px; }
+  @media (max-width: 1060px) { main { grid-template-columns: minmax(0, 1fr); } }
+  main[hidden] { display: none; }
+  .col { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  #hero { height: 380px; }
+  #hero.tall { height: 620px; }
+  #spectrum { height: 150px; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 16px; margin-top: 10px; }
+  .ctl { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ctl .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: flex; justify-content: space-between; gap: 6px; }
+  .ctl .k span { text-transform: none; letter-spacing: 0; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .ctl input[type=range] { width: 100%; accent-color: var(--accent); }
+  .ctl .from { font-size: 11px; color: var(--muted); }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; align-items: center; }
+  .checks label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+
+  /* Partials */
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+  .tab { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; background: var(--panel); }
+  .tab b { display: inline-block; width: 1.4em; text-align: center; margin-right: 4px; border-radius: 4px; background: var(--track); }
+  .tab.on { border-color: var(--accent); background: var(--accent-soft); }
+  .tab.on b { background: var(--accent); color: var(--panel); }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; border: 1px solid transparent; }
+  .fader.hot { border-color: var(--line); background: var(--wave-bg); }
+  .fader .name { font-size: 12px; font-weight: 600; }
+  .fader canvas.mini { height: 44px; background: transparent; }
+  .fader .slot { position: relative; height: 140px; width: 32px; }
+  .fader input[type=range] {
+    writing-mode: vertical-lr; direction: rtl; width: 32px; height: 140px; margin: 0; cursor: pointer;
+  }
+  .fader .ghost {
+    position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm);
+    pointer-events: none; display: none;
+  }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 13px; text-align: center; }
+  .fader .desc { font-size: 11px; color: var(--muted); text-align: center; min-height: 2.8em; overflow-wrap: anywhere; line-height: 1.3; }
+  .shapes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+  .shapes .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-right: 4px; }
+  #shape-lesson { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--wave-bg); border-radius: 0 6px 6px 0; }
+  #shape-lesson p { margin: 0 0 6px; } #shape-lesson p:last-child { margin: 0; }
+
+  /* Learning */
+  .learn p { margin: 0 0 8px; }
+  .learn ol, .learn ul { margin: 4px 0 8px; padding-left: 20px; }
+  .learn li { margin-bottom: 6px; }
+  .formula { font: 14px ui-serif, Georgia, serif; font-style: italic; background: var(--wave-bg); border: 1px solid var(--line);
+             border-radius: 6px; padding: 8px 10px; margin: 6px 0 10px; overflow-x: auto; white-space: nowrap; }
+  .links { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin: 4px 0 6px; }
+  .links::before { content: 'Read more:'; color: var(--muted); }
+  details { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  nav.modes { display: flex; gap: 3px; background: var(--track); padding: 3px; border-radius: 8px; }
+  nav.modes button { border: none; background: transparent; padding: 5px 14px; }
+  nav.modes button.on { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: 600; }
+  .lesson { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--wave-bg); border-radius: 0 6px 6px 0; }
+  .lesson p { margin: 0 0 6px; } .lesson p:last-child { margin: 0; }
+  .faders + .caption, #dhint { margin-top: 6px; }
+  #dhero { height: 720px; }
+  @media (max-width: 700px) { #dhero { height: 460px; } }
+  #dspec { height: 230px; }
+  #pad { height: 320px; touch-action: none; cursor: crosshair; border: 1px solid var(--line); }
+  #pic-preview { height: 280px; margin-top: 10px; display: none; }
+  .drop { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px; border: 2px dashed var(--line);
+          border-radius: 8px; cursor: pointer; color: var(--muted); }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop input { max-width: 100%; }
+  .tab:disabled, .shapes button:disabled { opacity: .45; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  table.jacks { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.jacks td { border-top: 1px solid var(--line); padding: 4px 6px 4px 0; vertical-align: top; }
+  table.jacks td:first-child { white-space: nowrap; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Epicycles</h1>
+  <nav class="modes" aria-label="Mode">
+    <button id="mode-0">Partials</button>
+    <button id="mode-1" class="on">Drawing</button>
+  </nav>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <div class="spacer"></div>
+  <button id="btn-listen">Listen in the browser</button>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-read" disabled>Read from card</button>
+  <button id="btn-send" disabled>Send to card</button>
+  <button id="btn-sync">Sync</button>
+</header>
+<div id="msg"></div>
+
+<main id="page-add" class="page" hidden>
+  <div class="col">
+    <section class="card">
+      <h2>Circles on circles</h2>
+      <canvas id="hero" aria-label="Eight nested rotating circles, and the waveform traced by the outermost point"></canvas>
+      <div class="caption" id="hero-caption"></div>
+      <div class="controls">
+        <div class="ctl"><div class="k">Pitch <span id="v-pitch"></span></div>
+          <input id="in-pitch" type="range" min="24" max="96" step="0.01" value="48">
+          <div class="from" id="from-pitch">Main knob + CV In 1</div></div>
+        <div class="ctl"><div class="k">Partials <span id="v-partials"></span></div>
+          <input id="in-partials" type="range" min="1" max="8" step="0.01" value="8">
+          <div class="from" id="from-partials">X knob + CV In 2</div></div>
+        <div class="ctl"><div class="k">Stretch <span id="v-stretch"></span></div>
+          <input id="in-stretch" type="range" min="0" max="0.5" step="0.001" value="0">
+          <div class="from" id="from-stretch">Y knob + Audio In 1</div></div>
+        <div class="ctl"><div class="k">Animation <span id="v-speed"></span></div>
+          <input id="in-speed" type="range" min="-3" max="1" step="0.01" value="-2">
+          <div class="from">Slow motion: page only</div></div>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="in-lock"> Harmonic lock <span class="caption" style="margin:0">(switch up)</span></label>
+        <label><input type="checkbox" id="in-trail" checked> Trail of the outer point (X–Y)</label>
+        <label><input type="checkbox" id="in-shadow"> Shadow on the other axis (Audio Out 2)</label>
+        <label><input type="checkbox" id="in-paused"> Pause</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="tabs" id="tabs"></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="page-hint"></div>
+      <div class="shapes" id="shapes"><span class="k">Shape (button D)</span></div>
+      <div id="shape-lesson" class="lesson"></div>
+    </section>
+
+    <section class="card">
+      <h2>Spectrum</h2>
+      <canvas id="spectrum" aria-label="Spectrum: each partial as a bar at its frequency, height its level"></canvas>
+      <div class="caption">The same sound seen a different way: each circle is a bar, placed by how fast it turns (as a multiple of the first,
+        and in Hz at the current pitch) and as tall as its level. Faint lines mark the exact harmonics 1, 2, 3… A bar off its line is
+        <i>inharmonic</i>. The shapes on the left are the <i>time domain</i>, these bars the
+        <a href="https://en.wikipedia.org/wiki/Frequency_domain" target="_blank" rel="noopener">frequency domain</a>.</div>
+    </section>
+  </div>
+
+  <aside class="col">
+    <section class="card learn">
+      <h2>What you're looking at</h2>
+      <p>Each circle turns at a steady speed. The circles are <b>nested</b>: each one is pinned to the rim of the one before, so
+        the outermost point is carried around by all of them at once. Its height, followed over time, is the waveform drawn to
+        the right, and it is exactly what the card sends out of <b>Audio Out 1</b>.</p>
+      <p>The height of one point turning on one circle is a <b>sine wave</b>. So the waveform is a sum of sine waves, one per
+        circle, and that's the whole idea of <b>additive synthesis</b>: build a sound by adding simple pieces.</p>
+      <div class="formula">y(t) = a<sub>1</sub> sin(2π f<sub>1</sub> t + φ<sub>1</sub>) + a<sub>2</sub> sin(2π f<sub>2</sub> t + φ<sub>2</sub>) + … + a<sub>8</sub> sin(2π f<sub>8</sub> t + φ<sub>8</sub>)</div>
+      <p>Each circle has three settings, and the 8mu's buttons choose which one its faders change:</p>
+      <ul>
+        <li><b>A · Level</b> (a): the circle's radius, how loud that partial is.</li>
+        <li><b>B · Phase</b> (φ): where on the circle its point starts.</li>
+        <li><b>C · Frequency</b> (f): how fast it turns. In the middle of the fader, circle <i>n</i> turns exactly <i>n</i> times
+          for every turn of the first: the <b>harmonic series</b>.</li>
+      </ul>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Additive_synthesis" target="_blank" rel="noopener">Additive synthesis</a>
+        <a href="https://en.wikipedia.org/wiki/Sine_wave" target="_blank" rel="noopener">Sine wave</a>
+        <a href="https://en.wikipedia.org/wiki/Phasor" target="_blank" rel="noopener">Phasor</a>
+        <a href="https://en.wikipedia.org/wiki/Harmonic_series_(music)" target="_blank" rel="noopener">Harmonic series</a>
+      </div>
+
+      <h3>Fourier's idea</h3>
+      <p>In 1807 <a href="https://en.wikipedia.org/wiki/Joseph_Fourier" target="_blank" rel="noopener">Joseph Fourier</a> claimed that
+        <i>any</i> repeating shape can be built this way, from sine waves at whole-number multiples of its repeat rate, given the right
+        levels and phases. That sum is a <b>Fourier series</b>. Eight circles are enough to see it working: pick <i>Saw</i>, then turn
+        <b>Partials</b> from 1 up to 8 and watch the wave sharpen as each circle joins.</p>
+      <p>A sharp corner needs infinitely many circles, so eight leave ripples near each jump. Adding more circles squeezes the ripples
+        closer to the jump, but the overshoot never shrinks below about 9%: the <b>Gibbs phenomenon</b>.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Fourier_series" target="_blank" rel="noopener">Fourier series</a>
+        <a href="https://en.wikipedia.org/wiki/Gibbs_phenomenon" target="_blank" rel="noopener">Gibbs phenomenon</a>
+        <a href="https://en.wikipedia.org/wiki/Fourier_transform" target="_blank" rel="noopener">Fourier transform</a>
+      </div>
+
+      <h3>Circles on circles, before Fourier</h3>
+      <p>The picture is far older than the maths. Ancient astronomers, most famously
+        <a href="https://en.wikipedia.org/wiki/Ptolemy" target="_blank" rel="noopener">Ptolemy</a>, explained the wandering paths of
+        the planets with <b>epicycles</b>: circles riding on circles. With enough of them they could match almost any orbit, which is
+        Fourier's idea seen from the other side. Tick <i>Trail</i> to see the path the outer point draws in the plane.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Deferent_and_epicycle" target="_blank" rel="noopener">Deferent and epicycle</a>
+        <a href="https://en.wikipedia.org/wiki/Epicycloid" target="_blank" rel="noopener">Epicycloid</a>
+      </div>
+
+      <h3>Does phase matter?</h3>
+      <p>Change the <b>Phase</b> page and the waveform changes shape, sometimes completely. But listen: a steady tone sounds almost
+        the same. The ear mostly hears which frequencies are present and how loud, not how they line up. This is
+        <b>Ohm's acoustic law</b>. It isn't the whole story: phase matters for sharp clicks and attacks, and when partials aren't
+        exactly harmonic their phases drift anyway.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Phase_(waves)" target="_blank" rel="noopener">Phase</a>
+        <a href="https://en.wikipedia.org/wiki/Ohm%27s_acoustic_law" target="_blank" rel="noopener">Ohm's acoustic law</a>
+        <a href="https://en.wikipedia.org/wiki/Timbre" target="_blank" rel="noopener">Timbre</a>
+      </div>
+
+      <h3>Off the harmonic series</h3>
+      <p>Move a <b>Frequency</b> fader away from the middle and that circle no longer turns a whole number of times per turn of the
+        first. The pattern never quite repeats, so the wave keeps changing, and the sound gains beating or a metallic, bell-like
+        colour. Real instruments do this: struck bars and bells are strongly <b>inharmonic</b>, and even piano strings, being stiff,
+        have their upper partials pulled sharp. <b>Stretch</b> (Y knob) imitates that, moving partial <i>n</i> from <i>n</i> to
+        <i>n</i><sup>1+s</sup> times the fundamental.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Inharmonicity" target="_blank" rel="noopener">Inharmonicity</a>
+        <a href="https://en.wikipedia.org/wiki/Piano_acoustics#Inharmonicity_and_piano_size" target="_blank" rel="noopener">Piano inharmonicity</a>
+        <a href="https://en.wikipedia.org/wiki/Strike_tone" target="_blank" rel="noopener">Strike tone</a>
+        <a href="https://en.wikipedia.org/wiki/Beat_(acoustics)" target="_blank" rel="noopener">Beats</a>
+      </div>
+
+      <h3>Two outputs: height and shadow</h3>
+      <p>Audio Out 1 is the outer point's height (the sines). Audio Out 2 is its position across (the same circles read as cosines),
+        a quarter turn behind. Patch both into an oscilloscope in X–Y mode and it draws the trail above, live. Tick <i>Shadow</i>
+        to see Out 2 drawn downwards.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Lissajous_curve" target="_blank" rel="noopener">Lissajous curve</a>
+        <a href="https://en.wikipedia.org/wiki/Oscilloscope" target="_blank" rel="noopener">Oscilloscope</a>
+        <a href="https://en.wikipedia.org/wiki/Euler%27s_formula" target="_blank" rel="noopener">Euler's formula</a>
+      </div>
+
+      <h3>The ceiling</h3>
+      <p>The card makes 48,000 samples a second, so it can't represent anything above half that, 24 kHz: the
+        <b>Nyquist frequency</b>. A partial pushed past it would fold back as a wrong, unrelated pitch (<b>aliasing</b>), so the card
+        fades each one out between 16 and 20 kHz. Play a high note with all eight partials and watch the top circles shrink.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Nyquist_frequency" target="_blank" rel="noopener">Nyquist frequency</a>
+        <a href="https://en.wikipedia.org/wiki/Aliasing" target="_blank" rel="noopener">Aliasing</a>
+      </div>
+
+      <h3>In instruments</h3>
+      <p>The <b>Hammond organ</b>'s drawbars are additive synthesis: each one is the level of a sine at a harmonic, like page A here.
+        Some early digital synthesizers, such as the Synclavier and the Kawai K5, worked this way too.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Hammond_organ" target="_blank" rel="noopener">Hammond organ</a>
+        <a href="https://en.wikipedia.org/wiki/Drawbar_(music)" target="_blank" rel="noopener">Drawbar</a>
+        <a href="https://en.wikipedia.org/wiki/Synclavier" target="_blank" rel="noopener">Synclavier</a>
+      </div>
+    </section>
+
+    <section class="card learn">
+      <h2>Things to try</h2>
+      <ol>
+        <li><b>One circle.</b> Choose <i>Sine</i>. One circle, one pure tone. Now raise fader 2 on page A: a second, smaller circle
+          appears on the first's rim, turning twice as fast, and the tone gains an octave above.</li>
+        <li><b>Build a saw.</b> Choose <i>Saw</i> and turn Partials (X) slowly from 1 to 8. Each new circle adds a harmonic,
+          and the wave gets closer to a ramp.</li>
+        <li><b>Odd only.</b> Choose <i>Square</i>: only circles 1, 3, 5 and 7 turn. Compare it with <i>Saw</i> by ear: the square
+          is hollower, because the even harmonics are missing.</li>
+        <li><b>Shape without sound.</b> On <i>Square</i>, go to page B and move a few phases. The wave stops looking square, but
+          listen in the browser and it barely sounds different.</li>
+        <li><b>All in line.</b> Choose <i>Pulse</i>: every circle the same size and all starting at the top, so once per turn they all
+          point the same way and add up to a spike. Scatter the phases and the spike spreads out.</li>
+        <li><b>Out of line.</b> On <i>Saw</i>, page C, nudge fader 2 a little off the middle. The pattern starts to drift and the
+          sound beats. Then try <i>Bell</i>.</li>
+        <li><b>Stretch.</b> Switch to the middle, then turn Y up from zero: the upper partials pull sharp, as on a piano.
+          Switch up (harmonic lock) snaps them all back to the harmonic series.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>The card in partials mode</h2>
+      <table class="jacks">
+        <tr><td>Swap mode</td><td>Hold the switch down for a second, or hold the 8mu's D</td></tr>
+        <tr><td>Main knob</td><td>Pitch, C1 to C7</td></tr>
+        <tr><td>X knob</td><td>Partials: how many circles turn, 1 to 8, each fading in</td></tr>
+        <tr><td>Y knob</td><td>Stretch, 0 to 0.5 (switch in the middle)</td></tr>
+        <tr><td>Switch</td><td>Up: harmonic lock. Middle: free. Down (tap): next shape</td></tr>
+        <tr><td>CV In 1</td><td>Pitch, 1V/oct</td></tr>
+        <tr><td>CV In 2</td><td>Partials, added to X</td></tr>
+        <tr><td>Audio In 1</td><td>Stretch, added to Y</td></tr>
+        <tr><td>Pulse In 1</td><td>Sync: every circle back to its start</td></tr>
+        <tr><td>Pulse In 2</td><td>Next shape</td></tr>
+        <tr><td>Audio Out 1</td><td>The sum, sines (the height)</td></tr>
+        <tr><td>Audio Out 2</td><td>The sum, cosines (the shadow)</td></tr>
+        <tr><td>CV Out 1</td><td>Pitch, 1V/oct, 0V at middle C</td></tr>
+        <tr><td>Pulse Out 1</td><td>Square at the fundamental: high for the first half of each turn of circle 1</td></tr>
+      </table>
+      <details>
+        <summary>Connecting</summary>
+        <ul class="caption">
+          <li>The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page
+            isn't needed. <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Epicycles</b>, and
+            an 8mu plugged into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.</li>
+          <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
+          <li>Press <kbd>Connect card &amp; 8mu</kbd> and allow MIDI with SysEx when the browser asks.</li>
+          <li>8mu buttons A-C (or the tabs) choose the page; D loads the next shape. Faders pick up: one does nothing until it reaches
+            the stored value (the dashed line shows where the 8mu's fader is while it waits).</li>
+          <li>On-screen faders: drag, or focus one and use the arrow keys. Double-click resets one (level: off, phase: 0°,
+            frequency: harmonic).</li>
+          <li>With a card connected, Pitch, Partials, Stretch and Harmonic lock follow the module's knobs and switch.</li>
+          <li>Without a card the page works on its own, and <kbd>Listen in the browser</kbd> plays it.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<main id="page-draw" class="page">
+  <div class="col">
+    <section class="card">
+      <h2>Drawn by circles</h2>
+      <canvas id="dhero" aria-label="Circles turning on circles, biggest first, whose outermost point draws the picture; its height over time is Audio Out 1, drawn to the right, and its position across is Audio Out 2, drawn below"></canvas>
+      <div class="caption" id="dcaption"></div>
+      <div class="controls">
+        <div class="ctl"><div class="k">Pitch <span id="dv-pitch"></span></div>
+          <input id="d-pitch" type="range" min="24" max="96" step="0.01" value="48">
+          <div class="from" id="dfrom-pitch">Main knob + CV In 1</div></div>
+        <div class="ctl"><div class="k">Circles <span id="dv-circles"></span></div>
+          <input id="d-circles" type="range" min="0" max="4095" step="1" value="4095">
+          <div class="from" id="dfrom-circles">X knob + CV In 2</div></div>
+        <div class="ctl"><div class="k">Rotate <span id="dv-rotate"></span></div>
+          <input id="d-rotate" type="range" min="0" max="4095" step="1" value="0">
+          <div class="from" id="dfrom-rotate">Y knob + Audio In 1</div></div>
+        <div class="ctl"><div class="k">Animation <span id="dv-speed"></span></div>
+          <input id="d-speed" type="range" min="-2.5" max="0.5" step="0.01" value="-1.2">
+          <div class="from" id="dfrom-speed">Slow motion: page only</div></div>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="d-slow"> Slow <span class="caption" style="margin:0">(switch up: 7 octaves down, drawn at its real speed)</span></label>
+        <label><input type="checkbox" id="d-target" checked> The drawing behind</label>
+        <label><input type="checkbox" id="d-waves" checked> The two outputs</label>
+        <label><input type="checkbox" id="d-paused"> Pause</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Bands</h2>
+      <div class="faders" id="dfaders"></div>
+      <div class="caption" id="dhint">The 8mu's faders, in drawing mode: the circles grouped by how fast they turn, one octave to a fader. Point at one to see its circles on their own.</div>
+      <div class="shapes" id="drawings"><span class="k">Drawing (button D)</span></div>
+      <div class="lesson" id="dlesson"></div>
+    </section>
+
+    <section class="card">
+      <h2>Make your own</h2>
+      <div class="tabs" id="srctabs">
+        <button class="tab on" data-src="draw"><b>✎</b>Draw</button>
+        <button class="tab" data-src="pic"><b>▣</b>Picture</button>
+      </div>
+      <div id="src-draw">
+        <canvas id="pad" aria-label="Drawing pad: draw with the mouse, a pen or a finger"></canvas>
+        <div class="checks">
+          <button id="pad-undo">Undo stroke</button>
+          <button id="pad-clear">Clear</button>
+          <span class="caption" style="margin:0" id="pad-info"></span>
+        </div>
+        <div class="caption">Draw with the mouse, a pen or a finger. Each stroke is turned into circles as you lift off, and the
+          drawing closes itself, from the end back to the start. Lift and draw again to add more strokes: they are joined in the
+          order drawn, with a straight line between.</div>
+      </div>
+      <div id="src-pic" hidden>
+        <label class="drop" id="drop">
+          <input type="file" id="pic-file" accept="image/*">
+          <span><b>Choose a picture</b>, or drop or paste one here</span>
+        </label>
+        <canvas id="pic-preview" aria-label="The picture, with the outline found in it"></canvas>
+        <div class="controls">
+          <div class="ctl"><div class="k">Threshold <span id="pv-thr"></span></div>
+            <input id="pic-thr" type="range" min="1" max="254" step="1" value="128">
+            <div class="from">Grey level between ink and paper</div></div>
+          <div class="ctl"><div class="k">Leave out specks <span id="pv-detail"></span></div>
+            <input id="pic-detail" type="range" min="0" max="400" step="1" value="40">
+            <div class="from">Outlines shorter than this are dropped</div></div>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="pic-auto" checked> Threshold set automatically</label>
+          <label><input type="checkbox" id="pic-invert"> Light on dark</label>
+          <span class="caption" style="margin:0" id="pic-info"></span>
+        </div>
+        <div class="caption">The page finds the edges of the dark parts of the picture, joins them into one path (nearest first,
+          with straight jumps between) and finds the circles that draw it. Bold, simple pictures work best: silhouettes,
+          logos, a few thick lines. Sixty-four circles can draw a heart or a bird, but not a face's every detail.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Spectrum</h2>
+      <canvas id="dspec" aria-label="Above: every circle as a bar at its speed, clockwise to the left; below: the harmonics in each of the two outputs"></canvas>
+      <div class="caption">Above, every circle as a bar placed by its speed (turns per drawing, clockwise to the left of 0 and
+        anticlockwise to the right) and as tall as its radius, coloured by its band. Below, what you hear: a circle turning
+        <i>k</i> times per drawing adds harmonic |<i>k</i>| to both outputs, and the circles at <i>k</i> and −<i>k</i> share one
+        harmonic between them, so they can add up in one output and cancel in the other.</div>
+    </section>
+  </div>
+
+  <aside class="col">
+    <section class="card learn">
+      <h2>From a drawing to a sound</h2>
+      <p>Picture a pen going round and round a closed shape at a steady pace. Where it is across, and how high, are two signals
+        that repeat every time round. Speed the pen up to hundreds of times a second and each of them is a sound, with a pitch
+        (how many times a second the shape is drawn) and a timbre (what the shape is). The card sends the height from
+        <b>Audio Out 1</b> and the position across from <b>Audio Out 2</b>.</p>
+      <p>To make the pen move, the card uses circles riding on circles, as in partials mode. But a drawing needs more of them,
+        and some must turn the other way.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Parametric_equation" target="_blank" rel="noopener">Parametric curve</a>
+        <a href="https://en.wikipedia.org/wiki/Deferent_and_epicycle" target="_blank" rel="noopener">Deferent and epicycle</a>
+      </div>
+
+      <h3>Circles that turn both ways</h3>
+      <p>Each circle turns a whole number of times, <i>k</i>, every time round the drawing: positive anticlockwise, negative
+        clockwise. Its point is a <b>complex number</b>, its position across the real part and its height the imaginary part, so
+        the drawing is a sum of turning arrows:</p>
+      <div class="formula">z(t) = Σ<sub>k</sub> c<sub>k</sub> e<sup>2πi k t</sup> &nbsp; with &nbsp; x(t) = Re z(t) &nbsp; (Out 2), &nbsp; y(t) = Im z(t) &nbsp; (Out 1)</div>
+      <p>One circle draws a circle. Two the same speed, one each way, draw an ellipse: look at <i>Ellipse</i>. Partials mode only
+        has circles turning anticlockwise, which is why its trail is always curly.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Fourier_series#Complex-valued_functions" target="_blank" rel="noopener">Complex Fourier series</a>
+        <a href="https://en.wikipedia.org/wiki/Euler%27s_formula" target="_blank" rel="noopener">Euler's formula</a>
+        <a href="https://en.wikipedia.org/wiki/Negative_frequency" target="_blank" rel="noopener">Negative frequency</a>
+      </div>
+
+      <h3>Finding the circles</h3>
+      <p>The page puts 1024 points evenly along the outline, then, for each speed <i>k</i> from −127 to 127, turns the whole
+        drawing backwards <i>k</i> times while going round it and takes the average. Everything turning at any other speed
+        averages away to nothing; what's left is the circle at speed <i>k</i>, its size and where it starts:</p>
+      <div class="formula">c<sub>k</sub> = (1/N) Σ<sub>n</sub> z<sub>n</sub> e<sup>−2πi k n / N</sup></div>
+      <p>This is the <b>discrete Fourier transform</b>. The card has room for 64 circles, so the page keeps the 64 biggest, and
+        sends them biggest first.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Discrete_Fourier_transform" target="_blank" rel="noopener">Discrete Fourier transform</a>
+        <a href="https://en.wikipedia.org/wiki/Fourier_series" target="_blank" rel="noopener">Fourier series</a>
+        <a href="https://en.wikipedia.org/wiki/Joseph_Fourier" target="_blank" rel="noopener">Joseph Fourier</a>
+      </div>
+
+      <h3>How many circles</h3>
+      <p>Turn <b>Circles</b> (X) right down: one circle, and the drawing is a circle. Bring them in one at a time and the shape
+        arrives in order of importance, the broad outline first and the fine detail last, because detail needs fast circles and
+        fast circles are small. Smooth shapes need few: the heart is exactly eight, the trefoil two. Corners need many, and
+        however many there are the line overshoots a little at each corner: the <b>Gibbs phenomenon</b> again.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Gibbs_phenomenon" target="_blank" rel="noopener">Gibbs phenomenon</a>
+        <a href="https://en.wikipedia.org/wiki/Data_compression" target="_blank" rel="noopener">Compression</a>
+      </div>
+
+      <h3>What you hear</h3>
+      <p>Each output on its own is an ordinary repeating wave. A circle turning <i>k</i> times per drawing puts harmonic |<i>k</i>|
+        into both outputs, whichever way it turns, so a drawing made of slow circles (smooth, round) sounds mellow, and one with
+        corners and spikes sounds bright and buzzy. The circles at <i>k</i> and −<i>k</i> share a harmonic, and depending on how
+        they line up they add in one output and cancel in the other. <b>Rotate</b> (Y) changes how they line up, so the two
+        outputs change timbre as the drawing turns, while the pair together, the drawing, stays the same.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Harmonic_series_(music)" target="_blank" rel="noopener">Harmonic series</a>
+        <a href="https://en.wikipedia.org/wiki/Timbre" target="_blank" rel="noopener">Timbre</a>
+      </div>
+
+      <h3>On a scope</h3>
+      <p>Patch Audio Out 2 to an oscilloscope's X input and Audio Out 1 to its Y, set it to X–Y mode, and it draws the picture,
+        live. People make whole pieces of music this way, drawing with sound. Listening in the browser, the left channel is
+        Out 2 and the right Out 1, the usual way round for an X–Y scope, or a scope app on a phone or computer.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Oscilloscope" target="_blank" rel="noopener">Oscilloscope</a>
+        <a href="https://en.wikipedia.org/wiki/Lissajous_curve" target="_blank" rel="noopener">Lissajous curve</a>
+        <a href="https://en.wikipedia.org/wiki/Vector_monitor" target="_blank" rel="noopener">Vector display</a>
+      </div>
+
+      <h3>Slow: a drawing as CV</h3>
+      <p>Switch up drops the card seven octaves, to between about one turn every four seconds and sixteen a second. The outputs
+        are then two related LFOs: patch Out 1 to a filter and Out 2 to a panner and the sound moves around the picture. The
+        Computer's six LEDs become a tiny scope: each lights as the point passes near it.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Low-frequency_oscillation" target="_blank" rel="noopener">LFO</a>
+      </div>
+
+      <h3>Bands: an equaliser for a picture</h3>
+      <p>The eight faders group the circles by speed, an octave each: 1, 2, 3–4, 5–8, 9–16, 17–32, 33–64 and 65–127 turns per
+        drawing. Pull the top ones down and the drawing goes soft and blobby, and the sound dull: a
+        <b>low-pass filter</b>. Pull the bottom ones down and only the wiggles are left. The same thing happens on its own at
+        high notes: circles past 16 kHz fade out, so at C7 only the first seven or so are left.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Low-pass_filter" target="_blank" rel="noopener">Low-pass filter</a>
+        <a href="https://en.wikipedia.org/wiki/Equalization_(audio)" target="_blank" rel="noopener">Equaliser</a>
+        <a href="https://en.wikipedia.org/wiki/Nyquist_frequency" target="_blank" rel="noopener">Nyquist frequency</a>
+      </div>
+
+      <h3>From a picture to a path</h3>
+      <p>A picture isn't one line, so the page has to make it one. It decides which pixels are ink with a threshold (by default
+        <b>Otsu's method</b>, which picks the grey level that best splits the picture in two), traces round the edge of each
+        patch of ink (<b>marching squares</b>), drops the specks, and joins the outlines into one closed path, always on to the
+        nearest. The jumps between outlines are part of the path, so they get drawn too.</p>
+      <div class="links">
+        <a href="https://en.wikipedia.org/wiki/Otsu%27s_method" target="_blank" rel="noopener">Otsu's method</a>
+        <a href="https://en.wikipedia.org/wiki/Marching_squares" target="_blank" rel="noopener">Marching squares</a>
+        <a href="https://en.wikipedia.org/wiki/Travelling_salesman_problem" target="_blank" rel="noopener">Travelling salesman</a>
+      </div>
+    </section>
+
+    <section class="card learn">
+      <h2>Things to try</h2>
+      <ol>
+        <li><b>One circle, then two.</b> Choose <i>Circle</i>: one circle, and each output is a pure sine. Now <i>Ellipse</i>: a
+          second circle the same speed the other way squashes it, but each output is still a sine.</li>
+        <li><b>Two circles, two speeds.</b> <i>Trefoil</i> and <i>Flower</i> are two circles each, at different speeds and
+          opposite ways. Their sum loops round in petals.</li>
+        <li><b>Build a heart.</b> Choose <i>Heart</i> and turn Circles (X) up slowly from 1: it is exactly eight circles.</li>
+        <li><b>Corners cost circles.</b> Choose <i>Square</i> and do the same: it needs all 64, and the corners stay a little
+          round, with a small overshoot.</li>
+        <li><b>Turn it.</b> On <i>Star</i>, move Rotate (Y) and listen to one output alone: its timbre changes as the star turns,
+          though the drawing doesn't.</li>
+        <li><b>Blur it.</b> Pull band faders 8 down to 4 one by one. The drawing loses its corners, and the sound its edge.</li>
+        <li><b>Draw your own.</b> On <i>Draw</i>, scribble something spiky, then something round, and compare how they sound.</li>
+        <li><b>As CV.</b> Switch up (Slow) and patch the two outputs to two things you can hear moving.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>The card in drawing mode</h2>
+      <table class="jacks">
+        <tr><td>Swap mode</td><td>Hold the switch down for a second, or hold the 8mu's D</td></tr>
+        <tr><td>8mu faders</td><td>Bands: the circles by speed, an octave each</td></tr>
+        <tr><td>8mu D</td><td>Tap: next drawing</td></tr>
+        <tr><td>Main knob</td><td>Pitch: times a second the drawing is drawn, C1 to C7</td></tr>
+        <tr><td>X knob</td><td>Circles: how many turn, 1 to 64, biggest first</td></tr>
+        <tr><td>Y knob</td><td>Rotate the drawing, a full turn</td></tr>
+        <tr><td>Switch</td><td>Up: slow (7 octaves down). Middle: audio. Down (tap): next drawing</td></tr>
+        <tr><td>CV In 1</td><td>Pitch, 1V/oct</td></tr>
+        <tr><td>CV In 2</td><td>Circles, added to X</td></tr>
+        <tr><td>Audio In 1</td><td>Rotate, added to Y, at audio rate</td></tr>
+        <tr><td>Pulse In 1</td><td>Sync: back to the start of the drawing</td></tr>
+        <tr><td>Pulse In 2</td><td>Next drawing</td></tr>
+        <tr><td>Audio Out 1</td><td>Height (Y)</td></tr>
+        <tr><td>Audio Out 2</td><td>Across (X)</td></tr>
+        <tr><td>CV Out 1</td><td>Pitch, 1V/oct, 0V at middle C</td></tr>
+        <tr><td>Pulse Out 1</td><td>Square at the pitch: high for the first half of the drawing</td></tr>
+        <tr><td>LEDs</td><td>A tiny scope: each lights as the point passes near it</td></tr>
+      </table>
+      <details>
+        <summary>Sending a drawing to the card</summary>
+        <ul class="caption">
+          <li>Plug this computer into the Computer's USB socket, power-cycle the module, and press <kbd>Connect card &amp; 8mu</kbd>.</li>
+          <li>Choosing a built-in drawing, or making one on <i>Draw</i> or <i>Picture</i>, sends it to the card straight away.</li>
+          <li>A drawing sent to the card stays until power-off; this page remembers it, and <kbd>Send to card</kbd> sends it again.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<script id="fourier">
+'use strict';
+// ============================================================================
+// Fourier: from a closed path to circles.  make_drawings.js runs this same
+// block to build ../drawings.h, so the card's built-in drawings are made
+// exactly as the page makes them.
+// ============================================================================
+const FOURIER = (() => {
+  const N = 1024;          // points around the path
+  const KMAX = 127;        // fastest circle, in turns per turn of the drawing
+  const MAX_CIRCLES = 64;  // as the card
+  const TAU = 2 * Math.PI;
+  const cosT = new Float64Array(N), sinT = new Float64Array(N);
+  for (let j = 0; j < N; j++) { cosT[j] = Math.cos(TAU * j / N); sinT[j] = Math.sin(TAU * j / N); }
+
+  // N points evenly spaced along a closed path of [x, y] points
+  function resample(path) {
+    const m = path.length;
+    if (m < 2) return null;
+    const cum = new Float64Array(m + 1);
+    for (let i = 0; i < m; i++) {
+      const a = path[i], b = path[(i + 1) % m];
+      cum[i + 1] = cum[i] + Math.hypot(b[0] - a[0], b[1] - a[1]);
+    }
+    const total = cum[m];
+    if (!(total > 0)) return null;
+    const out = [];
+    let j = 0;
+    for (let i = 0; i < N; i++) {
+      const s = total * i / N;
+      while (j < m - 1 && cum[j + 1] <= s) j++;
+      const a = path[j], b = path[(j + 1) % m], seg = cum[j + 1] - cum[j];
+      const t = seg > 0 ? (s - cum[j]) / seg : 0;
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+    return out;
+  }
+
+  // The circles that draw a closed path: its complex Fourier series,
+  //   c_k = 1/N  sum_n  z_n e^(-2 pi i k n / N),   z_n = x_n + i y_n
+  // for k = -127 to 127, the 64 biggest kept, biggest first.  k = 0, the
+  // path's centre, is left out, so the drawing is centred.  Scaled so the
+  // drawing just fits, then rounded as the card stores them (amp and phase
+  // 0-16383).  'timed' paths already have N points at even steps of time,
+  // and are used as they are; others are spaced evenly along their length.
+  function circlesOf(path, timed) {
+    const z = timed && path.length === N ? path : resample(path);
+    if (!z) return null;
+    const cs = [];
+    for (let k = -KMAX; k <= KMAX; k++) {
+      if (k === 0) continue;
+      let re = 0, im = 0;
+      for (let n = 0; n < N; n++) {
+        const i = ((k * n) % N + N) % N, c = cosT[i], s = sinT[i];
+        // (x + iy)(cos - i sin)
+        re += z[n][0] * c + z[n][1] * s;
+        im += z[n][1] * c - z[n][0] * s;
+      }
+      re /= N; im /= N;
+      cs.push({ k, re, im, a: Math.hypot(re, im) });
+    }
+    cs.sort((p, q) => q.a - p.a || Math.abs(p.k) - Math.abs(q.k) || p.k - q.k);
+    const pick = cs.slice(0, MAX_CIRCLES);
+
+    // Scale so the drawing, with every circle, reaches 0.95 from the centre
+    // at most.  No circle can then be bigger than 0.95 either.
+    let peak = 0;
+    for (let n = 0; n < N; n++) {
+      let x = 0, y = 0;
+      for (const c of pick) {
+        const i = ((c.k * n) % N + N) % N;
+        x += c.re * cosT[i] - c.im * sinT[i];
+        y += c.re * sinT[i] + c.im * cosT[i];
+      }
+      peak = Math.max(peak, Math.hypot(x, y));
+    }
+    if (!(peak > 0)) return null;
+    const scale = 0.95 / peak;
+    const circles = pick.map(c => ({
+      k: c.k,
+      amp: Math.round(c.a * scale * 16384),
+      phase: ((Math.round(Math.atan2(c.im, c.re) / TAU * 16384) % 16384) + 16384) % 16384,
+    })).filter(c => c.amp > 0);
+
+    // The path itself, centred and scaled to match, to draw behind
+    let cx = 0, cy = 0;
+    for (const p of z) { cx += p[0]; cy += p[1]; }
+    cx /= N; cy /= N;
+    const target = z.map(p => [(p[0] - cx) * scale, (p[1] - cy) * scale]);
+    return { circles, target };
+  }
+
+  // ---- Built-in drawings, as the card has them -----------------------------
+  const timed = (f) => Array.from({ length: N }, (_, n) => f(TAU * n / N));
+  function polygon(pts) { return pts; }
+  function star(points, inner) {
+    const out = [];
+    for (let i = 0; i < points * 2; i++) {
+      const r = i % 2 ? inner : 1, a = Math.PI / 2 - Math.PI * i / points;
+      out.push([r * Math.cos(a), r * Math.sin(a)]);
+    }
+    return out;
+  }
+  const BUILTIN = [
+    { name: 'Circle', timed: true, path: () => timed(t => [Math.cos(t), Math.sin(t)]) },
+    { name: 'Ellipse', timed: true, path: () => timed(t => [Math.cos(t), 0.5 * Math.sin(t)]) },
+    { name: 'Figure eight', timed: true, path: () => timed(t => [Math.sin(t), Math.sin(t) * Math.cos(t)]) },
+    // r = cos 3θ, θ from 0 to π, turned so a petal points up
+    { name: 'Trefoil', timed: true, path: () => timed(t => {
+        const th = t / 2, r = Math.cos(3 * th), a = th + Math.PI / 2;
+        return [r * Math.cos(a), r * Math.sin(a)];
+      }) },
+    // one circle forwards, a smaller one six times as fast backwards
+    { name: 'Flower', timed: true, path: () => timed(t => {
+        const a = t + Math.PI / 2, b = -6 * t - Math.PI / 2;
+        return [Math.cos(a) + 0.35 * Math.cos(b), Math.sin(a) + 0.35 * Math.sin(b)];
+      }) },
+    { name: 'Heart', timed: true, path: () => timed(t => [16 * Math.pow(Math.sin(t), 3),
+        13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)]) },
+    { name: 'Square', timed: false, path: () => polygon([[-1, 1], [-1, -1], [1, -1], [1, 1]]) },
+    { name: 'Star', timed: false, path: () => star(5, 0.4) },
+  ];
+  function builtin(i) {
+    const b = BUILTIN[i];
+    return { name: b.name, ...circlesOf(b.path(), b.timed) };
+  }
+
+  // ---- Tracing a picture -----------------------------------------------------
+  // The outlines of the dark (or, inverted, light) parts of a picture, as
+  // closed loops, by marching squares over a W x H mask (1 = ink)
+  function outlines(mask, W, H) {
+    // Pad with a border of 0, so every outline closes
+    const w = W + 2, h = H + 2, m = new Uint8Array(w * h);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) m[(y + 1) * w + x + 1] = mask[y * W + x];
+    // Edge points: 2 per grid point, the edge to the right (even) and the
+    // edge below (odd).  Each gets two neighbours.
+    const nb = new Map();
+    const link = (a, b) => {
+      let e = nb.get(a); if (!e) nb.set(a, e = []); e.push(b);
+      let f = nb.get(b); if (!f) nb.set(b, f = []); f.push(a);
+    };
+    for (let y = 0; y < h - 1; y++) {
+      for (let x = 0; x < w - 1; x++) {
+        const tl = m[y * w + x], tr = m[y * w + x + 1], bl = m[(y + 1) * w + x], br = m[(y + 1) * w + x + 1];
+        const c = tl | (tr << 1) | (br << 2) | (bl << 3);
+        if (c === 0 || c === 15) continue;
+        const T = 2 * (y * w + x), B = 2 * ((y + 1) * w + x), Lf = 2 * (y * w + x) + 1, R = 2 * (y * w + x + 1) + 1;
+        switch (c) {
+          case 1: case 14: link(T, Lf); break;
+          case 2: case 13: link(T, R); break;
+          case 4: case 11: link(R, B); break;
+          case 8: case 7: link(B, Lf); break;
+          case 3: case 12: link(Lf, R); break;
+          case 6: case 9: link(T, B); break;
+          case 5: link(T, R); link(B, Lf); break;   // saddles: kept apart
+          case 10: link(T, Lf); link(R, B); break;
+        }
+      }
+    }
+    const pos = (id) => {
+      const g = id >> 1, x = g % w, y = (g - x) / w;
+      return id & 1 ? [x - 1, y - 0.5] : [x - 0.5, y - 1];
+    };
+    const loops = [], seen = new Set();
+    for (const start of nb.keys()) {
+      if (seen.has(start)) continue;
+      const loop = [];
+      let prev = -1, cur = start;
+      while (!seen.has(cur)) {
+        seen.add(cur);
+        loop.push(pos(cur));
+        const e = nb.get(cur), next = e[0] !== prev ? e[0] : e[1];
+        prev = cur; cur = next;
+        if (cur === undefined) break;
+      }
+      if (loop.length > 2) loops.push(loop);
+    }
+    return loops;
+  }
+
+  const loopLength = (l) => l.reduce((s, p, i) => s + Math.hypot(p[0] - l[(i + 1) % l.length][0], p[1] - l[(i + 1) % l.length][1]), 0);
+
+  // One closed path through several loops: from the longest, always on to
+  // the nearest loop not yet visited, round it, and on.  The jumps between
+  // loops are part of the path, so they get drawn too.
+  function joinLoops(loops, minLength, maxLoops = 40) {
+    let ls = loops.map(l => ({ l, len: loopLength(l) })).filter(o => o.len >= minLength);
+    ls.sort((a, b) => b.len - a.len);
+    ls = ls.slice(0, maxLoops).map(o => o.l);
+    if (!ls.length) return null;
+    const path = ls.shift().slice();
+    let at = path[0];
+    while (ls.length) {
+      let best = 0, bestI = 0, bestD = Infinity;
+      ls.forEach((l, li) => {
+        const step = Math.max(1, Math.floor(l.length / 200));
+        for (let i = 0; i < l.length; i += step) {
+          const d = Math.hypot(l[i][0] - at[0], l[i][1] - at[1]);
+          if (d < bestD) { bestD = d; best = li; bestI = i; }
+        }
+      });
+      const l = ls.splice(best, 1)[0];
+      const turned = l.slice(bestI).concat(l.slice(0, bestI + 1));
+      // from where the path is, round the loop and back to the same place
+      for (const p of turned) path.push(p);
+      at = turned[turned.length - 1];
+    }
+    return path;
+  }
+
+  // Otsu's threshold: the grey level that best splits a picture in two
+  function otsu(gray) {
+    const hist = new Float64Array(256);
+    for (const g of gray) hist[g]++;
+    const total = gray.length;
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, best = 128, bestV = -1;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t]; if (!wB) continue;
+      const wF = total - wB; if (!wF) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB, mF = (sum - sumB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
+      if (v > bestV) { bestV = v; best = t; }
+    }
+    return best + 0.5;
+  }
+
+  return { N, KMAX, MAX_CIRCLES, BUILTIN, resample, circlesOf, builtin, outlines, joinLoops, otsu };
+})();
+</script>
+<script>
+'use strict';
+
+// ============================================================================
+// Constants mirroring the firmware (main.cpp, sysex.h)
+// ============================================================================
+const NP = 8;                                   // partials, and bands
+const PAGES = 3;                                // partials pages
+const BANDS = 3;                                // the page holding the drawing's bands
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x45, PROTOCOL_VERSION = 1;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, SHAPE: 6, STATUS: 7, PING: 9, SYNC: 10,
+              MODE: 11, DRAWING: 12, CIRCLES: 13, COMMIT: 14 };
+const CUSTOM = 127, CIRCLES_PER_MESSAGE = 8;
+const FIRST_FADER_CC = 34;
+const BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+const CARD_RATE = 48000, FADE_LO = 16000, FADE_HI = 20000;
+const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const TAU = 2 * Math.PI;
+
+const PAGE_INFO = [
+  { name: 'Level', letter: 'A', reset: 0,
+    hint: 'Page A: each circle’s radius, the partial’s amplitude, from 0 to 1. If together they would reach beyond the edge, they are all scaled down to fit.' },
+  { name: 'Phase', letter: 'B', reset: 0,
+    hint: 'Page B: where each circle’s point starts, 0° to 360°. 0° starts level and rising (sine); 90° starts at the top (cosine).' },
+  { name: 'Frequency', letter: 'C', reset: 64,
+    hint: 'Page C: how fast each circle turns. The middle is exactly harmonic: circle n turns n times per turn of circle 1. Either side detunes it, up to 12 semitones.' },
+];
+
+const L = (href, text) => `<a href="https://en.wikipedia.org/wiki/${href}" target="_blank" rel="noopener">${text}</a>`;
+// As kShapes in main.cpp: level, phase, frequency
+const SHAPES = [
+  { name: 'Saw', v: [[127, 64, 42, 32, 25, 21, 18, 16], [0, 0, 0, 0, 0, 0, 0, 0], [64, 64, 64, 64, 64, 64, 64, 64]],
+    lesson: `<p><b>Saw: every harmonic, each at 1/n.</b> Circle 2 is half the size of circle 1, circle 3 a third, and so on. All start
+      together, so their slopes add up into a straight ramp that falls, then jumps back. It's the brightest of the classic shapes,
+      with every harmonic present, which is why subtractive synths start from it.</p>
+      <p>Turn Partials down to 1 and back up to watch the ramp being built. ${L('Sawtooth_wave', 'Sawtooth wave')}</p>` },
+  { name: 'Square', v: [[127, 0, 42, 0, 25, 0, 18, 0], [0, 0, 0, 0, 0, 0, 0, 0], [64, 64, 64, 64, 64, 64, 64, 64]],
+    lesson: `<p><b>Square: odd harmonics only, each at 1/n.</b> Circles 2, 4, 6 and 8 are still. Leaving out the even harmonics
+      makes the wave symmetrical, the same upside down half a turn later, and gives the hollow, clarinet-like sound.</p>
+      <p>Look at the corners: the overshoot is the ${L('Gibbs_phenomenon', 'Gibbs phenomenon')}. ${L('Square_wave_(waveform)', 'Square wave')}</p>` },
+  { name: 'Triangle', v: [[127, 0, 14, 0, 5, 0, 3, 0], [0, 0, 64, 0, 0, 0, 64, 0], [64, 64, 64, 64, 64, 64, 64, 64]],
+    lesson: `<p><b>Triangle: odd harmonics, each at 1/n², every other one turned half round.</b> The levels fall away much faster
+      than the square's (circle 3 is a ninth of circle 1), so it's soft, close to a sine. Circles 3 and 7 start at 180°: on
+      page B, set them back to 0° and the corners round into a different shape with the same sound.</p>
+      <p>${L('Triangle_wave', 'Triangle wave')}</p>` },
+  { name: 'Sine', v: [[127, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [64, 64, 64, 64, 64, 64, 64, 64]],
+    lesson: `<p><b>Sine: one circle.</b> The simplest sound there is, a single frequency with nothing above it. Every other sound
+      here is several of these added up. Raise faders on page A to add more circles one at a time.</p>
+      <p>${L('Sine_wave', 'Sine wave')} · ${L('Pure_tone', 'Pure tone')}</p>` },
+  { name: 'Pulse', v: [[64, 64, 64, 64, 64, 64, 64, 64], [32, 32, 32, 32, 32, 32, 32, 32], [64, 64, 64, 64, 64, 64, 64, 64]],
+    lesson: `<p><b>Pulse: every harmonic at the same level, all starting at 90°.</b> Once per turn every circle points straight
+      up at the same moment, so they add into one tall spike, and in between they mostly cancel. The more circles, the narrower
+      the spike: a sum like this is the ${L('Dirichlet_kernel', 'Dirichlet kernel')}.</p>
+      <p>Now scatter the phases on page B. The spike spreads into noise-like wiggles, but the spectrum, and the sound, stays the
+      same. ${L('Pulse_wave', 'Pulse wave')} · ${L('Dirac_comb', 'Dirac comb')}</p>` },
+  { name: 'Bell', v: [[127, 100, 80, 70, 55, 45, 35, 30], [0, 0, 0, 0, 0, 0, 0, 0], [64, 78, 96, 101, 99, 99, 101, 108]],
+    lesson: `<p><b>Bell: inharmonic partials.</b> On page C the faders are off the middle, so circle 2 turns about 2.3 times for
+      each turn of circle 1, circle 3 about 4.2 times, and so on: not whole numbers. The circles never line up the same way twice,
+      so the wave never repeats, and the sound is metallic, like a struck bar or a bell.</p>
+      <p>Switch up (harmonic lock) pulls every circle back to the harmonic series and the bell becomes an ordinary tone.
+      ${L('Inharmonicity', 'Inharmonicity')} · ${L('Bell_(instrument)', 'Bell')}</p>` },
+];
+
+// ============================================================================
+// Drawing: built-in drawings (made by FOURIER, as drawings.h) and bands
+// ============================================================================
+const DRAWING_LESSONS = [
+  `<p><b>Circle: one circle.</b> One arrow turning once per drawing. Its height is a sine and its position across a cosine, so
+    each output is a pure tone. This is where everything else starts. ${L('Unit_circle', 'Unit circle')}</p>`,
+  `<p><b>Ellipse: two circles, the same speed, opposite ways.</b> One turns anticlockwise (k = 1), a smaller one clockwise
+    (k = −1). Where they point the same way they add, across; where they point opposite ways they cancel, up and down. Each
+    output is still a pure sine, but the two are no longer the same size. ${L('Ellipse', 'Ellipse')}</p>`,
+  `<p><b>Figure eight: four circles.</b> Across is a sine once per drawing, up a sine twice per drawing: a
+    ${L('Lissajous_curve', 'Lissajous figure')}. Each of those needs a pair of circles, one each way, which is why it's four,
+    and why each output, on its own, is a single pure tone, an octave apart.</p>`,
+  `<p><b>Trefoil: two circles.</b> One turning twice per drawing anticlockwise, one as big turning once clockwise. They meet
+    head on three times per drawing, and the point swings through the middle: three petals from two circles.
+    ${L('Rose_(mathematics)', 'Rose curve')}</p>`,
+  `<p><b>Flower: two circles.</b> A big one once round anticlockwise, and riding on it a small one six times as fast,
+    clockwise. Relative to each other they turn seven times, so seven loops. Change the speeds and you get every curve a
+    ${L('Spirograph', 'Spirograph')} can draw: ${L('Hypotrochoid', 'hypotrochoids')}.</p>`,
+  `<p><b>Heart: eight circles, exactly.</b> The heart is a famous formula, x = 16 sin³t, y = 13 cos t − 5 cos 2t − 2 cos 3t −
+    cos 4t, with nothing faster than four times round. So eight circles, from −4 to 4, draw it perfectly, and there is
+    nothing left for the other 56. Smooth curves need few circles. ${L('Heart_(symbol)', 'Heart')}</p>`,
+  `<p><b>Square: 64 circles, and still not quite.</b> The corners need circles of every speed, getting smaller only slowly
+    (1, −3, 5, −7 …), so 64 aren't enough: the corners are rounded, and the sides overshoot a little near them, the
+    ${L('Gibbs_phenomenon', 'Gibbs phenomenon')} again. Only circles at 1, −3, 5, −7 … are there at all: the square's
+    four-fold symmetry rules the others out.</p>`,
+  `<p><b>Star: five-fold.</b> Like the square, its corners need many circles, but its symmetry is five-fold, so only speeds of
+    −1, 4, −6, 9, −11 … (one more or less than a multiple of five) appear. Turn Circles down and the star softens through a
+    pentagon-ish blob to a circle. ${L('Rotational_symmetry', 'Rotational symmetry')}</p>`,
+];
+const DRAWINGS = FOURIER.BUILTIN.map((_, i) => ({ ...FOURIER.builtin(i), lesson: DRAWING_LESSONS[i] }));
+const BAND_NAMES = ['1', '2', '3–4', '5–8', '9–16', '17–32', '33–64', '65–127'];
+const BAND_LO = [1, 2, 3, 5, 9, 17, 33, 65], BAND_HI = [1, 2, 4, 8, 16, 32, 64, 127];
+const bandOf = (m) => m <= 1 ? 0 : Math.ceil(Math.log2(m) - 1e-9);
+// X knob to how many circles turn, a squared law, as DrawingControl
+const circlesFor = (ctl) => 1 + 63 * (ctl / 4095) * (ctl / 4095);
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  values: [...SHAPES[0].v.map(r => r.slice()), new Array(NP).fill(127)],  // partials pages, then the bands
+  mode: 1,                                      // 0 partials, 1 drawing
+  page: 0,                                      // partials page
+  shape: 0,                                     // last shape loaded, or -1 once edited
+  drawing: 5,                                   // built-in drawing, or -1 for the custom one
+  hot: -1,                                      // partial under the pointer
+  dhot: -1,                                     // band under the pointer
+  // local controls; with a card connected these follow its STATUS
+  note: 48, partials: 8, stretch: 0, lock: false,
+  circlesCtl: 4095, rotateCtl: 0, slow: false,
+  muOnCard: false,
+};
+// The drawing in use: { name, circles: [{k, amp, phase}], target: [[x, y]] or null }
+let drawingData = DRAWINGS[state.drawing];
+let customData = null;                          // the last drawing made here or read from the card
+const view = { tau: 0, turnsPerSec: 0.01, paused: false, trail: true, shadow: false, lastT: 0 };
+const dview = { tau: 0, turnsPerSec: 0.06, paused: false, target: true, waves: true };
+const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0, incoming: [] };
+// 8mu pickup, mirroring Epicycles::HandleEightMU in the firmware
+const mu = { phys: new Array(NP).fill(-1), engaged: new Array(NP).fill(false),
+             ledSent: new Array(NP).fill(-1), lastBlinkOff: 0 };
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let colors = [];
+function readColors() { colors = Array.from({ length: NP }, (_, i) => cssVar('--s' + i)); }
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+
+// ============================================================================
+// The model: fader values to circles, as Epicycles::PartialsControl does
+// ============================================================================
+const hz = (note) => 440 * Math.pow(2, (note - 69) / 12);
+// FREQUENCY fader to octaves away from the harmonic; the middle three steps are exact
+function freqOffset(v) {
+  let d = v - 64;
+  if (d >= -1 && d <= 1) return 0;
+  d += d > 0 ? -1 : 1;
+  return Math.max(-62, d) / 62;
+}
+const phaseOf = (v) => v / 128 * 2 * Math.PI;   // the whole fader is one turn
+function ratioOf(n) {                           // turns per turn of circle 1
+  const off = state.lock ? 0 : freqOffset(state.values[2][n]);
+  if (off === 0 && (state.lock || state.stretch === 0)) return n + 1;
+  return Math.pow(2, Math.log2(n + 1) * (1 + state.stretch) + off);
+}
+// Everything about the circles right now
+function model() {
+  const f0 = hz(state.note);
+  const c = [];
+  let total = 0;
+  for (let n = 0; n < NP; n++) {
+    const ratio = ratioOf(n), f = f0 * ratio;
+    const level = state.values[0][n] / 127;
+    const fade = clamp(state.partials - n, 0, 1);
+    const nyq = f >= FADE_HI ? 0 : f > FADE_LO ? (FADE_HI - f) / (FADE_HI - FADE_LO) : 1;
+    const a = level * fade * nyq;
+    total += a;
+    c.push({ ratio, f, level, fade, nyq, a, phase: phaseOf(state.values[1][n]),
+             harmonic: Math.abs(ratio - (n + 1)) < 1e-9 });
+  }
+  const norm = total > 1 ? 1 / total : 1;
+  for (const p of c) p.amp = p.a * norm;        // radius as a fraction of the space
+  return { f0, c, norm, total };
+}
+let M = model();
+
+// ============================================================================
+// Describing values
+// ============================================================================
+function noteName(n) {
+  const r = Math.round(n), c = Math.round((n - r) * 100);
+  return NOTE_NAMES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1) + (c ? (c > 0 ? ' +' : ' ') + c + 'c' : '');
+}
+const fmtHz = (f) => f >= 1000 ? (f / 1000).toFixed(2) + ' kHz' : f.toFixed(f < 100 ? 1 : 0) + ' Hz';
+function describe(page, n) {
+  const v = state.values[page][n], p = M.c[n];
+  switch (page) {
+    case 0: return v === 0 ? 'off' : (v / 127).toFixed(2) + (v >= 127 ? '' : ' (1/' + (127 / v).toFixed(1) + ')');
+    case 1: return Math.round(v * 360 / 128) + '°';
+    default: {
+      const st = 12 * Math.log2(p.ratio / (n + 1));
+      return '×' + p.ratio.toFixed(2) + (p.harmonic ? ' harmonic' : ' ' + (st > 0 ? '+' : '') + st.toFixed(1) + ' st');
+    }
+  }
+}
+
+// ============================================================================
+// Drawing
+// ============================================================================
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+
+// The outer point at time tau (in turns of circle 1): sum of every circle
+function tip(tau) {
+  let x = 0, y = 0;
+  for (const p of M.c) {
+    if (p.amp <= 0) continue;
+    const th = 2 * Math.PI * p.ratio * tau + p.phase;
+    x += p.amp * Math.cos(th); y += p.amp * Math.sin(th);
+  }
+  return [x, y];
+}
+
+function drawHero() {
+  const { ctx, w: W, h: H } = setupCanvas($('hero'));
+  ctx.clearRect(0, 0, W, H);
+  const ink = cssVar('--sum'), grid = cssVar('--grid'), muted = cssVar('--muted');
+  const top = 330;                              // height of the circles band
+  const R = Math.min(top * 0.42, W * (W < 600 ? 0.26 : 0.2));
+  const cx = R + 20, cy = top / 2;
+  const x0 = cx + R + 28, x1 = W - 10;
+  const turnsShown = 2, pxPerTurn = (x1 - x0) / turnsShown;
+  const tau = view.tau;
+
+  // Axes
+  ctx.strokeStyle = grid; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - R - 10, cy); ctx.lineTo(x1, cy);
+  ctx.moveTo(cx, cy - R - 10); ctx.lineTo(cx, view.shadow ? H - 6 : cy + R + 10);
+  ctx.moveTo(x0, cy - R); ctx.lineTo(x0, cy + R);
+  for (let k = 1; k <= turnsShown; k++) { const x = x0 + k * pxPerTurn; ctx.moveTo(x, cy - 6); ctx.lineTo(x, cy + 6); }
+  ctx.stroke();
+  ctx.fillStyle = muted; ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText('now', x0 + 3, cy + R + 14);
+  if (pxPerTurn > 110) {
+    ctx.textAlign = 'center'; ctx.fillText('1 turn ago', x0 + pxPerTurn, cy + R + 14);
+    ctx.fillText('2 turns ago', x0 + 2 * pxPerTurn - 30, cy + R + 14); ctx.textAlign = 'left';
+  }
+  ctx.fillText('Audio Out 1', x1 - 66, 14);
+
+  // Trail: where the outer point has been, as an X-Y scope would draw it
+  if (view.trail) {
+    ctx.strokeStyle = cssVar('--accent'); ctx.globalAlpha = 0.35; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const steps = 600, span = M.c.every(p => p.amp <= 0 || p.harmonic) ? 1 : 1.5;
+    for (let i = 0; i <= steps; i++) {
+      const [x, y] = tip(tau - span * i / steps);
+      const px = cx + R * x, py = cy - R * y;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  // The nested circles
+  let x = cx, y = cy;
+  for (let n = 0; n < NP; n++) {
+    const p = M.c[n];
+    if (p.amp <= 0.0005) continue;
+    const r = R * p.amp, th = 2 * Math.PI * p.ratio * tau + p.phase;
+    const nx = x + r * Math.cos(th), ny = y - r * Math.sin(th);
+    const hot = state.hot === n;
+    ctx.strokeStyle = colors[n]; ctx.lineWidth = hot ? 2.5 : 1.2; ctx.globalAlpha = hot || state.hot < 0 ? 0.9 : 0.35;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.lineWidth = hot ? 3 : 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+    x = nx; y = ny;
+  }
+  const tipX = x, tipY = y;
+
+  // The waveform: the outer point's height over the last two turns
+  ctx.strokeStyle = ink; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let px = 0; px <= x1 - x0; px++) {
+    const yy = cy - R * tip(tau - px / pxPerTurn)[1];
+    px ? ctx.lineTo(x0 + px, yy) : ctx.moveTo(x0 + px, yy);
+  }
+  ctx.stroke();
+  // One partial on its own, under the pointer
+  if (state.hot >= 0 && M.c[state.hot].amp > 0) {
+    const p = M.c[state.hot];
+    ctx.strokeStyle = colors[state.hot]; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    for (let px = 0; px <= x1 - x0; px++) {
+      const yy = cy - R * p.amp * Math.sin(2 * Math.PI * p.ratio * (tau - px / pxPerTurn) + p.phase);
+      px ? ctx.lineTo(x0 + px, yy) : ctx.moveTo(x0 + px, yy);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // From the outer point across to the waveform
+  ctx.strokeStyle = muted; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(x0, tipY);
+  if (view.shadow) { ctx.moveTo(tipX, tipY); ctx.lineTo(tipX, top); }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = ink;
+  ctx.beginPath(); ctx.arc(tipX, tipY, 4, 0, 2 * Math.PI); ctx.fill();
+  ctx.beginPath(); ctx.arc(x0, tipY, 3.5, 0, 2 * Math.PI); ctx.fill();
+
+  // Shadow: the outer point's across position over time, drawn downwards
+  if (view.shadow) {
+    const y0 = top, y1 = H - 6, pxPerTurnV = (y1 - y0) / turnsShown;
+    ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(cx - R, y0); ctx.lineTo(cx + R, y0); ctx.stroke();
+    ctx.strokeStyle = cssVar('--warm'); ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let py = 0; py <= y1 - y0; py++) {
+      const xx = cx + R * tip(tau - py / pxPerTurnV)[0];
+      py ? ctx.lineTo(xx, y0 + py) : ctx.moveTo(xx, y0 + py);
+    }
+    ctx.stroke();
+    ctx.fillStyle = cssVar('--warm');
+    ctx.beginPath(); ctx.arc(tipX, y0, 3.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = muted; ctx.fillText('Audio Out 2', cx + R + 8, y1 - 4);
+  }
+}
+
+// Each partial on its own, under its fader: one turn of circle 1
+function drawMinis() {
+  for (let n = 0; n < NP; n++) {
+    const cv = faderEls[n].mini, { ctx, w: W, h: H } = setupCanvas(cv), p = M.c[n];
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+    const amp = (H / 2 - 3) * p.level * p.fade * p.nyq;
+    ctx.strokeStyle = colors[n]; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x++) {
+      const y = H / 2 - amp * Math.sin(2 * Math.PI * p.ratio * (x / W) + p.phase);
+      x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    const t = ((view.tau % 1) + 1) % 1, xd = t * W;
+    ctx.fillStyle = colors[n];
+    ctx.beginPath(); ctx.arc(xd, H / 2 - amp * Math.sin(2 * Math.PI * p.ratio * view.tau + p.phase), 2.5, 0, 2 * Math.PI); ctx.fill();
+  }
+}
+
+function drawSpectrum() {
+  const { ctx, w: W, h: H } = setupCanvas($('spectrum'));
+  ctx.clearRect(0, 0, W, H);
+  const maxR = Math.max(9, ...M.c.map(p => p.ratio + 1));
+  const left = 30, right = W - 10, base = H - 22, topY = 20;
+  const X = (r) => left + (right - left) * r / maxR;
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1; ctx.fillStyle = cssVar('--muted');
+  ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.beginPath();
+  for (let k = 1; k < maxR; k++) {
+    ctx.moveTo(X(k), topY); ctx.lineTo(X(k), base);
+    if (maxR < 20 || k % 2 === 0) ctx.fillText(k + '', X(k), base + 12);
+  }
+  ctx.moveTo(left, base); ctx.lineTo(right, base); ctx.stroke();
+  ctx.textAlign = 'left'; ctx.fillText('×f₁', right - 24, topY + 2);
+  ctx.textAlign = 'right'; ctx.fillText('1', left - 6, topY + 8); ctx.fillText('0', left - 6, base);
+  ctx.textAlign = 'left';
+  const bw = Math.max(4, Math.min(14, (right - left) / maxR * 0.35));
+  for (let n = 0; n < NP; n++) {
+    const p = M.c[n], h = (base - topY) * p.level * p.fade * p.nyq;
+    ctx.fillStyle = colors[n]; ctx.globalAlpha = state.hot < 0 || state.hot === n ? 0.9 : 0.4;
+    ctx.fillRect(X(p.ratio) - bw / 2, base - h, bw, h);
+    if (h > 0) { ctx.globalAlpha = 1; ctx.fillText(fmtHz(p.f), X(p.ratio) - bw / 2, base - h - 3); }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawReadouts() {
+  $('v-pitch').textContent = noteName(state.note) + ' · ' + fmtHz(M.f0);
+  $('v-partials').textContent = state.partials.toFixed(state.partials % 1 ? 1 : 0);
+  $('v-stretch').textContent = state.stretch.toFixed(3) + (state.lock && state.stretch > 0 ? ' (locked)' : '');
+  const tps = view.turnsPerSec;
+  $('v-speed').textContent = (tps >= 1 ? tps.toFixed(1) + ' turns/s' : 'a turn every ' + (1 / tps).toFixed(1) + ' s');
+  const ins = ['in-pitch', 'in-partials', 'in-stretch', 'in-lock'];
+  for (const id of ins) $(id).disabled = link.cardOnline;
+  $('in-pitch').value = state.note; $('in-partials').value = state.partials; $('in-stretch').value = state.stretch;
+  $('in-lock').checked = state.lock;
+  const fromCard = link.cardOnline ? ' (live from the card)' : ' (on the card)';
+  $('from-pitch').textContent = 'Main knob + CV In 1' + fromCard;
+  $('from-partials').textContent = 'X knob + CV In 2' + fromCard;
+  $('from-stretch').textContent = 'Y knob + Audio In 1' + fromCard;
+  const slow = M.f0 / tps;
+  const parts = M.c.filter(p => p.amp > 0).length;
+  const inh = M.c.some(p => p.amp > 0 && !p.harmonic);
+  $('hero-caption').textContent =
+    'Slowed down about ' + Math.round(slow).toLocaleString() + ' times: at ' + fmtHz(M.f0) + ' the first circle really turns ' +
+    Math.round(M.f0).toLocaleString() + ' times a second. ' + parts + (parts === 1 ? ' circle' : ' circles') + ' turning. ' +
+    (inh ? 'Some circles are off the harmonic series, so the pattern never exactly repeats.'
+         : 'All on the harmonic series, so the pattern repeats every turn of the first circle.') +
+    (M.norm < 1 ? ' Levels scaled by ' + M.norm.toFixed(2) + ' to fit.' : '') +
+    (state.hot >= 0 ? ' Dashed: circle ' + (state.hot + 1) + ' on its own.' : '');
+}
+
+// ============================================================================
+// Faders
+// ============================================================================
+const faderEls = [];
+function buildFaders() {
+  const tabs = $('tabs');
+  PAGE_INFO.forEach((p, i) => {
+    const t = document.createElement('button');
+    t.className = 'tab'; t.innerHTML = '<b>' + p.letter + '</b>' + p.name;
+    t.addEventListener('click', () => selectPage(i, true));
+    tabs.appendChild(t);
+  });
+  const box = $('faders');
+  for (let n = 0; n < NP; n++) {
+    const d = document.createElement('div'); d.className = 'fader';
+    d.innerHTML = `<div class="name">${n + 1}</div><canvas class="mini"></canvas><div class="slot"><input type="range" min="0" max="127" step="1" aria-label="Partial ${n + 1}"><div class="ghost"></div></div><div class="val"></div><div class="desc"></div>`;
+    const input = d.querySelector('input');
+    input.style.accentColor = 'var(--s' + n + ')';
+    input.addEventListener('input', () => userSetValue(state.page, n, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(state.page, n, PAGE_INFO[state.page].reset));
+    d.addEventListener('pointerenter', () => setHot(n));
+    d.addEventListener('pointerleave', () => setHot(-1));
+    input.addEventListener('focus', () => setHot(n));
+    input.addEventListener('blur', () => setHot(-1));
+    box.appendChild(d);
+    faderEls.push({ d, input, ghost: d.querySelector('.ghost'), val: d.querySelector('.val'), desc: d.querySelector('.desc'),
+                    mini: d.querySelector('canvas'), name: d.querySelector('.name') });
+  }
+  const sh = $('shapes');
+  SHAPES.forEach((s, i) => {
+    const b = document.createElement('button'); b.textContent = s.name; b.dataset.shape = i;
+    b.addEventListener('click', () => loadShape(i, true));
+    sh.appendChild(b);
+  });
+}
+function refreshFaders() {
+  const tabs = $('tabs').children;
+  for (let i = 0; i < PAGES; i++) tabs[i].classList.toggle('on', i === state.page);
+  for (let n = 0; n < NP; n++) {
+    const e = faderEls[n], v = state.values[state.page][n], p = M.c[n];
+    if (document.activeElement !== e.input || +e.input.value !== v) e.input.value = v;
+    e.val.textContent = describe(state.page, n);
+    e.name.style.color = colors[n];
+    e.d.classList.toggle('hot', state.hot === n);
+    const notes = [];
+    if (state.page !== 2) notes.push('×' + p.ratio.toFixed(2));
+    notes.push(fmtHz(p.f));
+    if (p.fade < 1) notes.push(p.fade <= 0 ? 'off (X)' : 'fading in (X)');
+    if (p.nyq < 1) notes.push(p.nyq <= 0 ? 'above 20 kHz: off' : 'near Nyquist: fading');
+    if (state.page === 2 && state.lock) notes.push('locked');
+    e.desc.textContent = notes.join(' · ');
+    const ph = mu.phys[n], show = link.muIns.length && ph >= 0 && !mu.engaged[n];
+    e.ghost.style.display = show ? 'block' : 'none';
+    if (show) e.ghost.style.top = (140 * (1 - ph / 127)) + 'px';
+  }
+  $('page-hint').textContent = PAGE_INFO[state.page].hint;
+  document.querySelectorAll('#shapes button').forEach(b => b.classList.toggle('on', +b.dataset.shape === state.shape));
+  $('shape-lesson').innerHTML = state.shape >= 0 ? SHAPES[state.shape].lesson
+    : `<p><b>Your own recipe.</b> Started from <i>${SHAPES[lastShape].name}</i> and changed. Any repeating shape can be built from
+       harmonics like these; the card has eight, so it can make good approximations of a great many.</p>`;
+}
+function setHot(n) { if (state.hot !== n) { state.hot = n; changed(false); } }
+
+// ============================================================================
+// Drawing: the model, as Epicycles::DrawingControl
+// ============================================================================
+function drawModel() {
+  const f0 = hz(state.note) / (state.slow ? 128 : 1);
+  const circles = circlesFor(state.circlesCtl);
+  const rot = state.rotateCtl / 4096 * TAU;
+  const w = drawingData.circles.map((c, i) => {
+    const m = Math.abs(c.k), band = bandOf(m), f = m * f0;
+    const radius = c.amp / 16384;
+    const bandGain = state.values[BANDS][band] / 127;
+    const nyq = f >= FADE_HI ? 0 : f > FADE_LO ? (FADE_HI - f) / (FADE_HI - FADE_LO) : 1;
+    const fade = clamp(circles - i, 0, 1);
+    return { k: c.k, m, band, f, radius, bandGain, nyq, fade, phase: c.phase / 16384 * TAU, g: radius * bandGain * nyq * fade };
+  });
+  return { f0, circles, rot, w };
+}
+let D = drawModel();
+
+// The drawing's point at time tau (in turns of the drawing), turned by rot.
+// only: just the circles in that band.
+function dtip(tau, only = -1) {
+  let x = 0, y = 0;
+  for (const p of D.w) {
+    if (p.g <= 0 || (only >= 0 && p.band !== only)) continue;
+    const th = TAU * p.k * tau + p.phase + D.rot;
+    x += p.g * Math.cos(th); y += p.g * Math.sin(th);
+  }
+  return [x, y];
+}
+
+// ---- The big picture: circles, the trail, and the two outputs ---------------
+function drawDrawingHero() {
+  const cv = $('dhero'), { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const ink = cssVar('--sum'), grid = cssVar('--grid'), muted = cssVar('--muted'), accent = cssVar('--accent');
+  const waves = dview.waves, tau = dview.tau;
+  const gap = 26, waveMin = 170;
+  let R, cx, cy;
+  if (waves) {
+    R = Math.min((H - gap - waveMin - 20) / 2, (W - gap - waveMin - 20) / 2, 260);
+    cx = R + 10; cy = R + 10;
+  } else {
+    R = Math.min(H / 2 - 12, W / 2 - 12);
+    cx = W / 2; cy = H / 2;
+  }
+  ctx.font = '11px system-ui, sans-serif';
+
+  // The unit circle, and the axes
+  ctx.strokeStyle = grid; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - R, cy); ctx.lineTo(waves ? W - 10 : cx + R, cy);
+  ctx.moveTo(cx, cy - R); ctx.lineTo(cx, waves ? H - 10 : cy + R);
+  ctx.stroke();
+  ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+
+  // The drawing as it should be, faintly behind
+  const tgt = drawingData.target;
+  if (dview.target && tgt) {
+    const c = Math.cos(D.rot), s = Math.sin(D.rot);
+    ctx.strokeStyle = muted; ctx.globalAlpha = 0.35; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    tgt.forEach((p, i) => {
+      const x = p[0] * c - p[1] * s, y = p[0] * s + p[1] * c;
+      i ? ctx.lineTo(cx + R * x, cy - R * y) : ctx.moveTo(cx + R * x, cy - R * y);
+    });
+    ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+
+  // The trail: the whole drawing faintly, the last stretch boldly, like ink
+  // still wet
+  const steps = 1024;
+  const pts = [];
+  for (let i = 0; i <= steps; i++) pts.push(dtip(tau - i / steps));
+  ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.35;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i ? ctx.lineTo(cx + R * x, cy - R * y) : ctx.moveTo(cx + R * x, cy - R * y));
+  ctx.stroke();
+  ctx.globalAlpha = 1; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (let i = 0; i <= steps * 0.3; i++) { const [x, y] = pts[i]; i ? ctx.lineTo(cx + R * x, cy - R * y) : ctx.moveTo(cx + R * x, cy - R * y); }
+  ctx.stroke();
+
+  // The circles, biggest first, each riding on the last
+  let x = cx, y = cy;
+  for (const p of D.w) {
+    if (p.g <= 0) continue;
+    const r = R * p.g, th = TAU * p.k * tau + p.phase + D.rot;
+    const nx = x + r * Math.cos(th), ny = y - r * Math.sin(th);
+    if (r > 0.7) {
+      const hot = state.dhot === p.band, dim = state.dhot >= 0 && !hot;
+      ctx.strokeStyle = colors[p.band];
+      ctx.globalAlpha = dim ? 0.15 : 0.5; ctx.lineWidth = hot ? 1.8 : 1;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = dim ? 0.3 : 0.95; ctx.lineWidth = hot ? 2.2 : 1.4;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+    }
+    x = nx; y = ny;
+  }
+  ctx.globalAlpha = 1;
+  const tipX = x, tipY = y;
+  ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(tipX, tipY, 4, 0, TAU); ctx.fill();
+
+  if (!waves) return;
+
+  // Out 1, the height, to the right; Out 2, the position across, below.
+  // Now at the edge nearest the circles, one whole drawing ago furthest.
+  const x0 = cx + R + gap, x1 = W - 10, y0 = cy + R + gap, y1 = H - 10;
+  ctx.strokeStyle = grid; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, cy - R); ctx.lineTo(x0, cy + R);
+  ctx.moveTo(cx - R, y0); ctx.lineTo(cx + R, y0);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = ink;
+  ctx.beginPath();
+  for (let px = 0; px <= x1 - x0; px++) {
+    const yy = cy - R * pts[Math.round(px / (x1 - x0) * steps)][1];
+    px ? ctx.lineTo(x0 + px, yy) : ctx.moveTo(x0 + px, yy);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = cssVar('--warm');
+  ctx.beginPath();
+  for (let py = 0; py <= y1 - y0; py++) {
+    const xx = cx + R * pts[Math.round(py / (y1 - y0) * steps)][0];
+    py ? ctx.lineTo(xx, y0 + py) : ctx.moveTo(xx, y0 + py);
+  }
+  ctx.stroke();
+  // Band under the pointer: its share of each output, dashed
+  if (state.dhot >= 0) {
+    ctx.strokeStyle = colors[state.dhot]; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    for (let px = 0; px <= x1 - x0; px += 2) {
+      const yy = cy - R * dtip(tau - px / (x1 - x0), state.dhot)[1];
+      px ? ctx.lineTo(x0 + px, yy) : ctx.moveTo(x0 + px, yy);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = muted; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(x0, tipY); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX, y0); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(x0, tipY, 3.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = cssVar('--warm'); ctx.beginPath(); ctx.arc(tipX, y0, 3.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = muted;
+  ctx.textAlign = 'right'; ctx.fillText('Audio Out 1: height (Y)', x1, cy - R - 2 > 10 ? cy - R - 2 : 12);
+  ctx.fillText('one drawing ago →', x1, cy + R + 14);
+  ctx.textAlign = 'left'; ctx.fillText('Audio Out 2: across (X)', cx + R * 0.15 + 6, y1 - 2);
+}
+
+// ---- Bands -------------------------------------------------------------------
+const dfaderEls = [];
+function buildBandFaders() {
+  const box = $('dfaders');
+  for (let b = 0; b < NP; b++) {
+    const d = document.createElement('div'); d.className = 'fader';
+    d.innerHTML = `<div class="name">${b + 1}</div><canvas class="mini"></canvas><div class="slot"><input type="range" min="0" max="127" step="1" aria-label="Band ${b + 1}, circles turning ${BAND_NAMES[b]} times per drawing"><div class="ghost"></div></div><div class="val"></div><div class="desc"></div>`;
+    const input = d.querySelector('input');
+    input.style.accentColor = 'var(--s' + b + ')';
+    input.addEventListener('input', () => userSetValue(BANDS, b, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(BANDS, b, 127));
+    d.addEventListener('pointerenter', () => setDHot(b));
+    d.addEventListener('pointerleave', () => setDHot(-1));
+    input.addEventListener('focus', () => setDHot(b));
+    input.addEventListener('blur', () => setDHot(-1));
+    box.appendChild(d);
+    dfaderEls.push({ d, input, ghost: d.querySelector('.ghost'), val: d.querySelector('.val'), desc: d.querySelector('.desc'),
+                     mini: d.querySelector('canvas'), name: d.querySelector('.name') });
+  }
+  const box2 = $('drawings');
+  DRAWINGS.forEach((dr, i) => {
+    const b = document.createElement('button'); b.textContent = dr.name; b.dataset.drawing = i;
+    b.addEventListener('click', () => loadDrawing(i, true));
+    box2.appendChild(b);
+  });
+  const c = document.createElement('button'); c.textContent = 'Your own'; c.dataset.drawing = -1; c.id = 'btn-custom';
+  c.addEventListener('click', () => { if (customData) useCustom(customData, true); });
+  box2.appendChild(c);
+}
+function setDHot(b) { if (state.dhot !== b) { state.dhot = b; changed(false); } }
+function refreshBandFaders() {
+  for (let b = 0; b < NP; b++) {
+    const e = dfaderEls[b], v = state.values[BANDS][b];
+    if (document.activeElement !== e.input || +e.input.value !== v) e.input.value = v;
+    e.val.textContent = v === 127 ? 'all' : v === 0 ? 'off' : Math.round(v / 127 * 100) + '%';
+    e.name.style.color = colors[b];
+    e.d.classList.toggle('hot', state.dhot === b);
+    const n = D.w.filter(p => p.band === b).length, heard = D.w.filter(p => p.band === b && p.g > 0).length;
+    const lo = BAND_LO[b] * D.f0, hi = BAND_HI[b] * D.f0;
+    e.desc.textContent = '×' + BAND_NAMES[b] + ' · ' + (n ? (heard < n ? heard + ' of ' : '') + n + (n === 1 ? ' circle' : ' circles') : 'none') +
+      (n ? ' · ' + fmtHz(lo) + (hi > lo ? '–' + fmtHz(hi) : '') : '');
+    const ph = mu.phys[b], show = link.muIns.length && ph >= 0 && !mu.engaged[b] && state.mode === 1;
+    e.ghost.style.display = show ? 'block' : 'none';
+    if (show) e.ghost.style.top = (140 * (1 - ph / 127)) + 'px';
+  }
+  document.querySelectorAll('#drawings button').forEach(b => b.classList.toggle('on', +b.dataset.drawing === state.drawing));
+  $('btn-custom').disabled = !customData;
+  $('dlesson').innerHTML = state.drawing >= 0 ? DRAWINGS[state.drawing].lesson
+    : `<p><b>${drawingData.name || 'Your own'}: ${drawingData.circles.length} circles.</b> The biggest few give the overall
+       shape; turn Circles (X) down and up to see what each adds.${drawingData.target ? '' : ' (Read from the card, so the outline it came from isn’t known here.)'}</p>`;
+}
+// Each band on its own, under its fader, scaled to fit
+function drawBandMinis() {
+  for (let b = 0; b < NP; b++) {
+    const { ctx, w: W, h: H } = setupCanvas(dfaderEls[b].mini);
+    ctx.clearRect(0, 0, W, H);
+    const ws = D.w.filter(p => p.band === b && p.radius > 0);
+    if (!ws.length) continue;
+    const reach = ws.reduce((s, p) => s + p.radius * p.nyq * p.fade, 0);
+    if (reach <= 0) continue;
+    const sc = (Math.min(W, H) / 2 - 3) / reach, cx = W / 2, cy = H / 2;
+    ctx.strokeStyle = colors[b]; ctx.lineWidth = 1.3; ctx.globalAlpha = 0.25 + 0.75 * state.values[BANDS][b] / 127;
+    ctx.beginPath();
+    for (let i = 0; i <= 160; i++) {
+      let x = 0, y = 0;
+      for (const p of ws) { const th = TAU * p.k * i / 160 + p.phase + D.rot, g = p.radius * p.nyq * p.fade; x += g * Math.cos(th); y += g * Math.sin(th); }
+      i ? ctx.lineTo(cx + sc * x, cy - sc * y) : ctx.moveTo(cx + sc * x, cy - sc * y);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+}
+
+// ---- Spectrum: the circles, and what each output holds ----------------------
+function drawDrawingSpectrum() {
+  const { ctx, w: W, h: H } = setupCanvas($('dspec'));
+  ctx.clearRect(0, 0, W, H);
+  const grid = cssVar('--grid'), muted = cssVar('--muted'), ink = cssVar('--sum'), warm = cssVar('--warm');
+  ctx.font = '11px system-ui, sans-serif';
+  const left = 30, right = W - 10, mid = Math.round(H * 0.5);
+  const kmax = Math.max(8, ...D.w.map(p => p.m)) + 1;
+
+  // Above: circles by speed
+  let top = 16, base = mid - 18;
+  const X = (k) => (left + right) / 2 + (right - left) / 2 * k / kmax;
+  const big = Math.max(1e-9, ...D.w.map(p => p.radius));
+  ctx.strokeStyle = grid; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.moveTo(left, base); ctx.lineTo(right, base); ctx.moveTo(X(0), top); ctx.lineTo(X(0), base); ctx.stroke();
+  ctx.fillStyle = muted; ctx.textAlign = 'left'; ctx.fillText('← clockwise', left, top - 4);
+  ctx.textAlign = 'right'; ctx.fillText('anticlockwise →', right, top - 4);
+  ctx.textAlign = 'center';
+  const tick = kmax > 64 ? 32 : kmax > 24 ? 8 : kmax > 10 ? 4 : 1;
+  for (let k = -Math.floor(kmax / tick) * tick; k < kmax; k += tick) ctx.fillText(k + '', X(k), base + 12);
+  const bw = Math.max(2, Math.min(8, (right - left) / (2 * kmax) * 0.7));
+  for (const p of D.w) {
+    const h = (base - top) * p.radius / big;
+    ctx.fillStyle = colors[p.band];
+    ctx.globalAlpha = (p.g > 0 ? 0.9 : 0.2) * (state.dhot < 0 || state.dhot === p.band ? 1 : 0.35);
+    ctx.fillRect(X(p.k) - bw / 2, base - h, bw, h);
+  }
+  ctx.globalAlpha = 1;
+
+  // Below: harmonics of the two outputs, as heard
+  top = mid + 14; base = H - 18;
+  const M = Math.max(8, ...D.w.map(p => p.m));
+  const c = new Map();
+  for (const p of D.w) {
+    if (p.g <= 0) continue;
+    const th = p.phase + D.rot, cur = c.get(p.k) || [0, 0];
+    c.set(p.k, [cur[0] + p.g * Math.cos(th), cur[1] + p.g * Math.sin(th)]);
+  }
+  const out1 = [], out2 = [];
+  for (let m = 1; m <= M; m++) {
+    const a = c.get(m) || [0, 0], b = c.get(-m) || [0, 0];
+    out1.push(Math.hypot(a[0] - b[0], a[1] + b[1]));   // |c_m − conj(c_−m)|
+    out2.push(Math.hypot(a[0] + b[0], a[1] - b[1]));   // |c_m + conj(c_−m)|
+  }
+  const big2 = Math.max(1e-9, ...out1, ...out2);
+  const Xh = (m) => left + (right - left) * (m - 0.5) / M;
+  ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(left, base); ctx.lineTo(right, base); ctx.stroke();
+  ctx.fillStyle = muted; ctx.textAlign = 'left';
+  ctx.fillText('What you hear: harmonics of', left, top - 4);
+  const lw = ctx.measureText('What you hear: harmonics of ').width;
+  ctx.fillStyle = ink; ctx.fillText('Out 1', left + lw, top - 4);
+  ctx.fillStyle = muted; ctx.fillText('and', left + lw + ctx.measureText('Out 1 ').width, top - 4);
+  ctx.fillStyle = warm; ctx.fillText('Out 2', left + lw + ctx.measureText('Out 1 and ').width, top - 4);
+  ctx.fillStyle = muted; ctx.textAlign = 'center';
+  const htick = M > 64 ? 16 : M > 24 ? 4 : 1;
+  for (let m = htick; m <= M; m += htick) ctx.fillText(m + '', Xh(m), base + 12);
+  const hw = Math.max(1, Math.min(6, (right - left) / M * 0.35));
+  for (let m = 1; m <= M; m++) {
+    const h1 = (base - top) * out1[m - 1] / big2, h2 = (base - top) * out2[m - 1] / big2;
+    ctx.fillStyle = ink; ctx.fillRect(Xh(m) - hw, base - h1, hw, h1);
+    ctx.fillStyle = warm; ctx.fillRect(Xh(m), base - h2, hw, h2);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawDrawingReadouts() {
+  const live = link.cardOnline ? ' (live from the card)' : ' (on the card)';
+  $('dv-pitch').textContent = noteName(state.note) + ' · ' + fmtHz(D.f0);
+  const n = Math.min(D.circles, drawingData.circles.length);
+  $('dv-circles').textContent = (n % 1 > 0.05 && n < drawingData.circles.length ? n.toFixed(1) : Math.round(n)) + ' of ' + drawingData.circles.length;
+  $('dv-rotate').textContent = Math.round(state.rotateCtl / 4096 * 360) + '°';
+  const tps = state.slow ? D.f0 : dview.turnsPerSec;
+  $('dv-speed').textContent = state.slow ? 'real speed' : 'a drawing every ' + (1 / tps).toFixed(1) + ' s';
+  $('d-speed').disabled = state.slow;
+  for (const id of ['d-pitch', 'd-circles', 'd-rotate', 'd-slow']) $(id).disabled = link.cardOnline;
+  $('d-pitch').value = state.note; $('d-circles').value = state.circlesCtl; $('d-rotate').value = state.rotateCtl;
+  $('d-slow').checked = state.slow;
+  $('dfrom-pitch').textContent = 'Main knob + CV In 1' + live;
+  $('dfrom-circles').textContent = 'X knob + CV In 2' + live;
+  $('dfrom-rotate').textContent = 'Y knob + Audio In 1' + live;
+  $('dfrom-speed').textContent = state.slow ? 'Slow: shown at the card’s own speed' : 'Slow motion: page only';
+  const heard = D.w.filter(p => p.g > 0), fastest = heard.reduce((a, p) => Math.max(a, p.m), 0);
+  const nyqGone = D.w.filter(p => p.nyq < 1 && p.fade > 0).length;
+  $('dcaption').textContent =
+    (state.slow ? 'Drawn ' + (D.f0 >= 1 ? D.f0.toFixed(2) + ' times a second, as the card does in slow mode. '
+                                       : 'once every ' + (1 / D.f0).toFixed(1) + ' seconds, as the card does in slow mode. ')
+                : 'Slowed down about ' + Math.round(D.f0 / dview.turnsPerSec).toLocaleString() + ' times: the card draws it ' +
+                  Math.round(D.f0).toLocaleString() + ' times a second. ') +
+    heard.length + (heard.length === 1 ? ' circle' : ' circles') + ' turning' +
+    (fastest ? ', the fastest ' + fastest + (fastest === 1 ? ' time' : ' times') + ' per drawing (' + fmtHz(fastest * D.f0) + ').' : '.') +
+    (nyqGone ? ' ' + nyqGone + ' fading out near Nyquist at this pitch.' : '') +
+    (state.dhot >= 0 ? ' Dashed: band ' + (state.dhot + 1) + '’s share of Out 1.' : '');
+}
+
+// ---- Choosing a drawing ------------------------------------------------------
+function loadDrawing(i, send) {
+  state.drawing = i;
+  drawingData = DRAWINGS[i];
+  dview.tau = 0;
+  if (send && link.cardOnline) sendRaw(sysex(CMD.DRAWING, [i]));   // the card replies with its state
+  say('Drawing: ' + DRAWINGS[i].name + '.');
+  changed();
+}
+function useCustom(data, send) {
+  customData = data;
+  state.drawing = -1;
+  drawingData = data;
+  dview.tau = 0;
+  if (send) sendDrawing();
+  changed();
+}
+function sendDrawing() {
+  if (!link.cardOnline || state.drawing >= 0) return;
+  const cs = drawingData.circles;
+  for (let first = 0; first < cs.length; first += CIRCLES_PER_MESSAGE) {
+    const part = cs.slice(first, first + CIRCLES_PER_MESSAGE), payload = [first, part.length];
+    for (const c of part) payload.push(...put14(c.k + 128), ...put14(c.amp), ...put14(c.phase));
+    sendRaw(sysex(CMD.CIRCLES, payload));
+  }
+  sendRaw(sysex(CMD.COMMIT, [cs.length]));
+}
+const put14 = (v) => [(v >> 7) & 0x7F, v & 0x7F];
+// A drawing from a path, or null if it can't be made
+function makeDrawing(path, name) {
+  const r = FOURIER.circlesOf(path, false);
+  if (!r || !r.circles.length) return null;
+  return { name, circles: r.circles, target: r.target };
+}
+
+// ---- Draw your own ---------------------------------------------------------------
+const pad = { strokes: [], cur: null };
+function padPoint(e) {
+  const r = $('pad').getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+function initPad() {
+  const cv = $('pad');
+  cv.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); cv.setPointerCapture(e.pointerId);
+    pad.cur = [padPoint(e)]; pad.strokes.push(pad.cur); drawPad();
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!pad.cur) return;
+    const p = padPoint(e), q = pad.cur[pad.cur.length - 1];
+    if (Math.hypot(p[0] - q[0], p[1] - q[1]) >= 2) { pad.cur.push(p); drawPad(); }
+  });
+  const end = () => {
+    if (!pad.cur) return;
+    if (pad.cur.length < 3) pad.strokes.pop();
+    pad.cur = null; drawPad(); useDrawn();
+  };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  $('pad-undo').addEventListener('click', () => { pad.strokes.pop(); drawPad(); useDrawn(); });
+  $('pad-clear').addEventListener('click', () => { pad.strokes = []; drawPad(); $('pad-info').textContent = ''; });
+}
+function useDrawn() {
+  const path = [].concat(...pad.strokes).map(p => [p[0], -p[1]]);
+  if (path.length < 3) return;
+  const d = makeDrawing(path, 'Your drawing');
+  if (!d) return;
+  $('pad-info').textContent = pad.strokes.length + (pad.strokes.length === 1 ? ' stroke' : ' strokes') + ' → ' + d.circles.length + ' circles';
+  useCustom(d, true);
+  say('Your drawing, as ' + d.circles.length + ' circles' + (link.cardOnline ? ', sent to the card.' : '.'));
+}
+function drawPad() {
+  const { ctx, w: W, h: H } = setupCanvas($('pad'));
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+  if (!pad.strokes.length) {
+    ctx.fillStyle = cssVar('--muted'); ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Draw here', W / 2, H / 2 - 8); ctx.textAlign = 'left';
+    return;
+  }
+  // The joins, and the closing line back to the start, dashed
+  const all = [].concat(...pad.strokes);
+  ctx.strokeStyle = cssVar('--muted'); ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  for (let s = 1; s < pad.strokes.length; s++) {
+    const a = pad.strokes[s - 1][pad.strokes[s - 1].length - 1], b = pad.strokes[s][0];
+    ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+  }
+  if (!pad.cur) { ctx.moveTo(all[all.length - 1][0], all[all.length - 1][1]); ctx.lineTo(all[0][0], all[0][1]); }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = cssVar('--ink'); ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const s of pad.strokes) {
+    ctx.beginPath(); s.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke();
+  }
+}
+
+// ---- Trace a picture ---------------------------------------------------------
+const pic = { img: null, name: '', W: 0, H: 0, gray: null, auto: 128, path: null, timer: 0 };
+function initPicture() {
+  const file = $('pic-file'), drop = $('drop');
+  file.addEventListener('change', () => { if (file.files[0]) loadPicture(file.files[0]); });
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+    const f = [...(e.dataTransfer.files || [])].find(f => /^image\//.test(f.type));
+    if (f) loadPicture(f);
+  });
+  document.addEventListener('paste', (e) => {
+    const f = [...(e.clipboardData && e.clipboardData.files || [])].find(f => /^image\//.test(f.type));
+    if (f) { selectSource('pic'); loadPicture(f); }
+  });
+  $('pic-thr').addEventListener('input', () => { $('pic-auto').checked = false; tracePicture(); });
+  $('pic-detail').addEventListener('input', tracePicture);
+  $('pic-auto').addEventListener('change', tracePicture);
+  $('pic-invert').addEventListener('change', tracePicture);
+}
+function loadPicture(f) {
+  const url = URL.createObjectURL(f), img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    // At most 320 pixels across or down: plenty for 64 circles
+    const s = Math.min(1, 320 / Math.max(img.width, img.height));
+    const W = Math.max(1, Math.round(img.width * s)), H = Math.max(1, Math.round(img.height * s));
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);             // transparent counts as paper
+    ctx.drawImage(img, 0, 0, W, H);
+    const d = ctx.getImageData(0, 0, W, H).data, gray = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) gray[i] = Math.round(0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2]);
+    Object.assign(pic, { img: cv, name: f.name || 'Picture', W, H, gray, auto: FOURIER.otsu(gray) });
+    $('pic-auto').checked = true;
+    tracePicture();
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); say('That file couldn’t be read as a picture.', true); };
+  img.src = url;
+}
+function tracePicture() {
+  if (!pic.gray) return;
+  const thr = $('pic-auto').checked ? pic.auto : +$('pic-thr').value;
+  if ($('pic-auto').checked) $('pic-thr').value = Math.round(thr);
+  $('pv-thr').textContent = Math.round(thr);
+  const minLen = +$('pic-detail').value;
+  $('pv-detail').textContent = minLen + ' px';
+  const inv = $('pic-invert').checked, { W, H, gray } = pic;
+  const mask = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) mask[i] = (gray[i] < thr) !== inv ? 1 : 0;
+  const loops = FOURIER.outlines(mask, W, H);
+  pic.path = FOURIER.joinLoops(loops, minLen);
+  pic.loops = loops.length;
+  drawPicture();
+  clearTimeout(pic.timer);
+  pic.timer = setTimeout(usePicture, 120);
+}
+function usePicture() {
+  if (!pic.path) { $('pic-info').textContent = 'No outline found: try another threshold, or Light on dark.'; return; }
+  const d = makeDrawing(pic.path.map(p => [p[0], -p[1]]), pic.name.replace(/\.[^.]+$/, ''));
+  if (!d) return;
+  $('pic-info').textContent = pic.loops + (pic.loops === 1 ? ' outline' : ' outlines') + ' found → ' + d.circles.length + ' circles';
+  useCustom(d, true);
+  say(d.name + ', as ' + d.circles.length + ' circles' + (link.cardOnline ? ', sent to the card.' : '.'));
+}
+function drawPicture() {
+  const cv = $('pic-preview');
+  cv.style.display = pic.img ? 'block' : 'none';
+  if (!pic.img) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const s = Math.min(W / pic.W, H / pic.H), ox = (W - pic.W * s) / 2, oy = (H - pic.H * s) / 2;
+  ctx.globalAlpha = 0.3; ctx.drawImage(pic.img, ox, oy, pic.W * s, pic.H * s); ctx.globalAlpha = 1;
+  if (!pic.path) return;
+  ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  pic.path.forEach((p, i) => i ? ctx.lineTo(ox + (p[0] + 0.5) * s, oy + (p[1] + 0.5) * s) : ctx.moveTo(ox + (p[0] + 0.5) * s, oy + (p[1] + 0.5) * s));
+  ctx.closePath(); ctx.stroke();
+}
+function selectSource(which) {
+  document.querySelectorAll('#srctabs .tab').forEach(t => t.classList.toggle('on', t.dataset.src === which));
+  $('src-draw').hidden = which !== 'draw'; $('src-pic').hidden = which !== 'pic';
+  if (which === 'draw') drawPad(); else drawPicture();
+}
+
+// ============================================================================
+// Editing
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+
+let lastShape = 0;
+function markEdited() { if (state.shape >= 0) { lastShape = state.shape; state.shape = -1; } }
+function userSetValue(page, n, v) {
+  v = clamp(v | 0, 0, 127);
+  if (state.values[page][n] === v) return;
+  state.values[page][n] = v;
+  if (page !== BANDS) markEdited();
+  if (page === activePage()) mu.engaged[n] = false;   // a physical fader must meet it again
+  queueSend('v' + page + '.' + n, sysex(CMD.SET, [page, n, v]));
+  changed();
+}
+function selectPage(p, send) {
+  if (p === state.page) return;
+  state.page = p;
+  repickup();
+  if (send) queueSend('page', sysex(CMD.PAGE, [p]));
+  changed();
+}
+// The page the faders edit: a partials page, or the bands
+const activePage = () => state.mode === 1 ? BANDS : state.page;
+function repickup() {
+  const pg = activePage();
+  for (let n = 0; n < NP; n++) { const ph = mu.phys[n]; mu.engaged[n] = ph >= 0 && Math.abs(ph - state.values[pg][n]) <= 1; }
+}
+function setMode(m, send) {
+  if (state.mode === m) return;
+  state.mode = m;
+  document.querySelectorAll('nav.modes button').forEach((b, i) => b.classList.toggle('on', i === m));
+  $('page-add').hidden = m !== 0; $('page-draw').hidden = m !== 1;
+  repickup();
+  if (send && link.cardOnline) sendRaw(sysex(CMD.MODE, [m]));      // the card replies with its state
+  changed();
+  if (m === 1) requestAnimationFrame(() => { drawPad(); drawPicture(); });
+}
+function loadShape(i, send) {
+  for (let p = 0; p < PAGES; p++) state.values[p] = SHAPES[i].v[p].slice();
+  state.shape = i; lastShape = i;
+  repickup();
+  if (send && link.cardOnline) sendRaw(sysex(CMD.SHAPE, [i]));   // the card replies with its state
+  say('Shape: ' + SHAPES[i].name + '.');
+  changed();
+}
+// The next shape or drawing, as a tap on the switch or the 8mu's D
+function next(send) {
+  if (state.mode === 1) loadDrawing(state.drawing < 0 ? 0 : (state.drawing + 1) % DRAWINGS.length, send);
+  else loadShape(((state.shape >= 0 ? state.shape : lastShape) + 1) % SHAPES.length, send);
+}
+
+let renderQueued = false, saveTimer = 0;
+const round3 = (v) => Math.round(v * 1000) / 1000;
+function changed(save = true) {
+  M = model();
+  D = drawModel();
+  pushAudio();
+  if (!renderQueued) {
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      if (state.mode === 1) { refreshBandFaders(); drawBandMinis(); drawDrawingSpectrum(); drawDrawingReadouts(); }
+      else { refreshFaders(); drawSpectrum(); drawReadouts(); }
+    });
+  }
+  if (save) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => store.set('epicycles.last.v1', {
+      values: state.values, shape: state.shape, drawing: state.drawing, note: state.note, partials: state.partials,
+      stretch: state.stretch, lock: state.lock, mode: state.mode, circlesCtl: state.circlesCtl, rotateCtl: state.rotateCtl,
+      slow: state.slow,
+      custom: customData && { name: customData.name, circles: customData.circles,
+                              target: customData.target && customData.target.map(p => [round3(p[0]), round3(p[1])]) },
+    }), 400);
+  }
+}
+
+// ---- 8mu plugged into this computer -----------------------------------------
+function eightmuFader(n, v) {
+  const pg = activePage(), last = mu.phys[n], target = state.values[pg][n];
+  mu.phys[n] = v;
+  if (!mu.engaged[n]) {
+    const near = Math.abs(v - target) <= 1;
+    const crossed = last >= 0 && ((last < target) !== (v < target));
+    if (!near && !crossed) { changed(false); return; }
+    mu.engaged[n] = true;
+  }
+  if (state.values[pg][n] !== v) {
+    state.values[pg][n] = v;
+    if (pg !== BANDS) markEdited();
+    queueSend('v' + pg + '.' + n, sysex(CMD.SET, [pg, n, v]));
+    changed();
+  }
+}
+function eightmuMessage(d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0;
+  if (type === 0xB0) {
+    const cc = d[1];
+    if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NP) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F);
+  } else if (type === 0x90 || type === 0x80) {
+    const b = BUTTON_NOTES.indexOf(d[1]);
+    if (b < 0) return;
+    const down = type === 0x90 && d[2] > 0;
+    // As the card: in partials mode A-C choose the page; a tap on D is the
+    // next shape or drawing; holding D for a second swaps mode
+    if (down) {
+      if (state.mode === 0 && b < PAGES) selectPage(b, true);
+      if (b === 3) {
+        muButton.swapped = false;
+        clearTimeout(muButton.timer);
+        muButton.timer = setTimeout(() => { muButton.swapped = true; setMode(1 - state.mode, true); }, 1000);
+      }
+    } else if (b === 3) {
+      clearTimeout(muButton.timer);
+      if (!muButton.swapped) next(true);
+      muButton.swapped = true;
+    }
+  }
+}
+const muButton = { timer: 0, swapped: true };
+// The 8mu's own LEDs: the stored values on this page, as the card does.
+// SysEx to the 8mu must travel on its own, so LED notes pause around it.
+function serviceEightmuLeds() {
+  if (!link.muOuts.length) return;
+  const now = performance.now();
+  if (now - mu.lastBlinkOff > 2000) {
+    mu.lastBlinkOff = now;
+    for (const o of link.muOuts) try { o.send(EIGHTMU_BLINK_OFF); } catch (e) {}
+    mu.ledSent.fill(-1);
+    return;
+  }
+  if (now - mu.lastBlinkOff < 60) return;
+  for (let n = 0; n < NP; n++) {
+    const v = (state.values[activePage()][n] * 9) >> 4;
+    if (v === mu.ledSent[n]) continue;
+    mu.ledSent[n] = v;
+    for (const o of link.muOuts) try { o.send([0x90, n, v]); } catch (e) {}
+  }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /epicycles/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
+  const outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  const unrecognised = ins.filter(p => p !== cardIn && !muIns.includes(p));
+
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+  for (const p of muIns) p.onmidimessage = (ev) => eightmuMessage(ev.data);
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut; link.muIns = muIns; link.muOuts = muOuts;
+  link.cardOnline = !!(cardIn && cardOut);
+  link.sysexBuf = []; link.sysexOn = false;
+  if (!muIns.length) mu.phys.fill(-1);
+  mu.lastBlinkOff = 0;
+
+  $('btn-read').disabled = $('btn-send').disabled = !link.cardOnline;
+  clearInterval(link.pingTimer);
+  const note = unrecognised.length ? ' Other MIDI inputs: ' + unrecognised.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : '';
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: Epicycles card' + (muIns.length ? ' + 8mu' : ''));
+    say(muIns.length ? 'The 8mu drives this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug an 8mu into this computer.' + note);
+    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));       // the card is the source of truth: read it
+  } else if (muIns.length) {
+    setStatus('warn', 'Connected: 8mu only (no card)');
+    say('No “Epicycles” card found, so this page works on its own. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
+  }
+  changed(false);
+}
+
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 80) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+
+const get14 = (p, i) => (p[i] << 7) | p[i + 1];
+const sameCircles = (a, b) => a.length === b.length && a.every((c, i) => c.k === b[i].k && c.amp === b[i].amp && c.phase === b[i].phase);
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3);
+  if (cmd === CMD.STATE) {
+    if (p.length !== 3 + 4 * NP + 2) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '.', true); return; }
+    for (let b = 0; b < 4; b++) for (let n = 0; n < NP; n++) state.values[b][n] = clamp(p[3 + b * NP + n], 0, 127);
+    state.page = clamp(p[2], 0, PAGES - 1);
+    // Name them if they're one of the shapes
+    const s = SHAPES.findIndex(sh => sh.v.every((row, b) => row.every((v, n) => v === state.values[b][n])));
+    if (s >= 0) { state.shape = lastShape = s; } else markEdited();
+    const dr = p[4 + 4 * NP];
+    if (dr < DRAWINGS.length) { state.drawing = dr; drawingData = DRAWINGS[dr]; }
+    // (a drawing sent to the card follows as CIRCLES and COMMIT, after HELLO)
+    else if (dr === CUSTOM && customData && state.drawing < 0) drawingData = customData;
+    setMode(clamp(p[1], 0, 1), false);
+    repickup();
+    changed();
+  } else if (cmd === CMD.STATUS && p.length >= 10) {
+    state.note = ((p[0] << 7) | p[1]) / 8;
+    state.partials = 1 + p[2] * 7 / 127;
+    state.stretch = p[3] / 127 * 0.5;
+    state.lock = state.slow = !!(p[4] & 1);
+    state.muOnCard = !!(p[4] & 2);
+    state.circlesCtl = clamp(get14(p, 6), 0, 4095);
+    state.rotateCtl = clamp(get14(p, 8), 0, 4095);
+    link.lastStatus = performance.now();
+    if (p[5] !== state.mode) setMode(clamp(p[5], 0, 1), false);
+    changed(false);
+  } else if (cmd === CMD.CIRCLES && p.length >= 2) {
+    const first = p[0], count = p[1];
+    if (first === 0) link.incoming = [];
+    for (let i = 0; i < count && 2 + 6 * i + 5 < p.length; i++) {
+      const o = 2 + 6 * i;
+      link.incoming[first + i] = { k: get14(p, o) - 128, amp: get14(p, o + 2), phase: get14(p, o + 4) };
+    }
+  } else if (cmd === CMD.COMMIT && p.length >= 1) {
+    const cs = link.incoming.slice(0, p[0]);
+    if (cs.length !== p[0] || cs.some(c => !c)) return;
+    // Ours already?  Then keep the outline it came from.
+    if (customData && sameCircles(customData.circles, cs)) useCustom(customData, false);
+    else useCustom({ name: 'From the card', circles: cs, target: null }, false);
+  }
+}
+
+function sendAll() {
+  if (!link.cardOnline) return;
+  const payload = [PROTOCOL_VERSION];
+  for (let b = 0; b < 4; b++) for (let n = 0; n < NP; n++) payload.push(state.values[b][n]);
+  sendRaw(sysex(CMD.SET_ALL, payload));
+  if (state.drawing >= 0) sendRaw(sysex(CMD.DRAWING, [state.drawing]));
+  else sendDrawing();
+  sendRaw(sysex(CMD.MODE, [state.mode]));
+}
+
+// ============================================================================
+// Listening in the browser: an AudioWorklet doing what ProcessSample does
+// ============================================================================
+const WORKLET = `
+class Epicycles extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.master = 0; this.ph = new Float64Array(8); this.g = new Float64Array(8); this.off = new Float64Array(8);
+    this.wasH = new Array(8).fill(true);
+    this.dg = new Float64Array(64);
+    this.S = new Float32Array(4097);
+    for (let i = 0; i <= 4096; i++) this.S[i] = Math.sin(2 * Math.PI * i / 4096);
+    this.t = { mode: 0, f0: 130.8, r: [1,2,3,4,5,6,7,8], a: new Array(8).fill(0), p: new Array(8).fill(0), h: new Array(8).fill(true), vol: 0.5 };
+    this.port.onmessage = (e) => {
+      if (e.data.sync) { this.master = 0; this.ph.fill(0); }
+      else {
+        if (e.data.mode === 1 && (this.t.mode !== 1 || e.data.id !== this.t.id)) this.dg.fill(0);
+        this.t = e.data;
+      }
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0], t = this.t;
+    if (t.mode === 1) this.drawing(out[0], out[1] || out[0], t);
+    else { this.partials(out[0], t); for (let c = 1; c < out.length; c++) out[c].set(out[0]); }
+    return true;
+  }
+  partials(L, t) {
+    const inc = t.f0 / sampleRate, TAU = 2 * Math.PI;
+    for (let n = 0; n < 8; n++) {
+      if (this.wasH[n] && !t.h[n]) this.ph[n] = (this.master * (n + 1)) % 1;
+      this.wasH[n] = t.h[n];
+    }
+    for (let i = 0; i < L.length; i++) {
+      this.master += inc; this.master -= Math.floor(this.master);
+      let y = 0;
+      for (let n = 0; n < 8; n++) {
+        if (t.h[n]) this.ph[n] = (this.master * (n + 1)) % 1;
+        else { this.ph[n] += inc * t.r[n]; this.ph[n] -= Math.floor(this.ph[n]); }
+        const target = inc * t.r[n] < 0.45 ? t.a[n] : 0;
+        this.g[n] += (target - this.g[n]) * 0.003;
+        let d = t.p[n] - this.off[n]; d -= TAU * Math.round(d / TAU); this.off[n] += d * 0.003;
+        if (this.g[n] < 1e-6) continue;
+        y += this.g[n] * Math.sin(TAU * this.ph[n] + this.off[n]);
+      }
+      L[i] = y * t.vol;
+    }
+  }
+  // As Epicycles::DrawingSample: left is across (Out 2), right is the height (Out 1)
+  drawing(L, R, t) {
+    const inc = t.f0 / sampleRate, S = this.S, n = t.k.length, dg = this.dg;
+    const rc = Math.cos(t.rot), rs = Math.sin(t.rot);
+    for (let c = 0; c < n; c++) dg[c] += (t.g[c] - dg[c]) * 0.15;     // per block, so nothing clicks
+    for (let i = 0; i < L.length; i++) {
+      this.master += inc; this.master -= Math.floor(this.master);
+      let x = 0, y = 0;
+      for (let c = 0; c < n; c++) {
+        const g = dg[c];
+        if (g <= 0) continue;
+        let p = this.master * t.k[c] + t.ph[c];
+        p -= Math.floor(p);
+        const j = (p * 4096) | 0;
+        y += g * S[j]; x += g * S[(j + 1024) & 4095];
+      }
+      L[i] = (x * rc - y * rs) * t.vol;
+      R[i] = (x * rs + y * rc) * t.vol;
+    }
+  }
+}
+registerProcessor('epicycles', Epicycles);
+`;
+const audio = { ctx: null, node: null, on: false };
+async function toggleListen() {
+  if (audio.on) {
+    audio.on = false; await audio.ctx.suspend();
+    $('btn-listen').classList.remove('on'); $('btn-listen').textContent = 'Listen in the browser';
+    return;
+  }
+  try {
+    if (!audio.ctx) {
+      audio.ctx = new AudioContext();
+      // A data: URL, since a Blob URL won't load from a page opened as a file
+      await audio.ctx.audioWorklet.addModule('data:application/javascript;charset=utf-8,' + encodeURIComponent(WORKLET));
+      audio.node = new AudioWorkletNode(audio.ctx, 'epicycles', { outputChannelCount: [2] });
+      audio.node.connect(audio.ctx.destination);
+    }
+    await audio.ctx.resume();
+    audio.on = true; pushAudio();
+    $('btn-listen').classList.add('on'); $('btn-listen').textContent = 'Stop listening';
+  } catch (e) { say('Could not start audio in this browser: ' + (e && e.message || e), true); }
+}
+let drawingId = 0, lastDrawingSent = null;
+function pushAudio() {
+  if (!audio.node) return;
+  if (state.mode === 1) {
+    if (lastDrawingSent !== drawingData) { lastDrawingSent = drawingData; drawingId++; }
+    audio.node.port.postMessage({ mode: 1, id: drawingId, f0: D.f0, k: D.w.map(p => p.k), ph: D.w.map(p => p.phase / TAU),
+                                  g: D.w.map(p => p.g), rot: D.rot, vol: 0.4 });
+  } else {
+    audio.node.port.postMessage({ mode: 0, f0: M.f0, r: M.c.map(p => p.ratio), a: M.c.map(p => p.amp), p: M.c.map(p => p.phase),
+                                  h: M.c.map(p => p.harmonic), vol: 0.4 });
+  }
+}
+function sync() {
+  view.tau = 0; dview.tau = 0;
+  if (audio.node) audio.node.port.postMessage({ sync: true });
+  if (link.cardOnline) sendRaw(sysex(CMD.SYNC, []));
+}
+
+// ============================================================================
+// Animation
+// ============================================================================
+function frame(now) {
+  const dt = view.lastT ? Math.min(0.1, (now - view.lastT) / 1000) : 0;
+  view.lastT = now;
+  if (state.mode === 1) {
+    if (!dview.paused) dview.tau += dt * (state.slow ? D.f0 : dview.turnsPerSec);
+    if (dview.tau > 1e6) dview.tau = 0;
+    drawDrawingHero();
+  } else {
+    if (!view.paused) view.tau += dt * view.turnsPerSec;
+    if (view.tau > 1e6) view.tau = 0;
+    drawHero();
+    drawMinis();
+  }
+  serviceEightmuLeds();
+  if (link.cardOnline && link.lastStatus && now - link.lastStatus > 3000) {
+    link.lastStatus = 0;
+    say('The card has stopped answering. Is it still plugged in, and was it power-cycled after plugging this computer in?', true);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ============================================================================
+// Start
+// ============================================================================
+const validCircles = (cs) => Array.isArray(cs) && cs.length > 0 && cs.length <= FOURIER.MAX_CIRCLES &&
+  cs.every(c => c && Number.isInteger(c.k) && Math.abs(c.k) <= 127 && Number.isInteger(c.amp) && c.amp >= 0 && c.amp <= 16383 &&
+                Number.isInteger(c.phase) && c.phase >= 0 && c.phase <= 16383);
+function init() {
+  readColors();
+  const last = store.get('epicycles.last.v1', null);
+  if (last && Array.isArray(last.values) && last.values.length === 4 &&
+      last.values.every(r => Array.isArray(r) && r.length === NP && r.every(v => Number.isInteger(v) && v >= 0 && v <= 127))) {
+    state.values = last.values;
+    state.shape = Number.isInteger(last.shape) && last.shape < SHAPES.length ? last.shape : -1;
+    if (state.shape >= 0) lastShape = state.shape;
+    if (typeof last.note === 'number') state.note = clamp(last.note, 24, 96);
+    if (typeof last.partials === 'number') state.partials = clamp(last.partials, 1, 8);
+    if (typeof last.stretch === 'number') state.stretch = clamp(last.stretch, 0, 0.5);
+    state.lock = !!last.lock;
+    state.slow = !!last.slow;
+    if (Number.isInteger(last.circlesCtl)) state.circlesCtl = clamp(last.circlesCtl, 0, 4095);
+    if (Number.isInteger(last.rotateCtl)) state.rotateCtl = clamp(last.rotateCtl, 0, 4095);
+    const c = last.custom;
+    if (c && validCircles(c.circles)) {
+      customData = { name: typeof c.name === 'string' ? c.name.slice(0, 60) : 'Your own', circles: c.circles,
+                     target: Array.isArray(c.target) && c.target.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)) ? c.target : null };
+    }
+    if (Number.isInteger(last.drawing) && last.drawing >= 0 && last.drawing < DRAWINGS.length) { state.drawing = last.drawing; drawingData = DRAWINGS[last.drawing]; }
+    else if (last.drawing === -1 && customData) { state.drawing = -1; drawingData = customData; }
+    if (last.mode === 0) state.mode = 0;
+  }
+  buildFaders();
+  buildBandFaders();
+  initPad();
+  initPicture();
+  view.turnsPerSec = Math.pow(10, +$('in-speed').value) * 25;
+  dview.turnsPerSec = Math.pow(10, +$('d-speed').value);
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', connect);
+  $('btn-listen').addEventListener('click', toggleListen);
+  $('btn-sync').addEventListener('click', sync);
+  document.querySelectorAll('nav.modes button').forEach((b, i) => b.addEventListener('click', () => setMode(i, true)));
+  document.querySelectorAll('#srctabs .tab').forEach(t => t.addEventListener('click', () => selectSource(t.dataset.src)));
+  $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its settings.'); });
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent these settings to the card.'); });
+  $('in-pitch').addEventListener('input', (e) => { state.note = +e.target.value; changed(); });
+  $('in-partials').addEventListener('input', (e) => { state.partials = +e.target.value; changed(); });
+  $('in-stretch').addEventListener('input', (e) => { state.stretch = +e.target.value; changed(); });
+  $('in-lock').addEventListener('change', (e) => { state.lock = e.target.checked; changed(); });
+  $('in-speed').addEventListener('input', (e) => { view.turnsPerSec = Math.pow(10, +e.target.value) * 25; changed(false); });
+  $('in-trail').addEventListener('change', (e) => { view.trail = e.target.checked; });
+  $('in-shadow').addEventListener('change', (e) => { view.shadow = e.target.checked; $('hero').classList.toggle('tall', view.shadow); });
+  $('in-paused').addEventListener('change', (e) => { view.paused = e.target.checked; });
+  $('d-pitch').addEventListener('input', (e) => { state.note = +e.target.value; changed(); });
+  $('d-circles').addEventListener('input', (e) => { state.circlesCtl = +e.target.value; changed(); });
+  $('d-rotate').addEventListener('input', (e) => { state.rotateCtl = +e.target.value; changed(); });
+  $('d-speed').addEventListener('input', (e) => { dview.turnsPerSec = Math.pow(10, +e.target.value); changed(false); });
+  $('d-slow').addEventListener('change', (e) => { state.slow = e.target.checked; changed(); });
+  $('d-target').addEventListener('change', (e) => { dview.target = e.target.checked; });
+  $('d-waves').addEventListener('change', (e) => { dview.waves = e.target.checked; });
+  $('d-paused').addEventListener('change', (e) => { dview.paused = e.target.checked; });
+  window.addEventListener('resize', () => { changed(false); drawPad(); drawPicture(); });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); changed(false); drawPad(); drawPicture(); });
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. Everything else here works.');
+  else say('Press “Connect card & 8mu” to reach the card. Until then this page works on its own: try “Listen in the browser”.');
+  const m = state.mode; state.mode = -1; setMode(m, false);
+  changed(false);
+  requestAnimationFrame(frame);
+}
+init();
+</script>
+</body>
+</html>

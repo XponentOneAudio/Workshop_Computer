@@ -1,0 +1,151 @@
+draft: false
+Name: Epicycles
+short-description: "Circles turning on circles - eight partials added up, or up to 64 circles drawing a picture whose Fourier series is the sound - edited from a Music Thing 8mu, with a web app that animates and explains both and turns your drawings and pictures into circles"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: web
+date-created: 2026-10-23
+date-updated: 2026-10-23
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/epicycles.uf2
+    name: Epicycles 0.1.0
+
+tags:
+  - synth
+  - oscillator
+  - additive
+  - fourier
+  - xy-scope
+  - educational
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  Sound made from circles turning on circles, made to be looked at as well as
+  listened to. Hold the switch down for a second (or the 8mu's button D) to
+  swap between the two modes. The web app animates each, slowed right down,
+  with its spectrum, explanations and links to read further, and plays them
+  in the browser too.<br><br>
+
+  <b>Drawing.</b> Up to 64 circles, some turning one way and some the other,
+  each a whole number of times per drawing. Their outermost point traces a
+  picture: Audio Out 2 is where it is across and Audio Out 1 how high, so the
+  two into a scope's X-Y mode draw it, and each on its own is a sound whose
+  timbre is the shape. The circles are the picture's Fourier series. Eight
+  drawings are built in, from one circle to a 64-circle square; the web app
+  finds the circles for anything you draw, or for a picture you give it, and
+  sends them to the card. X brings the circles in biggest first, Y rotates
+  the drawing, and the 8mu's faders are octave bands of circles, an equaliser
+  for a picture. Switch up drops it seven octaves, to draw as CV.<br><br>
+
+  <b>Partials.</b> Eight sine waves added together, each a circle riding on
+  the rim of the one before, so the outermost point traces a more complicated
+  waveform: a Fourier series. The 8mu's faders are the eight partials and its
+  buttons choose what they change: A is LEVEL, B is PHASE and C is FREQUENCY,
+  which defaults to the harmonic series, either side detuning a partial by up
+  to 12 semitones. D loads the next of six shapes: saw, square, triangle,
+  sine, pulse and bell. X fades the partials in one by one and Y stretches
+  the harmonic series as stiff piano strings do.<br><br>
+
+  After a page, mode or shape change the faders pick up, so nothing jumps.
+  Without an 8mu or computer the card starts on the heart (drawing) or a
+  sawtooth (partials), under the panel controls.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Rotate / Stretch
+      type: audio
+      description: "Drawing: rotation, added to Y, at audio rate. Partials: stretch, added to Y."
+    - id: AudioIn2
+      name: Unused
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: 1V/oct, added to the Main knob.
+    - id: CVIn2
+      name: Circles / Partials
+      type: cv
+      description: "Added to the X knob: how many circles (drawing) or partials sound."
+    - id: PulseIn1
+      name: Sync
+      type: pulse
+      description: Back to the start of the drawing, or every partial to its start phase.
+    - id: PulseIn2
+      name: Next
+      type: pulse
+      description: Loads the next drawing, or the next partials shape.
+  outputs:
+    - id: AudioOut1
+      name: Y
+      type: audio
+      description: "The height of the outermost point: the drawing's Y, or the partials' sum (sines)."
+    - id: AudioOut2
+      name: X
+      type: audio
+      description: "Its position across: the drawing's X, or the partials as cosines. Into a scope's X-Y mode with Audio Out 1, it draws the picture."
+    - id: CVOut1
+      name: Pitch
+      type: cv
+      description: 1V/oct, 0V at middle C.
+    - id: CVOut2
+      name: Unused
+    - id: PulseOut1
+      name: Square
+      type: pulse
+      description: Square wave at the pitch.
+    - id: PulseOut2
+      name: Unused
+
+controls:
+  switch:
+    up:
+      name: Slow / Lock
+      description: "Drawing: seven octaves down, so the outputs draw it as CV. Partials: harmonic lock, every partial at its exact harmonic."
+    middle:
+      name: Audio / Free
+      description: "Drawing: at audio rate. Partials: the FREQUENCY page and stretch apply."
+    down:
+      name: Next / Swap mode
+      description: "Momentary. A tap loads the next drawing or shape. Held for a second, it swaps between drawing and partials."
+  knobs:
+    - main:
+        name: Pitch
+        description: C1 to C7.
+      x:
+        name: Circles / Partials
+        description: "Drawing: how many circles turn, 1 to 64, biggest first. Partials: how many sound, 1 to 8, each fading in."
+      y:
+        name: Rotate / Stretch
+        description: "Drawing: rotates it, a full turn. Partials: stretch, partial n at n^(1 + stretch) times the fundamental, 0 to 0.5."
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Scope / Page A
+          description: "Drawing: the six LEDs are a tiny scope, each lit as the point passes near it. Partials with an 8mu or the web app: LEDs 0-2 show the page (A-C) and LED 3 flashes when a shape loads; without, LEDs 0-3 show partials 1-4's levels. All light briefly on a mode swap."
+        - id: LED1
+          name: Scope / Page B
+        - id: LED2
+          name: Scope / Page C
+        - id: LED3
+          name: Scope / Shape
+        - id: LED4
+          name: Scope / Square
+          description: "Partials: follows Pulse Out 1."
+        - id: LED5
+          name: Scope / 8mu / web app
+          description: "Partials: lit while an 8mu, or the web app, is connected."
