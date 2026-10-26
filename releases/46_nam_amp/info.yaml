@@ -1,0 +1,107 @@
+draft: true
+Name: NAM Amp
+short-description: Plays Neural Amp Modeler (NAM) amp and pedal captures, like those shared on tone3000, in fixed point across both RP2040 cores.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1"
+Status: WIP
+License: MIT
+date-created: 2026-10-26
+
+tags:
+  - effect
+  - distortion
+  - amp-sim
+
+summary: |
+  An experimental amp simulator that runs Neural Amp Modeler (`.nam`) captures,
+  the format shared on [tone3000](https://www.tone3000.com). A Python script
+  converts a `.nam` file to fixed point, checks whether it can run in real
+  time, and builds it into the firmware. Up to two models can be built in.
+
+  The RP2040 is a small processor for neural networks. Small **LSTM** models
+  (hidden size up to about 8) fit comfortably. Most tone3000 captures are
+  WaveNet models, and even the smallest WaveNet size ("Nano") needs about
+  three times the processing power available. See the README for details.
+
+  The built-in demo model is a tiny test capture from the NAM project.
+
+  This card has not yet been tested on hardware.
+
+uf2:
+  - path: nam_amp.uf2
+    name: NAM Amp (demo model)
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Audio In
+      type: audio
+      description: Signal into the amp model
+    - id: CVIn1
+      name: Drive CV
+      type: cv
+      description: Adds to the Main knob (input gain)
+    - id: CVIn2
+      name: Tone CV
+      type: cv
+      description: Adds to knob Y (cabinet filter cutoff)
+    - id: PulseIn1
+      name: Bypass toggle
+      type: pulse
+      description: Rising edge toggles bypass
+  outputs:
+    - id: AudioOut1
+      name: Amp + cab
+      type: audio
+      description: Model output through the cabinet filter
+    - id: AudioOut2
+      name: Amp
+      type: audio
+      description: Model output without the cabinet filter
+    - id: CVOut1
+      name: Envelope
+      type: cv
+      description: Envelope of Audio Out 1
+    - id: PulseOut1
+      name: Bypassed
+      type: pulse
+      description: High while bypassed
+
+controls:
+  knobs:
+    - main:
+        name: Drive
+        description: Input gain, -24dB to +24dB. Noon is the model's calibrated input level.
+      x:
+        name: Level
+        description: Output level; noon is about unity
+      y:
+        name: Cabinet
+        description: Low-pass filter from 1kHz to 12kHz, off fully clockwise
+  switch:
+    up:
+      name: Model 1
+    middle:
+      name: Model 2
+      description: Model 1 if only one model is built in
+    down:
+      name: Bypass
+      description: Bypass while held
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Input level
+          description: Lights fully when the model input is clipped
+        - id: LED1
+          name: Output level
+        - id: LED2
+          name: Model 1
+        - id: LED3
+          name: Model 2
+        - id: LED4
+          name: Bypass
+        - id: LED5
+          name: CPU overload
+          description: Lights if the model is too slow for the processor
