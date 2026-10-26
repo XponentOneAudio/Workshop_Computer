@@ -1,0 +1,175 @@
+draft: true
+Name: Weierstrass
+short-description: "An endless zoom into a fractal curve: the partials glide down (or up) forever, like a Shepard tone, while finer detail keeps appearing"
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: none
+date-created: 2026-10-26
+
+uf2:
+  - path: UF2/weierstrass.uf2
+    name: Weierstrass 0.1.0
+
+tags:
+  - synth
+  - oscillator
+  - drone
+  - shepard
+  - glissando
+  - fractal
+
+summary: |
+  WEIERSTRASS plays the Weierstrass function as sound and zooms into it forever.
+  In 1872 Weierstrass described a curve that is continuous everywhere but smooth
+  nowhere: a sum of cosines, each one b times faster and a times quieter than
+  the one before. However far you zoom in, it looks the same.<br><br>
+
+  Reading the curve at audio rate turns each term into a partial, so the
+  partials are spaced by the ratio b. Zooming in slows the read, and every
+  partial falls. After one zoom step of b, each partial has reached the place
+  of the one below, and a new layer of detail has come down from above to fill
+  the top. The zoom repeats seamlessly, so the sound is a Shepard-Risset
+  glissando built from a fractal. With b = 2 it is the classic Shepard tone.
+  Odd ratios, like the b = 3 Weierstrass used, give stranger, wider spacings.<br><br>
+
+  The card keeps the true curve. All the partials stay phase-locked to one
+  read position, so the waveform on a scope is the jagged Weierstrass curve
+  itself. SCATTER randomises those phases: the spectrum stays the same, but the
+  spikes melt into a smooth cloud. Flip between the two to hear what phase
+  alone does.
+
+readme: |
+  ## Controls
+
+  | | |
+  |---|---|
+  | **Main: ZOOM** | Noon stops. Turn left to zoom in: pitch falls and finer detail comes down from above. Turn right to zoom out: pitch rises. The response is square-law with a deadzone at noon, from very slow up to about 2 zoom steps per second at the ends. CV In 1 adds to it. |
+  | **X: ROUGHNESS** | The curve's fractal dimension D, from 1.0 (fully left, almost a pure sine) to 1.95 (fully right, almost flat spectrum: harsh and buzzy). The term weight is a = b^(D-2), so a knob position sounds about equally rough at every ratio. CV In 2 adds to it. |
+  | **Y: RATIO** | b, the spacing between partials, in six detented bands: 2, 3, 4, 5, 6, 7. Changes fade out and back in over about 40 ms. |
+  | **Switch Up: SCATTER** | Random fixed phase for each partial. Same spectrum, smooth waveform. |
+  | **Switch Middle: TRUE** | Phase-locked partials: the output is the Weierstrass curve. |
+  | **Switch Down (hold): FREEZE** | Stops the zoom while held. |
+
+  ## Jacks
+
+  | | |
+  |---|---|
+  | **Audio In 1** | Moves the read head in time, by up to about ±5 ms: phase modulation that goes through the fractal. Higher partials move proportionally further. |
+  | **Audio In 2** | WINDOW. Moves the lowest partial from its default 20 Hz, at roughly 1 V/octave (uncalibrated), between 5 Hz and 160 Hz. Ignored when unpatched. |
+  | **Pulse In 1** | RESET to x = 0, the one point where every partial peaks together. |
+  | **Pulse In 2** | REVERSE the zoom while high. |
+  | **Audio Out 1** | The curve: a sum of cosines. |
+  | **Audio Out 2** | The same partials as sines (the curve's Hilbert transform). Use it as a wide stereo partner to Out 1. |
+  | **CV Out 1** | Zoom position: a ramp per zoom step. Rising when zooming out, falling when zooming in. |
+  | **CV Out 2** | The same zooming curve read 1024 times slower: a fractal LFO that keeps sprouting detail. |
+  | **Pulse Out 1** | A 10 ms trigger each time a zoom step completes. |
+  | **Pulse Out 2** | High while CV Out 2 is above zero. |
+
+  The six LEDs show the levels of the six lowest partials, top-left first and
+  reading across then down. While zooming in you can watch the brightness
+  move from LED to LED.
+
+  ## Patch ideas
+
+  - Zoom slowly left with roughness around noon and ratio 2: an endless descent.
+  - Ratio 3, TRUE, roughness past 3 o'clock, and a scope on Out 1: this is
+    Weierstrass's own curve.
+  - Patch Pulse Out 1 to Pulse In 2 so each zoom step reverses the last:
+    the sound breathes in and out over one step.
+  - Audio In 1 from a slow LFO: the higher partials wobble more than the low
+    ones, because the time shift is the same for all of them.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Read Position
+      type: audio
+      description: Moves the read head in time, up to about ±5 ms (phase modulation through the fractal)
+    - id: AudioIn2
+      name: Window
+      type: cv
+      description: Shifts the lowest partial from 20 Hz, roughly 1 V/oct, between 5 and 160 Hz. Ignored when unpatched
+    - id: CVIn1
+      name: Zoom CV
+      type: cv
+      description: Adds to the zoom rate
+    - id: CVIn2
+      name: Roughness CV
+      type: cv
+      description: Adds to roughness
+    - id: PulseIn1
+      name: Reset
+      type: pulse
+      description: Rising edge returns to x = 0, where every partial peaks together
+    - id: PulseIn2
+      name: Reverse
+      type: pulse
+      description: Reverses the zoom direction while high
+  outputs:
+    - id: AudioOut1
+      name: Weierstrass (cos)
+      type: audio
+      description: The curve itself, a sum of phase-locked cosines
+    - id: AudioOut2
+      name: Weierstrass (sin)
+      type: audio
+      description: The same partials as sines, a wide stereo partner to Out 1
+    - id: CVOut1
+      name: Zoom Position
+      type: cv
+      description: A ramp per zoom step
+    - id: CVOut2
+      name: Fractal LFO
+      type: cv
+      description: The same zooming curve, read 1024 times slower
+    - id: PulseOut1
+      name: Zoom Step
+      type: pulse
+      description: 10 ms trigger each time a zoom step completes
+    - id: PulseOut2
+      name: LFO Gate
+      type: pulse
+      description: High while CV Out 2 is above zero
+
+controls:
+  switch:
+    up:
+      name: Scatter
+      description: Random fixed phase per partial. Same spectrum, smooth waveform
+    middle:
+      name: "True"
+      description: Phase-locked partials. The output is the Weierstrass curve
+    down:
+      name: Freeze
+      description: Hold to stop the zoom
+  knobs:
+    - main:
+        name: Zoom
+        description: Noon stops. Left zooms in (pitch falls, detail descends); right zooms out (pitch rises)
+      x:
+        name: Roughness
+        description: Fractal dimension, 1.0 (almost a sine) to 1.95 (almost flat spectrum)
+      y:
+        name: Ratio
+        description: Partial spacing b, in six detented bands from 2 to 7
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Partial 1
+          description: >
+            Level of the lowest partial. LEDs 1 to 5 show the next five up, so
+            the brightness moves across the LEDs as the zoom moves.
+        - id: LED1
+          name: Partial 2
+        - id: LED2
+          name: Partial 3
+        - id: LED3
+          name: Partial 4
+        - id: LED4
+          name: Partial 5
+        - id: LED5
+          name: Partial 6
