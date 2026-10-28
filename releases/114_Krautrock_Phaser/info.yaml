@@ -1,0 +1,161 @@
+draft: false
+Name: Krautrock Phaser
+short-description: "A wave digital model of Juergen Haible's lamp-and-LDR Krautrock Phaser - eight 741 stages, a resonance loop, and lamps that cannot keep up"
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Xponent One Audio
+Version: "1.0.0"
+Status: Beta
+License: MIT
+Editor: none
+date-created: 2026-10-28
+date-updated: 2026-10-28
+
+contact:
+  social:
+    github: https://github.com/xponentoneaudio
+
+uf2:
+  - path: UF2/krautrock_phaser.uf2
+    name: Krautrock Phaser 1.0.0
+
+tags:
+  - effect
+  - phaser
+  - vibrato
+  - modulation
+  - circuit-model
+  - wave-digital-filter
+
+summary: |
+  KRAUTROCK PHASER recreates the JH Krautrock Phaser (Juergen Haible, 2008)
+  component by component. Eight LM741 all-pass stages are swept by eight LDRs,
+  which are lit by two 7 V incandescent lamps. A Schmitt-trigger and integrator
+  LFO drives the lamps, and a feedback path runs from the second stage back
+  into the input amplifier, which gives the phaser its vocal resonant peak.<br><br>
+
+  The audio path is a wave digital filter. Each capacitor is a WDF element,
+  each all-pass stage is an adapted series loop with its LDR as a time-varying
+  leaf, and the bridge network around the input amplifier is an R-type
+  adaptor. The resonance loop has no delay in it: the adaptor is solved
+  exactly every sample, so the peak sits where the analogue circuit puts it.
+  The audio path is all fixed point on core 0.<br><br>
+
+  The lamps are simulated too, which is why the card sounds like a lamp
+  phaser and not a textbook one. Each filament has a heat balance (radiation
+  plus conduction through its leads) and so a thermal lag: it heats in about
+  10 ms and cools much more slowly when dim. The LDRs respond quickly to light
+  and slowly to darkness. At slow rates the sweep runs from below 100 Hz to
+  nearly 4 kHz. Turn RATE up and the lamps cannot follow: the sweep shrinks
+  and drifts upward, into the shimmering, shallow wobble the original makes
+  at speed. This control model runs in float on core 1.<br><br>
+
+  Out 1 is the effect and Out 2 is the dry signal through the same input
+  amplifier, as on the original's two outputs. Pan them apart for Haible's
+  stereo spread. Switch Middle is the phaser (equal dry and wet), Up is
+  vibrato (wet only), and a tap Down toggles bypass, like the original's
+  relay.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: In
+      type: audio
+      description: >
+        Audio in. Full scale reaches the input amplifier at about 0.8 V, a hot
+        instrument level, so loud sources clip the 741s once FEEDBACK raises
+        the resonance. That clipping is part of the circuit.
+    - id: AudioIn2
+      name: In
+      type: audio
+      description: Summed with Audio In 1. The circuit is mono.
+    - id: CVIn1
+      name: Rate
+      type: cv
+      description: >
+        Adds to the RATE knob at about one octave per volt.
+    - id: CVIn2
+      name: Amount
+      type: cv
+      description: >
+        The original's AMOUNT jack: volts added to the lamp driver. Positive
+        voltage brightens the lamps and moves the notches up, with or without
+        the LFO. Because it drives the lamps, it is smoothed by their thermal
+        lag like everything else.
+    - id: PulseIn1
+      name: Reset
+      type: pulse
+      description: Restarts the LFO at the bottom of its sweep.
+    - id: PulseIn2
+      name: Hold
+      type: pulse
+      description: >
+        Freezes the LFO while high. The lamps and LDRs keep settling, so the
+        notches glide to rest rather than stopping dead.
+  outputs:
+    - id: AudioOut1
+      name: Effect
+      type: audio
+      description: Phaser (switch Middle) or vibrato (switch Up).
+    - id: AudioOut2
+      name: Dry
+      type: audio
+      description: >
+        The dry signal after the input amplifier, at the same level as Out 1.
+    - id: CVOut1
+      name: LFO
+      type: cv
+      description: >
+        The triangle from the LFO integrator, about +/-5 V. It is slightly
+        asymmetric, because the 741 driving it does not swing symmetrically
+        about its reference.
+    - id: CVOut2
+      name: Notch
+      type: cv
+      description: >
+        Where the sweep is: the log of the all-pass pole frequency, 0 V at
+        25 Hz, rising one volt per octave. This is the LFO after the lamp and
+        LDR lag.
+    - id: PulseOut1
+      name: Square
+      type: pulse
+      description: High while the LFO is rising.
+    - id: PulseOut2
+      name: Clip
+      type: pulse
+      description: High while the input amplifier is at its rails.
+
+controls:
+  switch:
+    up:
+      name: Vibrato
+      description: Wet signal only. The sweeping phase shift is heard as pitch wobble.
+    middle:
+      name: Phaser
+      description: >
+        Equal dry and wet, which gives the deepest notches (the MODULATION pot
+        at noon).
+    down:
+      name: Bypass
+      description: >
+        Momentary. Each tap toggles bypass, with a short crossfade in place of
+        the relay's click. The bottom-left LED is lit while the effect is in.
+  knobs:
+    - main:
+        name: RATE
+        description: >
+          LFO speed, about 0.09 Hz to 20 Hz. Above a few hertz the lamps
+          cannot follow, so the sweep gets narrower and higher.
+      x:
+        name: AMOUNT
+        description: >
+          Sweep depth (PHASING_AMPLITUDE). Fully anticlockwise, the lamps idle
+          at their minimum glow and the notches sit low. Turning it up widens
+          the sweep upward from there, as on the original.
+      y:
+        name: FEEDBACK
+        description: >
+          Resonance, from the second stage back into the input amplifier. The
+          peak follows the sweep. It rises to about +28 dB at the end stop,
+          just short of self-oscillation, which is how the original's reso
+          trimmer would be set. More feedback also lowers the dry level, as
+          it does in the circuit.
