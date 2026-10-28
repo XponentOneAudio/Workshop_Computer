@@ -9,8 +9,6 @@
 //                        from the one the switch picks.
 //   Switch Down (held)   Main becomes MIX, dry to wet. X and Y carry on as
 //                        normal.
-//   Switch Down (tap)    toggles BYPASS - but only if Main was not turned
-//                        while Down was held.
 //
 // SOFT TAKEOVER. Whenever a knob is reassigned - a scene change, or Main
 // moving between RATE and MIX - it stops controlling anything until it is
@@ -48,7 +46,6 @@ class PanelLogic {
     slow_ = false;
     mix_ = 0.5f;
     mixLive_ = false;
-    bypass_ = false;
     down_ = false;
     physScene_ = 0;
     active_ = 0;
@@ -57,26 +54,18 @@ class PanelLogic {
 
   void Step(float main, float x, float y, PanelSwitch sw, bool gate) {
     // ComputerCard's switch filter starts at Down; ignore the switch until it
-    // has settled rather than toggling BYPASS at every power-up.
+    // has settled, so power-up never briefly hands Main to MIX.
     if (boot_ > 0) { boot_--; sw = kSwMiddle; }
 
-    // --- Down: hold for MIX, tap for BYPASS --------------------------------
+    // --- Down: hold for MIX ---------------------------------------------------
     const bool down = sw == kSwDown;
     if (down && !down_) {
-      mainAtPress_ = main;
-      turned_ = false;
       mixLive_ = false;
       mixLast_ = main - mix_;
     }
-    if (!down && down_) {
-      if (!turned_) bypass_ = !bypass_;
-      Release(kRate, main);                 // Main goes back to RATE
-    }
+    if (!down && down_) Release(kRate, main);   // Main goes back to RATE
     down_ = down;
-    if (down) {
-      if (fabsf(main - mainAtPress_) > kTurned) turned_ = true;
-      if (Catch(main, mix_, &mixLast_, &mixLive_)) mix_ = main;
-    }
+    if (down && Catch(main, mix_, &mixLast_, &mixLive_)) mix_ = main;
 
     // --- Scene selection ----------------------------------------------------
     if (sw == kSwMiddle) physScene_ = 0;
@@ -117,7 +106,6 @@ class PanelLogic {
     return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
   }
   float Mix() const { return mix_; }
-  bool Bypass() const { return bypass_; }
   int Scene() const { return active_; }
   bool Live(Param p) const { return live_[p]; }
   bool Gliding() const { return slow_; }
@@ -128,7 +116,6 @@ class PanelLogic {
   static constexpr float kWSlow = 13.0f;          // ~0.5 s
   static constexpr float kWFast = 150.0f;         // ~40 ms
   static constexpr float kCatch = 0.012f;         // ~1% of the travel
-  static constexpr float kTurned = 0.02f;
   static constexpr int kBootBlocks = 1500;        // 0.5 s
 
   // Reassign a knob: it stops controlling until it reaches the stored value.
@@ -151,8 +138,8 @@ class PanelLogic {
   float pos_[kParams], vel_[kParams], last_[kParams] = {0, 0, 0};
   bool live_[kParams];
   bool slow_;
-  float mix_, mixLast_ = 0.0f, mainAtPress_ = 0.0f;
-  bool mixLive_, bypass_, down_, turned_ = false;
+  float mix_, mixLast_ = 0.0f;
+  bool mixLive_, down_;
   int physScene_, active_, boot_;
 };
 

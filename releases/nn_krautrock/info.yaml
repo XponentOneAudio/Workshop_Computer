@@ -3,7 +3,7 @@ Name: Krautrock Phaser
 short-description: "A wave digital model of Juergen Haible's lamp-and-LDR Krautrock Phaser - eight 741 stages, a resonance loop, and lamps that cannot keep up"
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Xponent One Audio
-Version: "1.1.0"
+Version: "1.2.0"
 Status: Beta
 License: MIT
 Editor: none
@@ -16,7 +16,7 @@ contact:
 
 uf2:
   - path: UF2/krautrock_phaser.uf2
-    name: Krautrock Phaser 1.1.0
+    name: Krautrock Phaser 1.2.0
 
 tags:
   - effect
@@ -58,8 +58,7 @@ summary: |
 
   Holding the switch Down turns Main into MIX, the original's MODULATION pot.
   Anticlockwise is dry, noon is the classic phaser with the deepest notches,
-  and clockwise is wet only, which you hear as vibrato. A quick tap of Down
-  without turning Main toggles bypass, like the original's relay. RATE fully
+  and clockwise is wet only, which you hear as vibrato. RATE fully
   anticlockwise stops the LFO, to park the sweep by hand.<br><br>
 
   Out 1 is the effect and Out 2 is the dry signal through the same input
@@ -149,11 +148,9 @@ controls:
         settings across in about half a second. The knobs then use soft
         takeover: each does nothing until it reaches its stored value.
     down:
-      name: Mix / Bypass
+      name: Mix
       description: >
-        Momentary. Hold it and turn Main to set MIX. Tap it without turning
-        Main to toggle bypass, with a short crossfade in place of the relay's
-        click. The bottom-left LED is lit while the effect is in.
+        Momentary. Hold it and turn Main to set MIX.
   knobs:
     - when:
         z: middle

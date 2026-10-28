@@ -59,7 +59,7 @@ struct Result {
   int16_t cvLfo, cvPole;            // CV out codes
   uint16_t ledLamp, ledUp, ledDown; // LED brightness, 0..4095
   int32_t mix;                      // Q30, dry 0 .. wet 1
-  bool rising, bypass;
+  bool rising;
 };
 static Result gResult[2];
 static volatile int gReady = -1;
@@ -107,7 +107,6 @@ static void Core1Entry() {
     }
     r.net = net;
     r.mix = ToQ30(panel.Mix());
-    r.bypass = panel.Bypass();
 
     // CV 1: the triangle as U4 makes it, +/-5 V. CV 2: where the notches are,
     // as the log of the pole frequency, 0 V at 25 Hz and +1 V per octave.
@@ -145,9 +144,6 @@ class KrautrockPhaser : public ComputerCard {
     // MIX is the original's MODULATION pot (R65), set by holding the switch
     // Down and turning Main. Smoothed here so it cannot step at 3 kHz.
     mix_ += (mixTarget_ - mix_) >> 9;
-    const int32_t bypTarget = bypass_ ? 4096 : 0;
-    if (byp_ < bypTarget) byp_++;               // ~85 ms crossfade, no click
-    if (byp_ > bypTarget) byp_--;
 
     if (PulseIn1RisingEdge()) gReset = true;
 
@@ -165,8 +161,8 @@ class KrautrockPhaser : public ComputerCard {
     // through U6 and the same divider). Pan them apart for Haible's spread.
     const int32_t l = Clip(Mul30(mixed, kOutScale));
     const int32_t r = Clip(Mul30(dry, kOutScale));
-    AudioOut1((int16_t)((l * (4096 - byp_) + in * byp_) >> 12));
-    AudioOut2((int16_t)((r * (4096 - byp_) + in * byp_) >> 12));
+    AudioOut1((int16_t)l);
+    AudioOut2((int16_t)r);
     PulseOut2(clipHold_ > 0);
   }
 
@@ -191,7 +187,6 @@ class KrautrockPhaser : public ComputerCard {
     else engine_.SetTargets(r.q);
     engine_.SetNet(r.net);
     mixTarget_ = r.mix;
-    bypass_ = r.bypass;
 
     CVOut1(r.cvLfo);
     CVOut2(r.cvPole);
@@ -200,7 +195,6 @@ class KrautrockPhaser : public ComputerCard {
     LedBrightness(1, r.ledLamp);
     LedBrightness(2, r.ledUp);
     LedBrightness(3, r.ledDown);
-    LedOn(4, !bypass_);
     LedOn(5, clipHold_ > 0);
   }
 
@@ -209,8 +203,6 @@ class KrautrockPhaser : public ComputerCard {
   Phaser engine_;
   int phase_ = 0;
   bool primed_ = false;
-  bool bypass_ = false;
-  int32_t byp_ = 0;
   int32_t mix_ = kOneQ30 / 2, mixTarget_ = kOneQ30 / 2;
   int32_t clipHold_ = 0;
 };

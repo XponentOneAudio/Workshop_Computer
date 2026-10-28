@@ -16,7 +16,6 @@ lamps and eight LDRs.
 | **Switch Middle** | Scene A |
 | **Switch Up** | Scene B |
 | **Hold Down + Main** | MIX (R65, MODULATION): dry CCW, classic phaser at noon, wet only (vibrato) CW |
-| **Tap Down** | Toggle bypass, with a crossfade. A tap only counts if Main wasn't turned |
 
 ### Scenes
 
@@ -49,8 +48,8 @@ Each scene stores its own RATE, AMOUNT and FEEDBACK. MIX is global.
 | Pulse Out 2 | High while the input amplifier is clipping |
 
 **LEDs:** the top row glows with the lamps' light output. The middle row shows the LFO
-crossfading between rising and falling. Bottom-left is lit while the effect is in, and
-bottom-right lights when the input amplifier clips.
+crossfading between rising and falling. Bottom-right lights when the input amplifier
+clips. Bottom-left is unused.
 
 ## The lamps cannot keep up
 
@@ -131,8 +130,7 @@ engine against a double-precision reference and checks five things:
   whole LDR range;
 - sweep range against rate;
 - the panel: the LFO stop, scene glide (no jump, no overshoot, arrives within
-  0.7 s), soft takeover, the Pulse In 2 scene flip, hold-Down MIX, and the
-  bypass tap;
+  0.7 s), soft takeover, the Pulse In 2 scene flip, and hold-Down MIX;
 - 20 s of full-scale noise at maximum feedback, followed by a return to silence.
 
 It can also render a demo WAV through the full card model:

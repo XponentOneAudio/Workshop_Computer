@@ -9,7 +9,7 @@
 // 3. Sweep range of the lamp/LDR model against RATE and AMOUNT, which shows
 //    the lamps' thermal lag eating the depth at fast rates.
 // 4. Stability under the full model: 20 s of loud noise at maximum feedback.
-// 5. The panel: LFO stop, scenes, soft takeover, glide, mix and bypass.
+// 5. The panel: LFO stop, scenes, soft takeover, glide and mix.
 // 6. Optionally renders a demo WAV through the whole card model.
 //
 // Exit status is non-zero if any check fails.
@@ -384,17 +384,14 @@ static void CheckPanel() {
     Check(p.Scene() == 0, "Pulse In 2 high flips Up to scene A");
   }
 
-  // Hold Down for MIX, tap Down for BYPASS.
+  // Hold Down for MIX.
   {
-    PanelLogic p; p.Init(0.6f, 0.5f, 0.5f);
+    PanelLogic p; p.Init(0.5f, 0.5f, 0.5f);
+    // ComputerCard reports Down while its switch filter settles at power-up.
+    Steps(p, 100, 0.5f, 0.5f, 0.5f, kSwDown);
+    Steps(p, 100, 0.9f, 0.5f, 0.5f, kSwDown);
+    Check(fabsf(p.Mix() - 0.5f) < 1e-6f, "the boot-time Down reading does not edit MIX");
     Steps(p, sec, 0.6f, 0.5f, 0.5f);
-    Check(!p.Bypass(), "no BYPASS toggle from the boot-time switch reading");
-    Steps(p, 30, 0.6f, 0.5f, 0.5f, kSwDown);
-    Steps(p, 30, 0.6f, 0.5f, 0.5f);
-    Check(p.Bypass(), "a tap of Down toggles BYPASS");
-    Steps(p, 30, 0.6f, 0.5f, 0.5f, kSwDown);
-    Steps(p, 30, 0.6f, 0.5f, 0.5f);
-    Check(!p.Bypass(), "a second tap toggles it back");
 
     const float rateBefore = p.Value(kRate);
     Steps(p, 100, 0.6f, 0.5f, 0.5f, kSwDown);   // Main at 0.6, MIX at 0.5
@@ -403,7 +400,6 @@ static void CheckPanel() {
     Check(fabsf(p.Mix()) < 1e-6f, "Down + Main turns MIX after pickup");
     Steps(p, 100, 0.0f, 0.5f, 0.5f, kSwDown);
     Steps(p, 300, 0.0f, 0.5f, 0.5f);
-    Check(!p.Bypass(), "releasing after a turn does not toggle BYPASS");
     Check(fabsf(p.Value(kRate) - rateBefore) < 0.002f,
           "after release Main does not drag RATE until picked up");
   }
