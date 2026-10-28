@@ -3,7 +3,7 @@ Name: Krautrock Phaser
 short-description: "A wave digital model of Juergen Haible's lamp-and-LDR Krautrock Phaser - eight 741 stages, a resonance loop, and lamps that cannot keep up"
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Xponent One Audio
-Version: "1.2.0"
+Version: "1.2.1"
 Status: Beta
 License: MIT
 Editor: none
@@ -16,7 +16,7 @@ contact:
 
 uf2:
   - path: UF2/krautrock_phaser.uf2
-    name: Krautrock Phaser 1.2.0
+    name: Krautrock Phaser 1.2.1
 
 tags:
   - effect
@@ -144,7 +144,8 @@ controls:
     up:
       name: Scene B
       description: >
-        RATE, AMOUNT and FEEDBACK from scene B. Changing scene glides the
+        RATE, AMOUNT and FEEDBACK from scene B, shown by the bottom-left LED,
+        which also lights when Pulse In 2 selects B. Changing scene glides the
         settings across in about half a second. The knobs then use soft
         takeover: each does nothing until it reaches its stored value.
     down:

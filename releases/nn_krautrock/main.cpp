@@ -59,7 +59,7 @@ struct Result {
   int16_t cvLfo, cvPole;            // CV out codes
   uint16_t ledLamp, ledUp, ledDown; // LED brightness, 0..4095
   int32_t mix;                      // Q30, dry 0 .. wet 1
-  bool rising;
+  bool rising, sceneB;
 };
 static Result gResult[2];
 static volatile int gReady = -1;
@@ -107,6 +107,7 @@ static void Core1Entry() {
     }
     r.net = net;
     r.mix = ToQ30(panel.Mix());
+    r.sceneB = panel.Scene() == 1;
 
     // CV 1: the triangle as U4 makes it, +/-5 V. CV 2: where the notches are,
     // as the log of the pole frequency, 0 V at 25 Hz and +1 V per octave.
@@ -195,6 +196,7 @@ class KrautrockPhaser : public ComputerCard {
     LedBrightness(1, r.ledLamp);
     LedBrightness(2, r.ledUp);
     LedBrightness(3, r.ledDown);
+    LedOn(4, r.sceneB);       // the active scene, whether switch or gate chose it
     LedOn(5, clipHold_ > 0);
   }
 

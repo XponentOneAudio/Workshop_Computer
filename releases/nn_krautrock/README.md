@@ -49,7 +49,8 @@ Each scene stores its own RATE, AMOUNT and FEEDBACK. MIX is global.
 
 **LEDs:** the top row glows with the lamps' light output. The middle row shows the LFO
 crossfading between rising and falling. Bottom-right lights when the input amplifier
-clips. Bottom-left is unused.
+clips. Bottom-left is lit while scene B is active, whether the switch or Pulse In 2
+selected it.
 
 ## The lamps cannot keep up
 
