@@ -333,13 +333,23 @@ class Control {
   }
 
   // knob 0..1 (OSC_PERIOD, clockwise faster) and octaves of CV offset.
+  //
+  // The bottom 2% of the travel STOPS the LFO - as if R25's track had gone
+  // open circuit - so the sweep can be parked by hand. Above that the
+  // original's law takes over: a 50k log pot wired as a rheostat, 50k -> 120R,
+  // ~0.09 Hz -> ~19 Hz. Across the next 15% the rate is faded linearly from
+  // zero into that law, so leaving the stop is continuous rather than a jump
+  // to 0.09 Hz. CV multiplies the rate, so a stopped LFO stays stopped.
   void SetRate(float knob, float octaves) {
-    // R25 is a 50k log pot wired as a rheostat; 50k -> 120R over the travel
-    // takes the LFO from ~0.09 Hz to ~19 Hz.
-    float r25 = 50e3f * exp2f(-8.7f * knob);
+    constexpr float kStop = 0.02f, kFade = 0.15f;
+    if (knob <= kStop) { rate_ = 0.0f; return; }
+    const float k = (knob - kStop) * (1.0f / (1.0f - kStop));
+    const float r25 = 50e3f * exp2f(-8.7f * k);
     float rate = 1.0f / ((r25 + lfo::kRth) * lfo::kC8) * exp2f(octaves);
+    if (k < kFade) rate *= k * (1.0f / kFade);
     rate_ = rate * lfo::kAtten * (kCtrlDiv * kT);     // V per block per V drive
   }
+  bool Stopped() const { return rate_ == 0.0f; }
 
   // Restart the sweep from the bottom (Pulse In 1).
   void Reset() { v_ = lfo::kVlo; rising_ = true; }

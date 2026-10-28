@@ -3,7 +3,7 @@ Name: Krautrock Phaser
 short-description: "A wave digital model of Juergen Haible's lamp-and-LDR Krautrock Phaser - eight 741 stages, a resonance loop, and lamps that cannot keep up"
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Xponent One Audio
-Version: "1.0.0"
+Version: "1.1.0"
 Status: Beta
 License: MIT
 Editor: none
@@ -16,7 +16,7 @@ contact:
 
 uf2:
   - path: UF2/krautrock_phaser.uf2
-    name: Krautrock Phaser 1.0.0
+    name: Krautrock Phaser 1.1.0
 
 tags:
   - effect
@@ -49,11 +49,22 @@ summary: |
   and drifts upward, into the shimmering, shallow wobble the original makes
   at speed. This control model runs in float on core 1.<br><br>
 
+  Switch Middle and Up are two SCENES, each with its own RATE, AMOUNT and
+  FEEDBACK, and a gate into Pulse In 2 flips between them. A scene change
+  glides: the three settings ease across in about half a second, as if
+  someone turned the pots, and the lamps add their own lag on top. Knobs use
+  soft takeover, so after a change each one does nothing until it reaches its
+  stored value.<br><br>
+
+  Holding the switch Down turns Main into MIX, the original's MODULATION pot.
+  Anticlockwise is dry, noon is the classic phaser with the deepest notches,
+  and clockwise is wet only, which you hear as vibrato. A quick tap of Down
+  without turning Main toggles bypass, like the original's relay. RATE fully
+  anticlockwise stops the LFO, to park the sweep by hand.<br><br>
+
   Out 1 is the effect and Out 2 is the dry signal through the same input
   amplifier, as on the original's two outputs. Pan them apart for Haible's
-  stereo spread. Switch Middle is the phaser (equal dry and wet), Up is
-  vibrato (wet only), and a tap Down toggles bypass, like the original's
-  relay.
+  stereo spread.
 
 panel:
   inputs:
@@ -86,16 +97,17 @@ panel:
       type: pulse
       description: Restarts the LFO at the bottom of its sweep.
     - id: PulseIn2
-      name: Hold
+      name: Scene
       type: pulse
       description: >
-        Freezes the LFO while high. The lamps and LDRs keep settling, so the
-        notches glide to rest rather than stopping dead.
+        High selects the other scene from the one the switch picks: Middle
+        becomes scene B, Up becomes scene A. Each change glides, so a clock
+        or gate here makes the phaser move between two settings.
   outputs:
     - id: AudioOut1
       name: Effect
       type: audio
-      description: Phaser (switch Middle) or vibrato (switch Up).
+      description: The effect, at the MIX set by holding Down and turning Main.
     - id: AudioOut2
       name: Dry
       type: audio
@@ -126,32 +138,39 @@ panel:
 
 controls:
   switch:
-    up:
-      name: Vibrato
-      description: Wet signal only. The sweeping phase shift is heard as pitch wobble.
     middle:
-      name: Phaser
+      name: Scene A
       description: >
-        Equal dry and wet, which gives the deepest notches (the MODULATION pot
-        at noon).
+        RATE, AMOUNT and FEEDBACK from scene A.
+    up:
+      name: Scene B
+      description: >
+        RATE, AMOUNT and FEEDBACK from scene B. Changing scene glides the
+        settings across in about half a second. The knobs then use soft
+        takeover: each does nothing until it reaches its stored value.
     down:
-      name: Bypass
+      name: Mix / Bypass
       description: >
-        Momentary. Each tap toggles bypass, with a short crossfade in place of
-        the relay's click. The bottom-left LED is lit while the effect is in.
+        Momentary. Hold it and turn Main to set MIX. Tap it without turning
+        Main to toggle bypass, with a short crossfade in place of the relay's
+        click. The bottom-left LED is lit while the effect is in.
   knobs:
-    - main:
+    - when:
+        z: middle
+      main: &rate
         name: RATE
         description: >
-          LFO speed, about 0.09 Hz to 20 Hz. Above a few hertz the lamps
-          cannot follow, so the sweep gets narrower and higher.
-      x:
+          LFO speed, up to about 20 Hz. Fully anticlockwise stops the LFO, so
+          the sweep can be parked by hand. Just above that it crawls, with
+          cycles minutes long. Above a few hertz the lamps cannot follow, so
+          the sweep gets narrower and higher.
+      x: &amount
         name: AMOUNT
         description: >
           Sweep depth (PHASING_AMPLITUDE). Fully anticlockwise, the lamps idle
           at their minimum glow and the notches sit low. Turning it up widens
           the sweep upward from there, as on the original.
-      y:
+      y: &feedback
         name: FEEDBACK
         description: >
           Resonance, from the second stage back into the input amplifier. The
@@ -159,3 +178,18 @@ controls:
           just short of self-oscillation, which is how the original's reso
           trimmer would be set. More feedback also lowers the dry level, as
           it does in the circuit.
+    - when:
+        z: up
+      main: *rate
+      x: *amount
+      y: *feedback
+    - when:
+        z: down
+      main:
+        name: MIX
+        description: >
+          The original's MODULATION pot: dry anticlockwise, the classic phaser
+          at noon, wet only (vibrato) clockwise. Soft takeover, so it does not
+          jump when you press Down. Global, not stored per scene.
+      x: *amount
+      y: *feedback

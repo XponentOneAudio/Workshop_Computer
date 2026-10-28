@@ -9,7 +9,8 @@
 // 3. Sweep range of the lamp/LDR model against RATE and AMOUNT, which shows
 //    the lamps' thermal lag eating the depth at fast rates.
 // 4. Stability under the full model: 20 s of loud noise at maximum feedback.
-// 5. Optionally renders a demo WAV through the whole card model.
+// 5. The panel: LFO stop, scenes, soft takeover, glide, mix and bypass.
+// 6. Optionally renders a demo WAV through the whole card model.
 //
 // Exit status is non-zero if any check fails.
 
@@ -19,6 +20,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "panel.h"
 #include "phaser.h"
 
 using namespace kraut;
@@ -305,11 +307,114 @@ static void Render(const char* path) {
   printf("\nrendered %s\n", path);
 }
 
+// --- 5. Panel ----------------------------------------------------------------
+
+static void Steps(PanelLogic& p, int n, float m, float x, float y,
+                  PanelSwitch sw = kSwMiddle, bool gate = false) {
+  for (int i = 0; i < n; i++) p.Step(m, x, y, sw, gate);
+}
+
+static void CheckPanel() {
+  printf("\n5. Panel\n");
+  const int sec = 3000;                       // control blocks per second
+
+  // RATE fully anticlockwise stops the LFO; just above the stop it crawls.
+  {
+    Control c; c.Init(); c.SetRate(0.4f, 0);
+    int32_t q[kStages];
+    for (int b = 0; b < sec / 3; b++) c.Step(1, 0, false, q);
+    c.SetRate(0.0f, 0);
+    const float before = c.Lfo();
+    for (int b = 0; b < 10 * sec; b++) c.Step(1, 0, false, q);
+    Check(c.Stopped() && c.Lfo() == before, "RATE at zero holds the LFO still");
+    c.SetRate(0.0f, 2.0f);
+    Check(c.Stopped(), "CV cannot restart a stopped LFO (it scales the rate)");
+    c.SetRate(0.025f, 0);
+    const float a = c.Lfo();
+    for (int b = 0; b < sec; b++) c.Step(1, 0, false, q);
+    const float moved = fabsf(c.Lfo() - a);
+    Check(moved > 0 && moved < 0.05f, "just above the stop, the LFO crawls (minutes per cycle)");
+  }
+
+  // Scenes, glide and soft takeover.
+  {
+    PanelLogic p; p.Init(0.2f, 0.3f, 0.4f);
+    Steps(p, sec, 0.2f, 0.3f, 0.4f);           // let the boot window pass
+    Steps(p, sec / 2, 0.8f, 0.7f, 0.6f);       // scene A: turn everything
+    Check(fabsf(p.Value(kRate) - 0.8f) < 0.002f, "live knobs drive scene A");
+
+    // Switch to B, which still holds the boot values. Knobs stay where they are.
+    float prev = p.Value(kRate);
+    bool monotonic = true, overshoot = false;
+    float at50ms = 0;
+    int settled = -1;
+    for (int b = 0; b < sec * 2; b++) {
+      p.Step(0.8f, 0.7f, 0.6f, kSwUp, false);
+      const float v = p.Value(kRate);
+      if (v > prev + 1e-6f) monotonic = false;
+      if (v < 0.2f - 1e-4f) overshoot = true;
+      if (b == sec / 20) at50ms = v;
+      if (settled < 0 && fabsf(v - 0.2f) < 0.006f) settled = b;
+      prev = v;
+    }
+    printf("  glide 0.8 -> 0.2: %.2f at 50 ms, within 1%% after %d ms\n",
+           (double)at50ms, settled * 1000 / sec);
+    Check(p.Scene() == 1, "switch Up selects scene B");
+    Check(at50ms > 0.7f, "scene change glides rather than jumps");
+    Check(settled > 0 && settled < sec * 7 / 10, "glide arrives within 0.7 s");
+    Check(monotonic && !overshoot, "glide neither reverses nor overshoots");
+    Check(!p.Live(kRate) && fabsf(p.Value(kRate) - 0.2f) < 0.002f,
+          "knob away from B's value does not take over");
+    Steps(p, 100, 0.5f, 0.7f, 0.6f, kSwUp);
+    Check(fabsf(p.Value(kRate) - 0.2f) < 0.002f, "turning towards it does nothing yet");
+    Steps(p, 1, 0.1f, 0.7f, 0.6f, kSwUp);     // fast turn that jumps past 0.2
+    Steps(p, 300, 0.35f, 0.7f, 0.6f, kSwUp);
+    Check(p.Live(kRate) && fabsf(p.Value(kRate) - 0.35f) < 0.002f,
+          "crossing the stored value takes over");
+
+    // Back to A: its values were kept.
+    Steps(p, sec * 2, 0.35f, 0.7f, 0.6f, kSwMiddle);
+    Check(fabsf(p.Value(kRate) - 0.8f) < 0.002f && fabsf(p.Value(kAmount) - 0.7f) < 0.002f,
+          "scene A kept its settings");
+
+    // The gate selects the other scene.
+    Steps(p, 10, 0.35f, 0.7f, 0.6f, kSwMiddle, true);
+    Check(p.Scene() == 1, "Pulse In 2 high flips Middle to scene B");
+    Steps(p, 10, 0.35f, 0.7f, 0.6f, kSwUp, true);
+    Check(p.Scene() == 0, "Pulse In 2 high flips Up to scene A");
+  }
+
+  // Hold Down for MIX, tap Down for BYPASS.
+  {
+    PanelLogic p; p.Init(0.6f, 0.5f, 0.5f);
+    Steps(p, sec, 0.6f, 0.5f, 0.5f);
+    Check(!p.Bypass(), "no BYPASS toggle from the boot-time switch reading");
+    Steps(p, 30, 0.6f, 0.5f, 0.5f, kSwDown);
+    Steps(p, 30, 0.6f, 0.5f, 0.5f);
+    Check(p.Bypass(), "a tap of Down toggles BYPASS");
+    Steps(p, 30, 0.6f, 0.5f, 0.5f, kSwDown);
+    Steps(p, 30, 0.6f, 0.5f, 0.5f);
+    Check(!p.Bypass(), "a second tap toggles it back");
+
+    const float rateBefore = p.Value(kRate);
+    Steps(p, 100, 0.6f, 0.5f, 0.5f, kSwDown);   // Main at 0.6, MIX at 0.5
+    Check(fabsf(p.Mix() - 0.5f) < 1e-6f, "holding Down does not jump MIX to Main");
+    for (int i = 0; i <= 100; i++) p.Step(0.6f - 0.6f * (float)i / 100.0f, 0.5f, 0.5f, kSwDown, false);
+    Check(fabsf(p.Mix()) < 1e-6f, "Down + Main turns MIX after pickup");
+    Steps(p, 100, 0.0f, 0.5f, 0.5f, kSwDown);
+    Steps(p, 300, 0.0f, 0.5f, 0.5f);
+    Check(!p.Bypass(), "releasing after a turn does not toggle BYPASS");
+    Check(fabsf(p.Value(kRate) - rateBefore) < 0.002f,
+          "after release Main does not drag RATE until picked up");
+  }
+}
+
 int main(int argc, char** argv) {
   CheckAgainstReference();
   CheckResonance();
   CheckSweep();
   CheckStability();
+  CheckPanel();
   if (argc > 1) Render(argv[1]);
   printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASS", failures,
          failures == 1 ? "" : "s");

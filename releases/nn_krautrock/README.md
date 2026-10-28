@@ -10,12 +10,29 @@ lamps and eight LDRs.
 
 | Control | Function |
 |---|---|
-| **Main: RATE** | LFO speed, about 0.09 Hz to 20 Hz (R25, OSC_PERIOD) |
+| **Main: RATE** | LFO speed, up to about 20 Hz (R25, OSC_PERIOD). Fully CCW stops the LFO |
 | **X: AMOUNT** | Sweep depth (R26, PHASING_AMPLITUDE) |
 | **Y: FEEDBACK** | Resonance (R66). Goes up to about +28 dB, just short of self-oscillation |
-| **Switch Middle** | Phaser: equal dry and wet (the MODULATION pot at noon) |
-| **Switch Up** | Vibrato: wet only |
-| **Switch Down** | Tap to toggle bypass, with a crossfade |
+| **Switch Middle** | Scene A |
+| **Switch Up** | Scene B |
+| **Hold Down + Main** | MIX (R65, MODULATION): dry CCW, classic phaser at noon, wet only (vibrato) CW |
+| **Tap Down** | Toggle bypass, with a crossfade. A tap only counts if Main wasn't turned |
+
+### Scenes
+
+Each scene stores its own RATE, AMOUNT and FEEDBACK. MIX is global.
+
+- **Glide:** changing scene doesn't jump. The three settings move along an
+  eased path, like a hand turning the pots, and arrive in about half a second.
+  The glide moves the pot positions, so RATE sweeps through the original's log
+  law, and AMOUNT still has to pass through the lamps' thermal lag.
+- **Soft takeover:** after a scene change, each knob does nothing until you
+  turn it to its stored value (or past it). The same applies to Main when you
+  press or release Down, so neither RATE nor MIX ever jumps.
+- **Pulse In 2:** a high gate selects the *other* scene from the one the
+  switch picks. Clock it to make the phaser move between two settings.
+- **At power-up,** both scenes start at the knobs' current positions, and MIX
+  starts at noon.
 
 | Jack | Function |
 |---|---|
@@ -23,7 +40,7 @@ lamps and eight LDRs.
 | CV In 1 | Rate, about 1 octave per volt |
 | CV In 2 | AMOUNT jack: volts into the lamp driver, for a manual sweep |
 | Pulse In 1 | Reset the LFO to the bottom of its sweep |
-| Pulse In 2 | Hold the LFO while high |
+| Pulse In 2 | High selects the other scene |
 | Audio Out 1 | Effect |
 | Audio Out 2 | Dry, after the input amplifier (the original's second output) |
 | CV Out 1 | LFO triangle, about ±5 V |
@@ -45,9 +62,9 @@ that runs on the card:
 
 | RATE | LFO | AMOUNT ½ | AMOUNT full |
 |---|---|---|---|
-| 0.2 | 0.3 Hz | 26 – 950 Hz | 93 – 3770 Hz |
-| 0.5 | 1.8 Hz | 68 – 790 Hz | 294 – 3530 Hz |
-| 0.7 | 5.5 Hz | 201 – 528 Hz | 881 – 2870 Hz |
+| 0.2 | 0.27 Hz | 25 – 950 Hz | 90 – 3770 Hz |
+| 0.5 | 1.7 Hz | 64 – 800 Hz | 279 – 3550 Hz |
+| 0.7 | 5.4 Hz | 197 – 534 Hz | 858 – 2900 Hz |
 | 1.0 | 20 Hz | 314 – 362 Hz | 1600 – 1960 Hz |
 
 At slow rates the sweep is wide. As RATE goes up, the lamps cannot cool fast enough
@@ -56,7 +73,8 @@ shallow shimmer. A phaser with an ideal LFO cannot do this.
 
 ## How the circuit becomes a wave digital filter
 
-All of the modelling is in `phaser.h`.
+All of the modelling is in `phaser.h`. The knob, scene and switch handling is
+in `panel.h`.
 
 - **Capacitors** are WDF one-ports under the bilinear transform. **Op-amps** are ideal
   (V+ = V−, no input current).
@@ -96,7 +114,8 @@ estimates, not measurements of Haible's unit.
   feed a state therefore carry their truncation remainder into the next sample
   (error feedback). That brought the fixed-point error against a double-precision
   model to −80 to −105 dB.
-- **Core 1** runs the control model in float, once per 16-sample block. Results are
+- **Core 1** runs the panel logic and the control model in float, once per
+  16-sample block. Results are
   passed back through a double buffer. Core 0 ramps the eight all-pass coefficients
   across each block, so there is no 3 kHz zipper noise.
 - **Clock and memory:** the card runs at 192 MHz. The audio path, the 64-bit multiply
@@ -105,12 +124,15 @@ estimates, not measurements of Haible's unit.
 ## Verifying
 
 `tools/phaser_check.cpp` builds on any desktop compiler. It runs the card's own
-engine against a double-precision reference and checks four things:
+engine against a double-precision reference and checks five things:
 
 - fixed-point error;
 - resonance growth with FEEDBACK, and impulse decay at the end stop across the
   whole LDR range;
 - sweep range against rate;
+- the panel: the LFO stop, scene glide (no jump, no overshoot, arrives within
+  0.7 s), soft takeover, the Pulse In 2 scene flip, hold-Down MIX, and the
+  bypass tap;
 - 20 s of full-scale noise at maximum feedback, followed by a return to silence.
 
 It can also render a demo WAV through the full card model:

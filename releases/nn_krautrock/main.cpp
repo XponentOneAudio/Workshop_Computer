@@ -8,9 +8,10 @@
 //
 // CORE SPLIT
 //   core 0  the audio ISR: the whole audio path in fixed point, every sample.
-//   core 1  the control model in float, once per 16-sample block: LFO, lamp
-//           driver, filament heat balance, LDR response, and solving the
-//           feedback network when the FEEDBACK knob moves.
+//   core 1  the control model in float, once per 16-sample block: the panel
+//           (scenes, soft takeover, glide - see panel.h), LFO, lamp driver,
+//           filament heat balance, LDR response, and solving the feedback
+//           network when FEEDBACK moves.
 //
 // The control model needs eight float divisions per block, and the network
 // solve a dozen more. Inline in the ISR, that block would land on one sample
@@ -26,6 +27,7 @@
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
 
+#include "panel.h"
 #include "phaser.h"
 
 // REQUIRED for the Workshop Computer's crystal: without it the card can fail
@@ -41,9 +43,10 @@ using namespace kraut;
 
 // core 0 -> core 1: a snapshot of the panel, taken at each block boundary.
 struct Panel {
-  int32_t rate, depth, feedback;    // knobs, 0..4095
+  int32_t main, x, y;               // knobs, 0..4095
   int32_t cv1, cv2;                 // -2048..2047
-  bool hold;
+  PanelSwitch sw;
+  bool gate;                        // Pulse In 2: the other scene
 };
 static volatile uint32_t gTick = 0;
 static volatile bool gReset = false;
@@ -55,7 +58,8 @@ struct Result {
   NetCoeffs net;
   int16_t cvLfo, cvPole;            // CV out codes
   uint16_t ledLamp, ledUp, ledDown; // LED brightness, 0..4095
-  bool rising;
+  int32_t mix;                      // Q30, dry 0 .. wet 1
+  bool rising, bypass;
 };
 static Result gResult[2];
 static volatile int gReady = -1;
@@ -64,8 +68,10 @@ static volatile int gReady = -1;
 
 static void Core1Entry() {
   static Control ctrl;
+  static PanelLogic panel;
   ctrl.Init();
-  int32_t lastFeedback = -1000;
+  bool started = false;
+  float lastFeedback = -1.0f;
   NetCoeffs net = ComputeNet(0.0f);
   int w = 0;
   uint32_t seen = gTick;
@@ -77,23 +83,31 @@ static void Core1Entry() {
     __dmb();
     const Panel p = gPanel;
 
-    // RATE knob, plus CV 1 at roughly one octave per volt.
-    ctrl.SetRate((float)p.rate * (1.0f / 4095.0f), (float)p.cv1 * (1.0f / 341.0f));
+    const float kx = (float)p.x * (1.0f / 4095.0f);
+    const float ky = (float)p.y * (1.0f / 4095.0f);
+    const float km = (float)p.main * (1.0f / 4095.0f);
+    if (!started) { panel.Init(km, kx, ky); started = true; }
+    panel.Step(km, kx, ky, p.sw, p.gate);
+
+    // RATE, plus CV 1 at roughly one octave per volt.
+    ctrl.SetRate(panel.Value(kRate), (float)p.cv1 * (1.0f / 341.0f));
     if (gReset) { gReset = false; ctrl.Reset(); }
 
     Result& r = gResult[w];
     // CV 2 is the AMOUNT jack: volts added at Q1's base, so it sweeps the
     // lamps by hand - through their lag - with or without the LFO.
-    ctrl.Step((float)p.depth * (1.0f / 4095.0f), (float)p.cv2 * (6.0f / 2048.0f),
-              p.hold, r.q);
+    ctrl.Step(panel.Value(kAmount), (float)p.cv2 * (6.0f / 2048.0f), false, r.q);
 
-    // The network is re-solved only when FEEDBACK actually moves, with enough
-    // hysteresis that ADC noise does not trigger it.
-    if (p.feedback - lastFeedback > 6 || lastFeedback - p.feedback > 6) {
-      lastFeedback = p.feedback;
-      net = ComputeNet((float)p.feedback * (1.0f / 4095.0f));
+    // The network is re-solved only when FEEDBACK actually moves (a glide
+    // moves it every block, which core 1 has ample time for).
+    const float fb = panel.Value(kFeedback);
+    if (fabsf(fb - lastFeedback) > 0.0015f) {
+      lastFeedback = fb;
+      net = ComputeNet(fb);
     }
     r.net = net;
+    r.mix = ToQ30(panel.Mix());
+    r.bypass = panel.Bypass();
 
     // CV 1: the triangle as U4 makes it, +/-5 V. CV 2: where the notches are,
     // as the log of the pole frequency, 0 V at 25 Hz and +1 V per octave.
@@ -128,15 +142,9 @@ class KrautrockPhaser : public ComputerCard {
     if (phase_ == 0) Block();
     phase_ = (phase_ + 1) & (kCtrlDiv - 1);
 
-    // Switch: Up is VIBRATO (wet only), Middle is PHASER (the MODULATION pot
-    // at noon: equal dry and wet). Down is momentary and toggles BYPASS, as
-    // the original's footswitch toggles its relay.
-    // ComputerCard's switch filter starts at Down, so ignore the first half
-    // second rather than toggling BYPASS on every power-up.
-    if (boot_ < 24000) boot_++;
-    else if (SwitchChanged() && SwitchVal() == Down) bypass_ = !bypass_;
-    const int32_t mixTarget = SwitchVal() == Up ? kOneQ30 : kOneQ30 / 2;
-    mix_ += (mixTarget - mix_) >> 9;
+    // MIX is the original's MODULATION pot (R65), set by holding the switch
+    // Down and turning Main. Smoothed here so it cannot step at 3 kHz.
+    mix_ += (mixTarget_ - mix_) >> 9;
     const int32_t bypTarget = bypass_ ? 4096 : 0;
     if (byp_ < bypTarget) byp_++;               // ~85 ms crossfade, no click
     if (byp_ > bypTarget) byp_--;
@@ -165,12 +173,14 @@ class KrautrockPhaser : public ComputerCard {
  private:
   // Once per 16 samples: hand the panel to core 1, take its newest result.
   void __not_in_flash_func(Block)() {
-    gPanel.rate = KnobVal(Main);
-    gPanel.depth = KnobVal(X);
-    gPanel.feedback = KnobVal(Y);
+    gPanel.main = KnobVal(Main);
+    gPanel.x = KnobVal(X);
+    gPanel.y = KnobVal(Y);
     gPanel.cv1 = CVIn1();
     gPanel.cv2 = CVIn2();
-    gPanel.hold = PulseIn2();
+    const Switch sw = SwitchVal();
+    gPanel.sw = sw == Down ? kSwDown : sw == Up ? kSwUp : kSwMiddle;
+    gPanel.gate = PulseIn2();
     __dmb();
     gTick = gTick + 1;
 
@@ -180,6 +190,8 @@ class KrautrockPhaser : public ComputerCard {
     if (!primed_) { engine_.SetQ(r.q); primed_ = true; }
     else engine_.SetTargets(r.q);
     engine_.SetNet(r.net);
+    mixTarget_ = r.mix;
+    bypass_ = r.bypass;
 
     CVOut1(r.cvLfo);
     CVOut2(r.cvPole);
@@ -196,11 +208,10 @@ class KrautrockPhaser : public ComputerCard {
 
   Phaser engine_;
   int phase_ = 0;
-  int32_t boot_ = 0;
   bool primed_ = false;
   bool bypass_ = false;
   int32_t byp_ = 0;
-  int32_t mix_ = kOneQ30 / 2;
+  int32_t mix_ = kOneQ30 / 2, mixTarget_ = kOneQ30 / 2;
   int32_t clipHold_ = 0;
 };
 
