@@ -207,7 +207,13 @@ class KrautrockPhaser : public ComputerCard {
 int main() {
   // 192 MHz, as used by several cards on this hardware.
   set_sys_clock_khz(192000, true);
-  multicore_launch_core1(Core1Entry);
   static KrautrockPhaser card;
+  // Core 1 must start AFTER the card is constructed. ComputerCard's
+  // constructor calls flash_get_unique_id(), which briefly disables execution
+  // from flash; core 1 runs its control model from flash, so launching it
+  // first crashes it. The audio path then never receives coefficients, every
+  // all-pass stage passes straight through, and the effect output is just the
+  // dry signal.
+  multicore_launch_core1(Core1Entry);
   card.Run();
 }
