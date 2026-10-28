@@ -1,0 +1,127 @@
+draft: true
+Name: WDF Benjolin
+short-description: Benjolin with a wave digital filter model of its rungler DAC and a resonant, self-oscillating filter
+summary: |
+  A Benjolin after Rob Hordijk: two triangle-core oscillators, a rungler
+  (8-bit shift register clocked by oscillator 2, fed by oscillator 1), a PWM
+  comparator and a resonant filter. The analogue parts that shape the sound
+  are modelled as Wave Digital Filters, in fixed point.
+
+    - The rungler DAC is the R/2R/4R network summing into a smoothing
+      capacitor.
+    - The filter is a voltage-controlled series RLC with a nonlinear root: a
+      negative resistance sets resonance (self-oscillating at the top of its
+      range) and a current limiter caps the amplitude.
+
+  Main, X and Y set oscillator 1, oscillator 2 and filter cutoff. Hold Z down
+  to set rungler depth to each oscillator and resonance on the same knobs;
+  parameters pick up when the knob reaches them, so nothing jumps.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: TBD
+Version: "1.0"
+Status: WIP
+License: MIT
+date-created: 2026-10-28
+date-updated: 2026-10-28
+
+tags:
+  - benjolin
+  - rungler
+  - chaos
+  - filter
+  - wave-digital-filter
+
+panel:
+  inputs:
+    - id: PulseIn1
+      name: Rungler Clock
+      description: When patched, rising edges clock the rungler instead of oscillator 2
+      type: pulse
+    - id: PulseIn2
+      name: Loop Gate
+      description: While high, flips the rungler between chaos and loop
+      type: pulse
+    - id: AudioIn1
+      name: Filter In
+      description: When patched, replaces the PWM comparator as the filter input
+      type: audio
+    - id: AudioIn2
+      name: Cutoff CV
+      description: Filter cutoff CV, about 1V/oct. Normalled to the rungler at a depth of 3 octaves
+      type: cv
+    - id: CVIn1
+      name: Osc 1 CV
+      description: Oscillator 1 pitch CV, about 1V/oct
+      type: cv
+    - id: CVIn2
+      name: Osc 2 CV
+      description: Oscillator 2 pitch CV, about 1V/oct
+      type: cv
+  outputs:
+    - id: AudioOut1
+      name: Filter LP
+      description: Lowpass output of the WDF filter (the main Benjolin voice)
+      type: audio
+    - id: AudioOut2
+      name: Filter BP
+      description: Bandpass output of the WDF filter
+      type: audio
+    - id: CVOut1
+      name: Rungler
+      description: Stepped rungler voltage from the WDF DAC, 0 to +6V
+      type: cv
+    - id: CVOut2
+      name: Osc 2 Triangle
+      description: Oscillator 2 triangle, bipolar
+      type: cv
+    - id: PulseOut1
+      name: Osc 1 Pulse
+      description: Oscillator 1 square wave
+      type: pulse
+    - id: PulseOut2
+      name: Osc 2 Pulse
+      description: Oscillator 2 square wave (the rungler clock)
+      type: pulse
+
+controls:
+  switch:
+    up:
+      name: Loop
+      description: The rungler recirculates its pattern
+    middle:
+      name: Chaos
+      description: The rungler takes new data from oscillator 1, XORed with its output
+    down:
+      name: Shift
+      description: Hold to set rungler depths and resonance with the knobs
+  knobs:
+    - when: { z: up }
+      main:
+        name: Osc 1
+        description: Oscillator 1 frequency, 0.5 Hz to about 6 kHz
+      x:
+        name: Osc 2
+        description: Oscillator 2 frequency, 0.5 Hz to about 6 kHz
+      y:
+        name: Cutoff
+        description: Filter cutoff, 30 Hz to 15 kHz
+    - when: { z: middle }
+      main:
+        name: Osc 1
+        description: Oscillator 1 frequency, 0.5 Hz to about 6 kHz
+      x:
+        name: Osc 2
+        description: Oscillator 2 frequency, 0.5 Hz to about 6 kHz
+      y:
+        name: Cutoff
+        description: Filter cutoff, 30 Hz to 15 kHz
+    - when: { z: down }
+      main:
+        name: Rungler > Osc 1
+        description: Rungler modulation depth into oscillator 1, up to 5 octaves
+      x:
+        name: Rungler > Osc 2
+        description: Rungler modulation depth into oscillator 2, up to 5 octaves
+      y:
+        name: Resonance
+        description: Filter resonance; self-oscillates in roughly the top tenth of the range
