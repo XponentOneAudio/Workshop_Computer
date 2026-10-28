@@ -13,9 +13,9 @@
 
 using namespace wdfb;
 
-// Soft takeover for knobs shared between the normal and shift pages:
-// a parameter only follows its knob once the knob has reached (or crossed)
-// the parameter's current value, so switching page never makes it jump.
+// Soft takeover for knobs shared between pages: a parameter only follows its
+// knob once the knob has reached (or crossed) the parameter's current value,
+// so changing page never makes it jump.
 struct Pickup
 {
 	int32_t value;
@@ -38,6 +38,19 @@ struct Pickup
 	}
 };
 
+// Knob pages, stepped through by tapping Z down:
+//            Main         X                   Y
+//   page 1   Osc 1 rate   Rungler > Osc 1     FM Osc 2 > Osc 1
+//   page 2   Osc 2 rate   Rungler > Osc 2     FM Osc 1 > Osc 2
+//   page 3   Cutoff       Rungler > Cutoff    Resonance
+enum Page
+{
+	PAGE_OSC1,
+	PAGE_OSC2,
+	PAGE_FILTER,
+	NUM_PAGES
+};
+
 class WDFBenjolin : public ComputerCard
 {
 public:
@@ -46,12 +59,15 @@ public:
 		benj.Init();
 		benj.reg = (uint8_t)(UniqueCardID() | 1);
 
-		osc1 = {2400};
-		osc2 = {1600};
-		cutoff = {2600};
-		run1 = {1700};
-		run2 = {1200};
-		res = {2700};
+		param[PAGE_OSC1][0] = {2400}; // osc 1 rate
+		param[PAGE_OSC1][1] = {1700}; // rungler > osc 1
+		param[PAGE_OSC1][2] = {0};	  // FM osc 2 > osc 1
+		param[PAGE_OSC2][0] = {1600}; // osc 2 rate
+		param[PAGE_OSC2][1] = {1200}; // rungler > osc 2
+		param[PAGE_OSC2][2] = {0};	  // FM osc 1 > osc 2
+		param[PAGE_FILTER][0] = {2600}; // cutoff
+		param[PAGE_FILTER][1] = {2458}; // rungler > cutoff (3 octaves)
+		param[PAGE_FILTER][2] = {2700}; // resonance
 	}
 
 protected:
@@ -60,66 +76,47 @@ protected:
 #if WDFB_PROFILE
 		uint32_t t0 = systick_hw->cvr;
 #endif
-		int32_t kMain = KnobVal(Knob::Main);
-		int32_t kX = KnobVal(Knob::X);
-		int32_t kY = KnobVal(Knob::Y);
+		int32_t knob[3] = {KnobVal(Knob::Main), KnobVal(Knob::X), KnobVal(Knob::Y)};
 		Switch sw = SwitchVal();
-		bool shift = sw == Switch::Down;
 
-		if (shift != lastShift)
+		// A tap down on Z steps to the next page. Require the switch to have
+		// been out of the down position for 20ms, to ignore contact bounce.
+		if (sw == Switch::Down)
 		{
-			if (shift)
+			if (notDownCount >= 960)
 			{
-				run1.Release(kMain);
-				run2.Release(kX);
-				res.Release(kY);
+				page = (page + 1) % NUM_PAGES;
+				for (int k = 0; k < 3; k++) param[page][k].Release(knob[k]);
 			}
-			else
-			{
-				osc1.Release(kMain);
-				osc2.Release(kX);
-				cutoff.Release(kY);
-			}
-			lastShift = shift;
+			notDownCount = 0;
+		}
+		else if (notDownCount < 960)
+		{
+			notDownCount++;
 		}
 
-		if (shift)
-		{
-			run1.Update(kMain);
-			run2.Update(kX);
-			res.Update(kY);
-		}
-		else
-		{
-			osc1.Update(kMain);
-			osc2.Update(kX);
-			cutoff.Update(kY);
-		}
+		for (int k = 0; k < 3; k++) param[page][k].Update(knob[k]);
 
 		Controls c;
 		// Oscillators: 13.5 octaves from 0.5 Hz, CV inputs ~1V/oct
-		c.osc1Oct = osc1.value * 216;
-		c.osc2Oct = osc2.value * 216;
+		c.osc1Oct = param[PAGE_OSC1][0].value * 216;
+		c.osc2Oct = param[PAGE_OSC2][0].value * 216;
 		if (Connected(Input::CV1)) c.osc1Oct += CVIn1() * 192;
 		if (Connected(Input::CV2)) c.osc2Oct += CVIn2() * 192;
 
 		// Rungler depths: 0..5 octaves
-		c.run1 = run1.value * 80;
-		c.run2 = run2.value * 80;
+		c.run1 = param[PAGE_OSC1][1].value * 80;
+		c.run2 = param[PAGE_OSC2][1].value * 80;
+		c.runFilt = param[PAGE_FILTER][1].value * 80;
 
-		// Filter: 9 octaves from 30 Hz. Audio In 2 is cutoff CV, normalled
-		// to the rungler at 3 octaves depth.
-		c.cutoffOct = cutoff.value * 144;
-		if (Connected(Input::Audio2))
-		{
-			c.cutoffOct += AudioIn2() * 192;
-			c.runFilt = 0;
-		}
-		else
-		{
-			c.runFilt = 3 * OCT;
-		}
-		c.res = res.value << 18;
+		// Cross FM depths: 0..4 octaves either side
+		c.fm1 = param[PAGE_OSC1][2].value * 64;
+		c.fm2 = param[PAGE_OSC2][2].value * 64;
+
+		// Filter: 9 octaves from 30 Hz, Audio In 2 is cutoff CV
+		c.cutoffOct = param[PAGE_FILTER][0].value * 144;
+		if (Connected(Input::Audio2)) c.cutoffOct += AudioIn2() * 192;
+		c.res = param[PAGE_FILTER][2].value << 18;
 
 		// Switch up = loop; Pulse In 2 high inverts the loop/chaos state
 		c.loop = (sw == Switch::Up) != (Connected(Input::Pulse2) && PulseIn2());
@@ -141,24 +138,13 @@ protected:
 		PulseOut1(benj.osc1.Square());
 		PulseOut2(benj.osc2.Square());
 
-		if (shift)
-		{
-			LedBrightness(0, run1.value);
-			LedBrightness(1, run2.value);
-			LedBrightness(2, res.value);
-			LedBrightness(3, res.value);
-			LedOff(4);
-			LedOff(5);
-		}
-		else
-		{
-			LedBrightness(0, (benj.osc1.v + ONE) >> 13);
-			LedBrightness(1, (benj.osc2.v + ONE) >> 13);
-			LedBrightness(2, benj.rungler >> 12);
-			LedOn(3, benj.pwm > 0);
-			LedBrightness(4, clampi(abs(benj.filter.lp) >> 12, 0, 4095));
-			LedBrightness(5, clampi(abs(benj.filter.bp) >> 12, 0, 4095));
-		}
+		// Left column: current page. Right column: rungler, comparator, LP level
+		LedOn(0, page == PAGE_OSC1);
+		LedOn(2, page == PAGE_OSC2);
+		LedOn(4, page == PAGE_FILTER);
+		LedBrightness(1, benj.rungler >> 12);
+		LedOn(3, benj.pwm > 0);
+		LedBrightness(5, clampi(abs(benj.filter.lp) >> 12, 0, 4095));
 
 #if WDFB_PROFILE
 		// SysTick counts down; light LED 5 permanently if a sample ever
@@ -171,8 +157,9 @@ protected:
 
 private:
 	Benjolin benj;
-	Pickup osc1, osc2, cutoff, run1, run2, res;
-	bool lastShift = false;
+	Pickup param[NUM_PAGES][3];
+	int page = PAGE_OSC1;
+	int32_t notDownCount = 0;
 #if WDFB_PROFILE
 	uint32_t maxCycles = 0;
 #endif

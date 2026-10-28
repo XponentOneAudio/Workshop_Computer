@@ -146,6 +146,75 @@ int main(int argc, char **argv)
 		}
 	}
 
+	printf("Band-limited comparator\n");
+	{
+		// Square wave from comparing a triangle with 0. Fit the true harmonics
+		// (odd multiples of f below Nyquist) by least squares; what is left is
+		// aliasing. Compare against the naive comparator.
+		auto aliasDb = [](bool blep, double f) {
+			const int N = 48000;
+			TriangleCore osc;
+			BlepComparator cmp;
+			int32_t inc = (int32_t)(4.0 * f / 48000.0 * ONE);
+			std::vector<double> y(N);
+			for (int n = 0; n < N; n++)
+			{
+				osc.Step(inc);
+				int32_t o = blep ? cmp.Step(osc.v) : (osc.v > 0 ? BlepComparator::H : -BlepComparator::H);
+				y[n] = o / (double)ONE;
+			}
+			// harmonic fit, with frequency estimated from the integer increment
+			double fe = inc / (double)ONE * 48000.0 / 4.0;
+			std::vector<double> r = y;
+			double total = 0;
+			for (double v : y) total += v * v;
+			for (int k = 1; k * fe < 24000; k += 2)
+			{
+				double w = 2 * M_PI * k * fe / 48000.0, cs = 0, sn = 0;
+				for (int n = 0; n < N; n++) { cs += y[n] * cos(w * n); sn += y[n] * sin(w * n); }
+				cs *= 2.0 / N; sn *= 2.0 / N;
+				for (int n = 0; n < N; n++) r[n] -= cs * cos(w * n) + sn * sin(w * n);
+			}
+			double res = 0;
+			for (int n = N / 10; n < N - N / 10; n++) res += r[n] * r[n];
+			return 10 * log10(res / (total * 0.8));
+		};
+		for (double f : {1234.5, 3001.7})
+		{
+			double naive = aliasDb(false, f), blep = aliasDb(true, f);
+			printf("  %.1f Hz: aliasing naive %.1f dB, polyBLEP %.1f dB\n", f, naive, blep);
+			check(blep < naive - 10, "  polyBLEP reduces aliasing by more than 10 dB");
+		}
+	}
+
+	printf("Cross FM\n");
+	{
+		auto freqOf = [](int32_t fm1) {
+			static Benjolin b;
+			b = Benjolin();
+			b.Init();
+			Controls c{};
+			c.osc1Oct = 8 * OCT; // 128 Hz
+			c.osc2Oct = 4 * OCT; // 8 Hz
+			c.fm1 = fm1;
+			int up = 0;
+			bool last = false;
+			for (int n = 0; n < 48000 * 4; n++)
+			{
+				b.Step(c);
+				if (b.osc1.Square() && !last) up++;
+				last = b.osc1.Square();
+			}
+			return up / 4.0;
+		};
+		double f0 = freqOf(0), f2 = freqOf(2 * OCT);
+		printf("  osc1 mean rate: no FM %.1f Hz, 2 oct FM %.1f Hz\n", f0, f2);
+		// exponential FM by a triangle over +/-2 octaves raises the mean rate
+		// by the mean of 2^(2x), x uniform in -1..1: (4 - 1/4) / (4 ln 2) = 1.35
+		check(fabs(f0 - 128) < 1.5, "  unmodulated rate is correct");
+		check(fabs(f2 / f0 - 1.352) < 0.05, "  FM raises mean rate as expected for exponential FM");
+	}
+
 	printf("Stress test (extreme settings, external clipping input)\n");
 	{
 		static Benjolin b;
@@ -163,6 +232,8 @@ int main(int argc, char **argv)
 			c.run2 = 6 * OCT;
 			c.cutoffOct = (int32_t)((rng >> 12) % (11 * OCT)) - OCT;
 			c.runFilt = 4 * OCT;
+			c.fm1 = (int32_t)((rng >> 6) % (6 * OCT));
+			c.fm2 = (int32_t)((rng >> 10) % (6 * OCT));
 			c.res = (rng & 0x10000) ? CONE : (int32_t)((rng >> 2) % CONE);
 			c.useExtIn = (rng & 0x20000);
 			c.extIn = (rng & 0x40000) ? 2 * ONE : -2 * ONE;
@@ -183,12 +254,14 @@ int main(int argc, char **argv)
 			const char *name;
 			float o1, o2, r1, r2, cut, rf, res;
 			bool loop;
+			float fm1 = 0, fm2 = 0;
 		};
 		Patch patches[] = {
 			{"classic", 8.5f, 4.5f, 2.0f, 1.5f, 4.5f, 2.5f, 0.7f, false},
 			{"loop", 9.0f, 5.5f, 3.0f, 0.5f, 4.0f, 3.0f, 0.8f, true},
 			{"scream", 10.0f, 7.0f, 4.0f, 3.0f, 5.5f, 2.0f, 0.97f, false},
 			{"slow_rungler", 7.5f, 2.0f, 4.0f, 0.0f, 3.5f, 3.5f, 0.6f, false},
+			{"cross_fm", 9.5f, 7.0f, 1.5f, 1.0f, 5.0f, 2.0f, 0.75f, false, 2.5f, 1.5f},
 		};
 		for (auto &p : patches)
 		{
@@ -209,6 +282,8 @@ int main(int argc, char **argv)
 				c.runFilt = (int32_t)(p.rf * OCT);
 				c.res = (int32_t)(p.res * CONE);
 				c.loop = p.loop;
+				c.fm1 = (int32_t)(p.fm1 * OCT);
+				c.fm2 = (int32_t)(p.fm2 * OCT);
 				b.Step(c);
 				L.push_back(0.6f * b.filter.lp / ONE);
 				R.push_back(0.6f * b.filter.bp / ONE);

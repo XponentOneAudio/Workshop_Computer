@@ -9,7 +9,8 @@
 //     oscillator 1 XOR the register output (or recirculating in "loop")
 //   * Rungler DAC: WDF of the 4R/2R/R resistor network summing into a
 //     smoothing capacitor
-//   * PWM comparator (tri1 > tri2) feeding
+//   * Cross FM: each oscillator's rate is modulated by the other's triangle
+//   * PWM comparator (tri1 > tri2), band-limited with polyBLEP, feeding
 //   * Resonant filter: WDF of a voltage-controlled series RLC with a
 //     piecewise-linear "negative resistance + current limiter" in the loop
 //     as the (non-adapted) root, giving resonance up to and beyond
@@ -283,6 +284,47 @@ struct Exp2Table
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// Band-limited comparator (the Benjolin "PWM" output)
+//
+// The naive comparator output steps between -H and +H at arbitrary times
+// between samples, which aliases badly once the oscillators are high or
+// being cross-modulated. Each step is corrected with a two-sample polyBLEP:
+// the crossing time is found by linear interpolation of d = tri1 - tri2, and
+// the band-limited step residual is added to the samples either side of it.
+// This costs one sample of latency.
+
+struct BlepComparator
+{
+	static constexpr int32_t H = ONE >> 1; // output level
+
+	int32_t dPrev = 0;
+	int32_t naivePrev = -H;
+	int32_t pending = -H; // previous sample, naive value + corrections so far
+
+	int32_t Step(int32_t d)
+	{
+		int32_t naive = d > 0 ? H : -H;
+		int32_t now = naive;
+		int32_t out = pending;
+		if (naive != naivePrev)
+		{
+			int32_t h = naive - naivePrev; // +/- 2H
+			// fraction of the sample interval at which the crossing happens
+			int32_t t = (int32_t)(((int64_t)dPrev << 15) / (dPrev - d)); // Q15, 0..1
+			int32_t dl = (1 << 15) - t;									  // time from crossing to this sample
+			int32_t before = (dl * dl) >> 1;							  // Q30, dl^2/2
+			int32_t after = (((1 << 15) - dl) * ((1 << 15) - dl)) >> 1;	  // Q30, (1-dl)^2/2
+			out += mulq30(h, before);
+			now -= mulq30(h, after);
+		}
+		dPrev = d;
+		naivePrev = naive;
+		pending = now;
+		return out;
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////
 // Complete instrument
 
 static constexpr float OSC_FMIN = 0.5f;	   // Hz at 0 octaves
@@ -296,6 +338,8 @@ struct Controls
 	int32_t run2;	   // rungler -> osc2 depth
 	int32_t cutoffOct; // Q16 octaves above FILT_FMIN, excluding rungler
 	int32_t runFilt;   // rungler -> filter depth, Q16 octaves
+	int32_t fm1;	   // osc2 triangle -> osc1 pitch, Q16 octaves at full swing
+	int32_t fm2;	   // osc1 triangle -> osc2 pitch
 	int32_t res;	   // Q30, 0..CONE
 	bool loop;		   // rungler recirculates instead of taking data from osc1
 	bool useExtClock;  // rungler clocked by extClock instead of osc2
@@ -308,13 +352,14 @@ struct Benjolin
 {
 	TriangleCore osc1, osc2;
 	RunglerDAC dac;
+	BlepComparator comparator;
 	ResonantFilter filter;
 	Exp2Table exp2;
 	int32_t incBase; // triangle increment per sample at OSC_FMIN, Q24
 
 	uint8_t reg = 0xA5;
 	int32_t rungler = 0; // 0..ONE
-	int32_t pwm = 0;
+	int32_t pwm = 0; // band-limited comparator output, Q24
 	bool lastClock = false;
 
 	void Init()
@@ -338,10 +383,19 @@ struct Benjolin
 		return ((rung >> 8) * (depth >> 8)) >> 8;
 	}
 
+	// triangle (Q24, -1..1) x depth (Q16 octaves, < 128) -> Q16 octaves
+	static int32_t FM(int32_t tri, int32_t depth)
+	{
+		return ((tri >> 9) * (depth >> 8)) >> 7;
+	}
+
 	void Step(const Controls &c)
 	{
-		osc1.Step(Increment(c.osc1Oct + Mod(rungler, c.run1)));
-		osc2.Step(Increment(c.osc2Oct + Mod(rungler, c.run2)));
+		// Cross FM: each oscillator's exponential rate is modulated by the
+		// other's triangle (both taken from the previous sample)
+		int32_t tri1 = osc1.v, tri2 = osc2.v;
+		osc1.Step(Increment(c.osc1Oct + Mod(rungler, c.run1) + FM(tri2, c.fm1)));
+		osc2.Step(Increment(c.osc2Oct + Mod(rungler, c.run2) + FM(tri1, c.fm2)));
 
 		bool clk = c.useExtClock ? c.extClock : osc2.Square();
 		if (clk && !lastClock)
@@ -354,7 +408,7 @@ struct Benjolin
 
 		rungler = dac.Step(reg >> 5);
 
-		pwm = osc1.v > osc2.v ? (ONE >> 1) : -(ONE >> 1);
+		pwm = comparator.Step(osc1.v - osc2.v);
 		int32_t vin = c.useExtIn ? c.extIn : pwm;
 		filter.Step(vin, c.cutoffOct + Mod(rungler, c.runFilt), c.res);
 	}

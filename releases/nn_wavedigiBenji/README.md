@@ -11,7 +11,9 @@ A Benjolin, after Rob Hordijk, for the Workshop System Computer. The analogue pa
  Osc 2 (tri core) ──┬── pulse ──── clock ─┘   shift reg │ WDF DAC     │           ├─► Osc 2 rate
                     └── tri ──┐                         └─────────────┘           └─► cutoff
                               ▼
-                   tri1 > tri2 (PWM comparator) ─► WDF resonant filter ─► LP / BP
+                   tri1 > tri2 (PWM comparator, polyBLEP) ─► WDF resonant filter ─► LP / BP
+
+ Cross FM: Osc 2 tri ─► Osc 1 rate, Osc 1 tri ─► Osc 2 rate
 ```
 
 ## What is modelled as a WDF
@@ -40,28 +42,34 @@ The filter state is stored as Kirchhoff variables (loop current, capacitor and i
 
 **Oscillators.** Each oscillator is an ideal current source charging a capacitor between Schmitt-trigger thresholds. Overshoot at each threshold is reflected, which keeps the frequency accurate at high rates. This part is a plain integrator, not a WDF.
 
+**Cross FM.** Each oscillator's exponential rate is modulated by the other's triangle, with up to ±4 octaves of depth. Rates are clamped at about 8 kHz, so deep FM can't run an oscillator past what the triangle core handles cleanly.
+
+**Band-limited comparator.** Cross FM pushes the oscillators high and moves the PWM edges around quickly, which aliases badly with a naive comparator. Each edge is found to sub-sample accuracy by interpolating `tri1 - tri2`, and corrected with a two-sample polyBLEP. In the host test this lowers aliasing by about 16 dB (from -17 dB to -34 dB at 1.2 kHz). It adds one sample of latency.
+
 ### How faithful is it?
 
-It is a Benjolin-*style* circuit model, not a component-level model of Hordijk's schematic. The topology and behaviour are Benjolin-like: two triangle-core oscillators, a rungler with XOR/loop, a PWM comparator, and a resonant self-oscillating filter. But the filter is an idealised RLC with a PWL nonlinearity rather than the original transistor circuit, and the component values are normalised. The pulse waveforms are not band-limited.
+It is a Benjolin-*style* circuit model, not a component-level model of Hordijk's schematic. The topology and behaviour are Benjolin-like: two triangle-core oscillators, a rungler with XOR/loop, a PWM comparator, and a resonant self-oscillating filter. But the filter is an idealised RLC with a PWL nonlinearity rather than the original transistor circuit, and the component values are normalised. The comparator output feeding the filter is band-limited. The triangles and the pulse outputs are not.
 
 ## Controls
 
-| Control | Normal | Z held down (shift) |
-|---|---|---|
-| Main | Osc 1 rate (0.5 Hz to ~6 kHz) | Rungler → Osc 1 depth (0 to 5 oct) |
-| X | Osc 2 rate (0.5 Hz to ~6 kHz) | Rungler → Osc 2 depth (0 to 5 oct) |
-| Y | Filter cutoff (30 Hz to 15 kHz) | Resonance (self-oscillates in roughly the top 10%) |
+Tap Z down to step through three knob pages. The lit LED in the left column shows the page.
+
+| Page | Main | X | Y |
+|---|---|---|---|
+| 1 (top LED) | Osc 1 rate (0.5 Hz to ~6 kHz) | Rungler → Osc 1 (0 to 5 oct) | FM Osc 2 → Osc 1 (0 to ±4 oct) |
+| 2 (middle LED) | Osc 2 rate (0.5 Hz to ~6 kHz) | Rungler → Osc 2 (0 to 5 oct) | FM Osc 1 → Osc 2 (0 to ±4 oct) |
+| 3 (bottom LED) | Filter cutoff (30 Hz to 15 kHz) | Rungler → cutoff (0 to 5 oct) | Resonance (self-oscillates in roughly the top 10%) |
 
 Z up = **Loop**: the rungler recirculates its pattern. Z middle = **Chaos**: new data comes from Osc 1, XORed with the register output.
 
-Knobs use soft takeover. After switching page, a parameter only follows its knob once the knob reaches the parameter's current value.
+Knobs use soft takeover. After changing page, a parameter only follows its knob once the knob reaches the parameter's current value, so nothing jumps. On power-up, page 1 takes the knob positions straight away; the other pages start from defaults (FM off, rungler to cutoff at 3 octaves).
 
 ## Jacks
 
 | Jack | Function |
 |---|---|
 | Audio In 1 | Filter input; replaces the PWM comparator when patched |
-| Audio In 2 | Cutoff CV (~1V/oct); normalled to the rungler at 3 octaves depth |
+| Audio In 2 | Cutoff CV (~1V/oct), added to the knob and rungler |
 | CV In 1 / 2 | Osc 1 / Osc 2 pitch CV (~1V/oct) |
 | Pulse In 1 | External rungler clock; replaces Osc 2 when patched |
 | Pulse In 2 | While high, flips the rungler between Loop and Chaos |
@@ -70,7 +78,7 @@ Knobs use soft takeover. After switching page, a parameter only follows its knob
 | CV Out 2 | Osc 2 triangle |
 | Pulse Out 1 / 2 | Osc 1 / Osc 2 square |
 
-LEDs: the top row shows the Osc 1 and Osc 2 triangles. The middle row shows the rungler voltage and the PWM comparator state. The bottom row shows the LP and BP levels. In shift mode the LEDs show the rungler depths and the resonance.
+LEDs: the left column shows the current page. The right column shows, top to bottom, the rungler voltage, the PWM comparator state and the LP level.
 
 ## Building
 
@@ -96,6 +104,8 @@ The tests check:
 
 * the fixed-point filter's LP response against the prewarped analogue prototype `1/(s² + (R_s - r_n)s + 1)` (within 0.2 dB for cutoffs from 60 Hz to 11 kHz);
 * BP and HP behaviour;
+* aliasing of the polyBLEP comparator against a naive one (at least 10 dB better);
+* cross FM shifting the mean oscillator rate by the amount exponential FM should;
 * decay below the oscillation threshold, and bounded self-oscillation at the cutoff frequency above it;
 * a 20-second stress test at extreme, randomly jumping settings.
 

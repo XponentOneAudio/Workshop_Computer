@@ -1,10 +1,10 @@
 draft: true
 Name: WDF Benjolin
-short-description: Benjolin with a wave digital filter model of its rungler DAC and a resonant, self-oscillating filter
+short-description: Benjolin with cross FM, and a wave digital filter model of its rungler DAC and resonant, self-oscillating filter
 summary: |
-  A Benjolin after Rob Hordijk: two triangle-core oscillators, a rungler
-  (8-bit shift register clocked by oscillator 2, fed by oscillator 1), a PWM
-  comparator and a resonant filter. The analogue parts that shape the sound
+  A Benjolin after Rob Hordijk: two cross-modulating triangle-core
+  oscillators, a rungler (8-bit shift register clocked by oscillator 2, fed
+  by oscillator 1), a band-limited PWM comparator and a resonant filter. The analogue parts that shape the sound
   are modelled as Wave Digital Filters, in fixed point.
 
     - The rungler DAC is the R/2R/4R network summing into a smoothing
@@ -13,9 +13,13 @@ summary: |
       negative resistance sets resonance (self-oscillating at the top of its
       range) and a current limiter caps the amplitude.
 
-  Main, X and Y set oscillator 1, oscillator 2 and filter cutoff. Hold Z down
-  to set rungler depth to each oscillator and resonance on the same knobs;
-  parameters pick up when the knob reaches them, so nothing jumps.
+  Tap Z down to step through three knob pages:
+
+    1. Osc 1 rate, rungler > Osc 1, FM Osc 2 > Osc 1
+    2. Osc 2 rate, rungler > Osc 2, FM Osc 1 > Osc 2
+    3. Cutoff, rungler > cutoff, resonance
+
+  Parameters pick up when the knob reaches them, so nothing jumps.
 Language: C++ (Pico SDK + ComputerCard)
 Creator: TBD
 Version: "1.0"
@@ -47,7 +51,7 @@ panel:
       type: audio
     - id: AudioIn2
       name: Cutoff CV
-      description: Filter cutoff CV, about 1V/oct. Normalled to the rungler at a depth of 3 octaves
+      description: Filter cutoff CV, about 1V/oct, added to the knob and rungler
       type: cv
     - id: CVIn1
       name: Osc 1 CV
@@ -92,36 +96,36 @@ controls:
       name: Chaos
       description: The rungler takes new data from oscillator 1, XORed with its output
     down:
-      name: Shift
-      description: Hold to set rungler depths and resonance with the knobs
+      name: Page
+      description: Tap down to step to the next knob page (1, 2, 3, back to 1)
   knobs:
-    - when: { z: up }
-      main:
-        name: Osc 1
-        description: Oscillator 1 frequency, 0.5 Hz to about 6 kHz
+    - main:
+        name: Osc 1 rate / Osc 2 rate / Cutoff
+        description: "Page 1: oscillator 1 rate, 0.5 Hz to about 6 kHz. Page 2: oscillator 2 rate, same range. Page 3: filter cutoff, 30 Hz to 15 kHz."
       x:
-        name: Osc 2
-        description: Oscillator 2 frequency, 0.5 Hz to about 6 kHz
+        name: Rungler depth
+        description: "Rungler modulation depth, up to 5 octaves, into oscillator 1 (page 1), oscillator 2 (page 2) or the filter cutoff (page 3)."
       y:
-        name: Cutoff
-        description: Filter cutoff, 30 Hz to 15 kHz
-    - when: { z: middle }
-      main:
-        name: Osc 1
-        description: Oscillator 1 frequency, 0.5 Hz to about 6 kHz
-      x:
-        name: Osc 2
-        description: Oscillator 2 frequency, 0.5 Hz to about 6 kHz
-      y:
-        name: Cutoff
-        description: Filter cutoff, 30 Hz to 15 kHz
-    - when: { z: down }
-      main:
-        name: Rungler > Osc 1
-        description: Rungler modulation depth into oscillator 1, up to 5 octaves
-      x:
-        name: Rungler > Osc 2
-        description: Rungler modulation depth into oscillator 2, up to 5 octaves
-      y:
-        name: Resonance
-        description: Filter resonance; self-oscillates in roughly the top tenth of the range
+        name: Cross FM / Resonance
+        description: "Page 1: FM of oscillator 1 by oscillator 2's triangle, up to +/-4 octaves. Page 2: FM of oscillator 2 by oscillator 1. Page 3: filter resonance, self-oscillating in roughly the top tenth of the range."
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page 1
+          description: Lit while page 1 (oscillator 1) is selected
+        - id: LED2
+          name: Page 2
+          description: Lit while page 2 (oscillator 2) is selected
+        - id: LED4
+          name: Page 3
+          description: Lit while page 3 (filter) is selected
+        - id: LED1
+          name: Rungler
+          description: Rungler voltage
+        - id: LED3
+          name: Comparator
+          description: PWM comparator state
+        - id: LED5
+          name: LP level
+          description: Filter lowpass output level
