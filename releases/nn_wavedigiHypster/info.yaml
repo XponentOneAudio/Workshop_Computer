@@ -1,0 +1,116 @@
+draft: true
+Name: wavedigiHypster
+short-description: Wave digital filter model of Ian Fritz's Hypster fourth-order hyperchaos generator
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1"
+Status: Beta
+License: MIT
+date-created: 2026-10-29
+date-updated: 2026-10-29
+
+tags:
+  - chaos
+  - oscillator
+  - lfo
+  - modulation
+  - generative
+  - experimental
+
+summary: |
+  A circuit model of Ian Fritz's **Hypster** (2018): four voltage-controlled integrators in a ring,
+  coupled by zener and diode nonlinearities, producing anything from simple periodic waves to dense
+  hyperchaos, from very slow LFO rates up to the audio range. The integrators and every diode/zener
+  network are wave digital filters derived from Fritz's schematics. All the original controls are
+  here (Rate, Gain, Damping, their CV inputs, Gain trim, both Shape options and the optional limiter
+  diodes), spread over four pages selected by tapping Z down.
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: Rate CV
+      description: Exponential rate (1V/oct at full amount; amount and polarity on page 3 Main)
+      type: cv
+    - id: CVIn2
+      name: Gain CV
+      description: Adds to Gain (the c control current); amount on page 3 X
+      type: cv
+    - id: AudioIn1
+      name: Damping CV
+      description: Adds to Damping (the b control current); amount on page 3 Y
+      type: cv
+    - id: AudioIn2
+      name: Shape CV
+      description: Sweeps the Shape fat..slim pot (about +/-5V for the whole range)
+      type: cv
+    - id: PulseIn1
+      name: Kick
+      description: Rising edge re-seeds the four integrators near zero
+      type: pulse
+    - id: PulseIn2
+      name: Hold
+      description: Freezes the integrators while high
+      type: pulse
+  outputs:
+    - id: AudioOut1
+      name: x
+      description: Integrator x (output map on page 4 X can swap in u, z or y)
+      type: audio
+    - id: AudioOut2
+      name: y
+      description: Integrator y (by output map)
+      type: audio
+    - id: CVOut1
+      name: u
+      description: Integrator u (by output map)
+      type: cv
+    - id: CVOut2
+      name: z
+      description: Integrator z (by output map)
+      type: cv
+    - id: PulseOut1
+      name: Audio Out 1 > 0
+      description: Comparator on the signal at Audio Out 1
+      type: pulse
+    - id: PulseOut2
+      name: Audio Out 2 > 0
+      description: Comparator on the signal at Audio Out 2
+      type: pulse
+
+controls:
+  switch:
+    up:
+      name: Limiter
+      description: The optional limiter diodes D2-D4 are fitted; the system stays off the rails
+    middle:
+      name: No limiter
+      description: As Fritz captured his patterns; high Gain with little Damping can latch at the rails
+    tap:
+      name: Next page
+      description: Tap down for the next page (1-4); hold down for a second to return to page 1
+  knobs:
+    - main:
+        name: Rate
+        description: "Page 1: Rate (16 octaves). Page 2: Shape fat..slim. Page 3: Rate CV amount. Page 4: Output level"
+      x:
+        name: Gain
+        description: "Page 1: Gain. Page 2: Shape mode (6 zones). Page 3: Gain CV amount. Page 4: Output map"
+      y:
+        name: Damping
+        description: "Page 1: Damping. Page 2: Gain trim. Page 3: Damping CV amount. Page 4: Rate fine (+/-1 octave)"
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Audio Out 1 level
+        - id: LED1
+          name: Audio Out 2 level
+        - id: LED2
+          name: CV Out 1 level
+        - id: LED3
+          name: CV Out 2 level
+        - id: LED4
+          name: Pulse Out 1
+        - id: LED5
+          name: Pulse Out 2
+          description: On pages 2-4 the first 2-4 LEDs blink briefly every 2 seconds to show the page
