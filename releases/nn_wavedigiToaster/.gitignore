@@ -1,0 +1,10 @@
+# build trees (the release UF2 lives in UF2/)
+src/build/
+tools/bench/build/
+# simulator binaries and renders
+sim/out/
+sim/render
+sim/vcf_test
+sim/vcf_test_fast
+sim/probe
+sim/probe.f32

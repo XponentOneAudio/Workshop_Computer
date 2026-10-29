@@ -1,0 +1,168 @@
+-
+    BT1.1(+)[9 V] S11.1(A)[PowerSwitch]
+B-, Front Panel:-, Power Supply:-
+    BT1.2(-)[9 V] C11.1[0.1 uF] C14.2[10 uF] C15.2[470 uF] C16.2[1 uF] C18.2[4.7 uF] C19.2[1 uF] C20.1[0.1 uF] C23.2[470 uF] C25.2[10 uF] C26.2[470 uF] C5.2[0.1 uF] J2.2(Pin_2)[Power] Q10.1(E)[2N3906] Q2.1(E)[2N3904] Q5.2(B)[2N3904] Q6.1(E)[2N3904] R1.3(3)[100 K] R13.3(3)[100 K] R18.2[15 K] R22.2[4.7 K] R24.2[100 K] R42.2[4.7 k] R43.1[27 K] R45.1[100 K] R46.2[1 M] R47.2[100 K] R5.2[2 M] R54.1[4,7 K] R59.2[100 K] R61.1[10 K] R64.1[150 K] R66.1(1)[100 K] R68.2[20 K] R69.2[10 Ohm] SPK1.2(2)[8 Ohm 1 W] U1.11(V-)[LM324] U2.11(V-)[LM324] U3.2(-)[LM386] U3.4(GND)[LM386]
+-
+    C1.1[100 pF] Q3.3(C)[2N3904] R16.1[2 M] U1.13(-)[LM324]
+-
+    C1.2[100 pF] R4.2[10 K] U1.14[LM324]
+Front Panel:X10, Voltage Controlled Low Pass Filter:X10
+    C10.1[0.001 uF] J7.3(Pin_3)[VCLPF] R29.3(3)[100 K]
+FO, Front Panel:A, Front Panel:X13, Voltage Controlled Amplifier:FO, Voltage Controlled Amplifier:X12, Voltage Controlled Low Pass Filter:FO
+    C10.2[0.001 uF] J8.2(Pin_2)[VCA] Q7.1(D)[2N5457] R35.1[4.7 M] R66.3(3)[100 K] S5.2(B)[VCA Bypass] U2.1[LM324]
+-
+    C11.2[0.1 uF] R30.2[2 M] U2.6(-)[LM324]
+Front Panel:X11, Voltage Controlled Low Pass Filter:X11
+    C12.1[0.1 uF] J7.1(Pin_1)[VCLPF] R36.2[47 K] S4.2(B)[SW_SPST]
+-
+    C12.2[0.1 uF] R34.1[3 M]
+B+, Front Panel:+, Power Supply:+
+    C13.1[10 uF] C20.2[0.1 uF] C23.1[470 uF] C4.2[0.1 uF] J2.1(Pin_1)[Power] Q9.1(D)[2N5457] R1.1(1)[100 K] R15.1[10 K] R16.2[2 M] R17.2[10 K] R23.2[4.7 K] R3.2[270 K] R37.1[4.7 k] R44.2[100 K] R55.1[100 K] R63.1[150 K] R70.2[3 K] R8.1[1 M] R9.1[10 K] S10.1(A)[Manual Gate] S11.2(B)[PowerSwitch] U1.4(V+)[LM324] U2.4(V+)[LM324] U3.6(V+)[LM386]
+Front Panel:X7, GND, SQR, VCO - Ramp_Square Wave Generator:X7
+    C13.2[10 uF] C14.1[10 uF] C15.1[470 uF] GND1.1(Pin_1)[GND] J1.G[Line Out] J6.1(Pin_1)[VCO] Q8.3(S)[2N5457] R20.3(3)[100 K] R27.2[47 K] R28.1(1)[100 K] R28.2(2)[100 K] R31.2[100 K] R32.1[10 K] R32.2[10 K] R36.1[47 K] R37.2[4.7 k] R42.1[4.7 k] S3.3(3)[~] U2.3(+)[LM324]
+-
+    C16.1[1 uF] R48.1[3 K] U2.9(-)[LM324]
+Front Panel:B, Front Panel:X16, Low Frequency Oscillator:X16
+    C17.1[1 uF] J4.2(Pin_2)[LFO] LED1.1(K)[Rate Indicator] R49.2(2)[1 M] R49.3(3)[1 M] R56.1[20 K] R60.2[100 K] S2.1(A)[Sync] S7.1(A)[LFO] U2.8[LM324]
+-
+    C17.2[1 uF] S7.2(B)[LFO] S9.1(A)[~]
+-
+    C18.1[4.7 uF] R50.1[820 Ohm] R52.1[10 K]
+Front Panel:X20, Low Frequency Oscillator:X20
+    C19.1[1 uF] J4.1(Pin_1)[LFO] R56.2[20 K] S9.3(C)[~]
+AA, VCO - CV Mixer and Expo Converter:AA, VCO - Ramp_Square Wave Generator:AA
+    C2.1[0.001 uF] Q4.3(C)[2N3904] U1.2(-)[LM324]
+Front Panel:X3, RMP, VCO - Ramp_Square Wave Generator:X3
+    C2.2[0.001 uF] J6.3(Pin_3)[VCO] R12.1[10 K] R26.1[10 K] R30.1[2 M] S3.1(1)[~] U1.1[LM324]
+Audio Amplifier:X25, Front Panel:X25
+    C21.1[1 uF] J9.2(Pin_2)[Amp] R66.2(2)[100 K]
+Audio Amplifier:X24, Front Panel:X24
+    C21.2[1 uF] J1.S[Line Out] J9.1(Pin_1)[Amp]
+-
+    C22.1[220 uF] C24.1[0.047 uF] U3.5[LM386]
+Audio Amplifier:X26, Front Panel:X26
+    C22.2[220 uF] J9.4(Pin_4)[Amp] SPK1.1(1)[8 Ohm 1 W]
+-
+    C24.2[0.047 uF] R69.1[10 Ohm]
+-
+    C25.1[10 uF] U3.7(BYPASS)[LM386]
+-
+    C26.1[470 uF] R65.1[3 K] R70.1[3 K]
+-
+    C27.1[10 uF] U3.1(GAIN)[LM386]
+-
+    C27.2[10 uF] U3.8(GAIN)[LM386]
+-
+    C3.1[0.1 uF] Q5.1(E)[2N3904] R8.2[1 M]
+-
+    C3.2[0.1 uF] Q2.2(B)[2N3904] R10.2[470 K]
+G2, VCO - CV Mixer and Expo Converter:G2, VCO - Ramp_Square Wave Generator:G2
+    C4.1[0.1 uF] C5.1[0.1 uF] Q4.2(B)[2N3904] R22.1[4.7 K] R23.1[4.7 K] U1.10(+)[LM324] U1.12(+)[LM324] U1.3(+)[LM324]
+Front Panel:X6, VCO - Ramp_Square Wave Generator:X6
+    C6.1[0.01 uF] J6.2(Pin_2)[VCO] R24.1[100 K] S2.2(B)[Sync]
+-
+    C6.2[0.01 uF] R17.1[10 K] R18.1[15 K] U1.6(-)[LM324]
+-
+    C7.1[0.1 uF] Q2.3(C)[2N3904] R10.1[470 K] R9.2[10 K]
+-
+    C7.2[0.1 uF] R25.1[100 K]
+Front Panel:X8, Voltage Controlled Low Pass Filter:X8
+    C8.1[0.1 uF] J7.2(Pin_2)[VCLPF] R27.1[47 K] S3.2(2)[~]
+-
+    C8.2[0.1 uF] R33.1[4.7 M]
+Front Panel:X9, Voltage Controlled Low Pass Filter:X9
+    C9.1[0.001 uF] J7.4(Pin_4)[VCLPF] Q8.1(D)[2N5457] R28.3(3)[100 K] R29.1(1)[100 K] R29.2(2)[100 K]
+-
+    C9.2[0.001 uF] R33.2[4.7 M] R34.2[3 M] R35.2[4.7 M] U2.2(-)[LM324]
+-
+    D1.1(K)[D] R6.2[10 K]
+-
+    D1.2(A)[D] R7.2[300 K] U1.7[LM324]
+-
+    D2.1(K)[D] R51.1(1)[1 M]
+-
+    D2.2(A)[D] D3.1(K)[D] S8.2(B)[Repeat]
+-
+    D3.2(A)[D] R53.1(1)[1 M]
+Audio Amplifier:X27, Front Panel:X27
+    J1.T[Line Out] J9.3(Pin_3)[Amp] R67.2[100 K]
+Attack Release Envelope Generator:X22, Front Panel:X22
+    J3.1(Pin_1)[AREG] Q10.3(C)[2N3906] R57.2[200 Ohm] S8.3(C)[Repeat]
+Attack Release Envelope Generator:X21, Front Panel:X21
+    J3.2(Pin_2)[AREG] R57.1[200 Ohm] R61.2[10 K] R62.1[10 K] S10.2(B)[Manual Gate]
+Attack Release Envelope Generator:X19, Front Panel:X19
+    J3.3(Pin_3)[AREG] R58.2[100 K] S8.1(A)[Repeat] U2.14[LM324]
+ARG, Attack Release Envelope Generator:X18, Front Panel:ARG, Front Panel:X18, Voltage Controlled Amplifier:ARG
+    J3.4(Pin_4)[AREG] Q9.3(S)[2N5457] R41.1[470 K] R54.2[4,7 K] S1.2(B)[AR Mod ] U2.13(-)[LM324]
+Attack Release Envelope Generator:X17, Front Panel:X17
+    J3.5(Pin_5)[AREG] R50.2[820 Ohm] R51.2(2)[1 M] R51.3(3)[1 M] R53.2(2)[1 M] R53.3(3)[1 M]
+Front Panel:X23, Low Frequency Oscillator:X23
+    J4.3(Pin_3)[LFO] LED1.2(A)[Rate Indicator] R65.2[3 K]
+Front Panel:X15, Low Frequency Oscillator:X15
+    J4.4(Pin_4)[LFO] R48.2[3 K] R49.1(1)[1 M]
+Front Panel:X1, VCO - CV Mixer and Expo Converter:X1
+    J5.1(Pin_1)[VCO] R1.2(2)[100 K] R2.2[75 K]
+Front Panel:X2, VCO - CV Mixer and Expo Converter:X2
+    J5.2(Pin_2)[VCO] R13.2(2)[100 K] R14.2[100 K]
+Front Panel:X5, VCO - CV Mixer and Expo Converter:X5
+    J5.3(Pin_3)[VCO] R20.2(2)[100 K] R21.2[36 K]
+Front Panel:X14, Voltage Controlled Low Pass Filter:X14
+    J7.5(Pin_5)[VCLPF] R38.2(2)[100 K] R39.1[39 K]
+Front Panel:X12, Voltage Controlled Amplifier:X13
+    J8.1(Pin_1)[VCA] Q7.3(S)[2N5457] R47.1[100 K] S5.1(A)[VCA Bypass]
+-
+    Q1.1(D)[2N5457]
+-
+    Q1.2(G)[2N5457]
+-
+    Q1.3(S)[2N5457]
+-
+    Q10.2(B)[2N3906] R62.2[10 K]
+-
+    Q3.1(E)[2N3904] Q4.1(E)[2N3904] R4.1[10 K]
+-
+    Q3.2(B)[2N3904] R11.2[2 K] U1.8[LM324]
+-
+    Q5.3(C)[2N3904]
+-
+    Q6.2(B)[2N3904] R19.2[470 K] R25.2[100 K]
+Front Panel:X4, WNS, White Noise Generator:X4
+    Q6.3(C)[2N3904] R15.2[10 K] R19.1[470 K] S4.1(A)[SW_SPST] X4.1(Pin_1)[WNS]
+-
+    Q7.2(G)[2N5457] R41.2[470 K] R46.1[1 M]
+-
+    Q8.2(G)[2N5457] R40.2[39 K] R45.2[100 K]
+-
+    Q9.2(G)[2N5457] R52.2[10 K]
+-
+    R11.1[2 K] R14.1[100 K] R2.1[75 K] R21.1[36 K] R3.1[270 K] U1.9(-)[LM324]
+-
+    R12.2[10 K] R7.1[300 K] U1.5(+)[LM324]
+Front Panel:LFO
+    R13.1(1)[100 K] S9.2(B)[~]
+-
+    R20.1(1)[100 K] S1.1(A)[AR Mod ]
+-
+    R26.2[10 K] U2.5(+)[LM324]
+-
+    R31.1[100 K] U2.7[LM324]
+-
+    R38.1(1)[100 K] R43.2[27 K]
+-
+    R38.3(3)[100 K]
+-
+    R39.2[39 K] R40.1[39 K] R44.1[100 K]
+-
+    R5.1[2 M] R6.1[10 K]
+-
+    R55.2[100 K] R59.1[100 K] R60.1[100 K] U2.10(+)[LM324]
+-
+    R58.1[100 K] R63.2[150 K] R64.2[150 K] U2.12(+)[LM324]
+-
+    R67.1[100 K] R68.1[20 K] U3.3(+)[LM386]
+-
+    S6.1(1)[VCF Mod ]
+-
+    S6.2(2)[VCF Mod ]
+-
+    S6.3(3)[VCF Mod ]

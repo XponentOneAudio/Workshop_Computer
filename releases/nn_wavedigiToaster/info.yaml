@@ -1,0 +1,98 @@
+draft: true
+Name: Wave Digi Toaster
+short-description: The MFOS Noise Toaster modelled with wave digital filters - VCO, LFO, AREG, noise, resonant JFET VCF and VCA from the real schematic values
+summary: |
+  A circuit model of Ray Wilson's MFOS Noise Toaster. The VCF, AREG, LFO and coupling networks are
+  wave digital filters built from the schematic's component values; the JFET buffer and VCA are exact
+  nonlinear solves. The switch selects a knob page (Middle: cutoff / pitch / resonance, Up: LFO rate /
+  attack / release, Down: VCF mod / VCO mod / source). With nothing patched the AREG repeats; patch a
+  gate into `PulseIn1` to play it, pitch into `CVIn1` (1V/oct) and sync into `PulseIn2`.
+  Not yet tested on hardware.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1"
+Status: WIP
+License: CC BY-NC-SA 4.0
+date-created: 2026-10-29
+
+tags:
+  - synthesizer
+  - noise
+  - filter
+  - analog-model
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: External Audio to VCF
+      description: Summed with the VCO into the filter input; +/-5 V matches the VCO level
+    - id: AudioIn2
+      name: Expo FM
+      description: Audio-rate exponential FM into the VCO expo converter, 1 V/oct
+    - id: CVIn1
+      name: Pitch
+      description: 1 V/oct through the modelled expo converter
+    - id: CVIn2
+      name: Cutoff CV
+      description: Injected into the filter JFET's gate network; positive opens the filter
+    - id: PulseIn1
+      name: AREG Gate
+      description: Patched = AREG follows this gate; unpatched = AREG repeats on its own
+    - id: PulseIn2
+      name: VCO Sync
+      description: Rising edge hard-syncs the VCO ramp through the C6 differentiator
+  outputs:
+    - id: AudioOut1
+      name: Toaster Out
+      description: Main output after the JFET VCA
+    - id: AudioOut2
+      name: VCF Out
+      description: Filter output before the VCA (VCA bypass)
+    - id: CVOut1
+      name: AREG Envelope
+      description: Roughly 0 to +6 V
+    - id: CVOut2
+      name: LFO
+      description: RC-shaped LFO wave, about +/-5 V
+    - id: PulseOut1
+      name: LFO Square
+    - id: PulseOut2
+      name: AREG Gate
+      description: High during attack in repeat mode, otherwise echoes the gate
+
+controls:
+  switch:
+    up: { name: Page Up, description: Knobs set LFO rate, attack and release }
+    middle: { name: Page Middle, description: Knobs set cutoff, VCO frequency and resonance }
+    down: { name: Page Down / Manual Gate, description: Knobs set VCF mod, VCO mod and source; also gates the AREG when PulseIn1 is patched }
+  knobs:
+    - when: { z: middle }
+      main: { name: VCF Cutoff }
+      x: { name: VCO Frequency }
+      y: { name: VCF Resonance }
+    - when: { z: up }
+      main: { name: LFO Rate }
+      x: { name: AREG Attack }
+      y: { name: AREG Release }
+    - when: { z: down }
+      main: { name: VCF Mod, description: CCW = LFO, centre = off, CW = AREG }
+      x: { name: VCO Mod, description: CCW = LFO, centre = off, CW = AREG }
+      y: { name: Source, description: Ramp, square, ramp + noise, square + noise, noise }
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: LFO Rate
+          description: Lit while the LFO square is low
+        - id: LED1
+          name: Envelope
+        - id: LED2
+          name: VCO Square
+        - id: LED3
+          name: VCF Level
+        - id: LED4
+          name: Page Up
+          description: Dim until all knobs are picked up
+        - id: LED5
+          name: Page Down
+          description: Dim until all knobs are picked up
