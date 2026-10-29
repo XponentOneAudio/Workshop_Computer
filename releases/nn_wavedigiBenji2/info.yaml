@@ -1,0 +1,133 @@
+draft: true
+Name: WDF Benjolin 2
+short-description: Component-level circuit model of the Benjolin Gorga, with WDF capacitors and its real SSM2164 oscillators, rungler and filter
+summary: |
+  A model of the Benjolin Gorga (a eurorack v1.6 Benjolin after Rob Hordijk
+  and Forestcaver), built from its KiCad netlist and BOM. Every resistor,
+  capacitor and op-amp stage that shapes the sound is in the model with its
+  real value. Capacitors are Wave Digital Filter one-ports; the SSM2164 VCA
+  integrators, precision rectifiers, R-2R rungler DAC, transistor XOR and
+  state-variable filter are solved from the circuit each sample.
+
+  Details from the real circuit include:
+    - the filter modulating its own cutoff from its bandpass output
+    - the rungler CV leaking into the filter input
+    - the clipping x5 output stage
+    - the Chaos pot and SW1 locking the rungler into 8- or 16-step loops
+
+  Tap Z down to step through four knob pages:
+    1. Osc 1 rate, rungler > Osc 1, Osc 1 CV / cross mod
+    2. Osc 2 rate, rungler > Osc 2, Osc 2 CV / cross mod
+    3. Cutoff, rungler > filter, resonance
+    4. Chaos, filter CV depth, output level
+  Z up connects the Chaos pot (SW1). Knobs pick up their value so nothing jumps.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: TBD
+Version: "0.1"
+Status: WIP
+License: CC BY-NC 4.0
+date-created: 2026-10-29
+date-updated: 2026-10-29
+
+tags:
+  - benjolin
+  - rungler
+  - chaos
+  - filter
+  - wave-digital-filter
+  - circuit-model
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: Osc 1 CV
+      description: Oscillator 1 CV through its attenuator (R51); normalled to triangle 2 for cross modulation
+      type: cv
+    - id: CVIn2
+      name: Osc 2 CV
+      description: Oscillator 2 CV through its attenuator (R52); normalled to triangle 1
+      type: cv
+    - id: AudioIn1
+      name: Filter In
+      description: External filter input (C5, R30), mixed with the PWM comparator
+      type: audio
+    - id: AudioIn2
+      name: Filter CV
+      description: Filter cutoff CV through its attenuator (R53); normalled to triangle 2
+      type: cv
+    - id: PulseIn1
+      name: Rungler Clock
+      description: When patched, rising edges clock the rungler instead of oscillator 2
+      type: pulse
+    - id: PulseIn2
+      name: SW1 Gate
+      description: While high, flips SW1 (Chaos pot connected or not)
+      type: pulse
+  outputs:
+    - id: AudioOut1
+      name: Filter Out
+      description: Filter lowpass through the clipping x5 output stage, scaled by output level
+      type: audio
+    - id: AudioOut2
+      name: PWM
+      description: PWM comparator (triangle 2 vs triangle 1), scaled by output level
+      type: audio
+    - id: CVOut1
+      name: Rungler
+      description: Bipolar rungler CV from the R-2R DAC, -5.25 to +5.25V in 8 steps
+      type: cv
+    - id: CVOut2
+      name: Triangle 2
+      description: Oscillator 2 triangle
+      type: cv
+    - id: PulseOut1
+      name: Pulse 1
+      description: Oscillator 1 pulse
+      type: pulse
+    - id: PulseOut2
+      name: Pulse 2
+      description: Oscillator 2 pulse (the rungler clock)
+      type: pulse
+
+controls:
+  switch:
+    up:
+      name: SW1 On
+      description: Connects the Chaos pot to the XOR; fully one way locks an 8-step loop, fully the other a 16-step inverted loop
+    middle:
+      name: SW1 Off
+      description: Pure XOR chaos from oscillator 1's pulse
+    down:
+      name: Page
+      description: Tap down to step to the next knob page (1, 2, 3, 4, back to 1)
+  knobs:
+    - main:
+        name: Rate 1 / Rate 2 / Cutoff / Chaos
+        description: "Page 1: oscillator 1 rate (about 16 octaves, up to 5 kHz). Page 2: oscillator 2 rate. Page 3: filter cutoff. Page 4: Chaos pot (active with Z up)."
+      x:
+        name: Rungler depth / Filter CV
+        description: "Rungler depth into oscillator 1 (page 1), oscillator 2 (page 2) or the filter (page 3). Page 4: filter CV attenuator."
+      y:
+        name: Cross mod / Resonance / Level
+        description: "Page 1: oscillator 1 CV / cross mod from triangle 2. Page 2: oscillator 2 CV / cross mod from triangle 1. Page 3: resonance. Page 4: output level."
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page 1
+          description: Lit on page 1 (and page 4)
+        - id: LED2
+          name: Page 2
+          description: Lit on page 2 (and page 4)
+        - id: LED4
+          name: Page 3
+          description: Lit on page 3 (and page 4)
+        - id: LED1
+          name: Rungler
+          description: Rungler CV
+        - id: LED3
+          name: PWM
+          description: PWM comparator state
+        - id: LED5
+          name: Filter out
+          description: Filter output level
