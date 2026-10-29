@@ -449,6 +449,7 @@ struct Benjolin
 	bool q1OnHigh = true, q1OnLow = false; // Q1 state for P1 high / low
 	float chaosV = 0.0f, chaosG = 0.0f;
 	bool sw1 = false; // SW1: connects the chaos pot to Q1
+	float resWiper = 0, resBeta = 0; // resonance pot state, for inspection
 
 	int32_t pwm = 0;
 	int32_t fctrl = 0;
@@ -503,22 +504,58 @@ struct Benjolin
 			fCv = Gn(R46 * k / (R41 + PotRth(k)));
 			break;
 		case POT_RES:
-		{
-			// R59 from W (top) to GND, wiper loaded by R40 to ground and R39
-			// into the SSM input; clockwise towards GND = more resonance
-			float a = 1 - k; // wiper position measured from the GND end
-			float rTop = (1 - a) * R_POT + 1.0f, rBot = a * R_POT + 1.0f;
-			float gT = 1 / rTop, gB = 1 / rBot;
-			float beta = gT / (gT + gB + 1 / R40 + 1 / R39);
-			filter.SetResonance(beta);
+			resWiper = ResonanceTaper(k);
+			resBeta = ResBeta(resWiper);
+			filter.SetResonance(resBeta);
 			break;
-		}
 		case POT_CHAOS:
 			chaosV = VEE + (VCC - VEE) * k;
 			chaosG = 1 / (R18 + PotRth(k));
 			UpdateQ1();
 			break;
 		}
+	}
+
+	// R59 from W (top) to GND, wiper loaded by R40 to ground and R39 into
+	// the SSM input. a = wiper position measured from the GND end; a = 0
+	// gives beta = 0, the least damping.
+	static float ResBeta(float a)
+	{
+		using namespace part;
+		float rTop = (1 - a) * R_POT + 1.0f, rBot = a * R_POT + 1.0f;
+		float gT = 1 / rTop, gB = 1 / rBot;
+		return gT / (gT + gB + 1 / R40 + 1 / R39);
+	}
+
+	// Filter damping (1/Q, low-cutoff limit) for a given beta, from the loop
+	// equations: d = R47/R50 - m, m = c_xin c_x - (R34/R39)(1 + rho) beta
+	static float ResDamping(float beta)
+	{
+		using namespace part;
+		float Gx = 1 / R35 + 1 / R36 + 1 / R38 + 1 / R44 + 1 / R31;
+		float cx = (1 / R44) / Gx, rho = R48 / R44;
+		float cxin = R33 / R31 + beta * rho * R34 / R39;
+		return R47 / R50 - (cxin * cx - (R34 / R39) * (1 + rho) * beta);
+	}
+
+	// Virtual taper for the resonance pot. With a linear R59, Q only rises
+	// steeply in the last quarter turn. Instead the knob sets a target
+	// damping that moves evenly on a log scale (so Q rises at a steady
+	// rate in dB) between the two ends of the real pot, and the wiper
+	// position that gives it is found by bisection. The circuit is
+	// unchanged: only the knob-to-wiper mapping differs from a linear pot.
+	static float ResonanceTaper(float k)
+	{
+		float dMax = ResDamping(ResBeta(1.0f)), dMin = ResDamping(ResBeta(0.0f));
+		float target = dMax * powf(dMin / dMax, k);
+		float lo = 0.0f, hi = 1.0f; // damping rises with a
+		for (int i = 0; i < 24; i++)
+		{
+			float mid = 0.5f * (lo + hi);
+			if (ResDamping(ResBeta(mid)) > target) hi = mid;
+			else lo = mid;
+		}
+		return 0.5f * (lo + hi);
 	}
 
 	void SetSW1(bool on)

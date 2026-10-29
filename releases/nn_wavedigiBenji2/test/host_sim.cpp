@@ -225,6 +225,43 @@ int main(int argc, char **argv)
 		}
 	}
 
+	printf("Resonance taper\n");
+	{
+		// Peak height above the passband (dB) from the circuit equations, at
+		// a mid cutoff, for knob positions across the range
+		auto peakDb = [](float beta) {
+			double g = 0.05, best = 0, fpk = 0;
+			for (double f = 20; f < 20000; f *= 1.003)
+			{
+				double m = std::abs(circuitLP(2 * M_PI * f, g, beta));
+				if (m > best) best = m, fpk = f;
+			}
+			return 20 * log10(best / std::abs(circuitLP(2 * M_PI * fpk / 8, g, beta)));
+		};
+		static Benjolin b;
+		b = Benjolin();
+		b.Init();
+		std::vector<double> q, lin;
+		for (float k : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+		{
+			b.SetPot(POT_RES, k);
+			// 1/damping, the Q the taper is spacing evenly
+			q.push_back(20 * log10(1 / Benjolin::ResDamping(b.resBeta)));
+			double lp = peakDb(Benjolin::ResBeta(1 - k));
+			lin.push_back(lp);
+			printf("  knob %.2f: wiper %.3f, Q %5.1f (%5.1f dB), resonant peak %5.1f dB (linear pot: %5.1f dB)\n",
+				   k, b.resWiper, 1 / Benjolin::ResDamping(b.resBeta), q.back(), peakDb(b.resBeta), lp);
+		}
+		bool even = true;
+		for (int i = 1; i < 5; i++)
+		{
+			double step = q[i] - q[i - 1], want = (q[4] - q[0]) / 4;
+			if (fabs(step - want) > 0.05 * want) even = false;
+		}
+		check(even, "Q rises in equal dB steps across the knob");
+		check(q[2] - q[0] > 0.4 * (q[4] - q[0]), "half the Q range (in dB) is reached by half way");
+	}
+
 	printf("Stress test (random pots, cross mod, external input)\n");
 	{
 		static Benjolin b;

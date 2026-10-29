@@ -109,7 +109,7 @@ controls:
         description: "Rungler depth into oscillator 1 (page 1), oscillator 2 (page 2) or the filter (page 3). Page 4: filter CV attenuator."
       y:
         name: Cross mod / Resonance / Level
-        description: "Page 1: oscillator 1 CV / cross mod from triangle 2. Page 2: oscillator 2 CV / cross mod from triangle 1. Page 3: resonance. Page 4: output level."
+        description: "Page 1: oscillator 1 CV / cross mod from triangle 2. Page 2: oscillator 2 CV / cross mod from triangle 1. Page 3: resonance, tapered so Q rises evenly across the turn. Page 4: output level."
   leds:
     - display: list
       items:

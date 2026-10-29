@@ -36,7 +36,7 @@ A state-variable loop of two SSM2164 current-mode integrators (C10, C8 = 220 pF)
 
 * **Input mix:** the filter input is a mix node (R35/R36/R38/R44/R31). The PWM comparator goes in through 150k, but the **rungler CV also leaks in** through 51k, which you can hear stepping. The bandpass also feeds back into that node.
 * **C7** (220 pF) feeds the bandpass back into its own VCA input. This tames the top of the range.
-* **Resonance:** the pot (R59, loaded by 1.5k and 15k) sets *damping*. With the wiper at ground the filter peaks about 26–30 dB above the passband (Q ≈ 20–30). Most of the resonance is near the clockwise end, as on the hardware if the pot is linear.
+* **Resonance:** the pot (R59, loaded by 1.5k and 15k) sets *damping*. With the wiper at ground the filter peaks about 26–30 dB above the passband (Q ≈ 20–30). With a linear pot almost all of that comes in the last quarter turn, so the knob uses a virtual taper (see below).
 * **Cutoff CV:** a precision rectifier (IC6.4, D5/D6) sums the cutoff pot, the rungler, the filter CV jack (normalled to triangle 2) and **the filter's own bandpass output through 100k**. The filter modulates its own cutoff, which is a big part of its character.
 * **Output:** IC9 amplifies the lowpass ×5 and clips at the op-amp rails.
 
@@ -58,6 +58,7 @@ The cutoff range is about 35 Hz to 17 kHz (analogue). The PWM comparator (IC6.3,
 ### Assumptions and simplifications
 
 * **Pots:** all assumed linear, 10k.
+* **Resonance taper:** the resonance knob doesn't move R59's wiper linearly. It sets a target damping spaced evenly on a log scale, and the wiper position that gives it is solved from the circuit (bisection on core 1). Q rises from 0.4 to 23 in equal steps of about 9 dB per quarter turn. With a linear R59, 16 of those 24 dB came in the last quarter. The circuit itself is unchanged.
 * **Op-amp swing:** VSAT = 7.5 V.
 * **Filter self-modulation:** the bandpass→cutoff path uses the previous sample's bandpass value, because a nonlinear delay-free loop can't be solved explicitly.
 * **SSM2164 compensation:** the 510 Ω + 560 pF networks on the inputs (corners above 500 kHz) are left out.
@@ -122,6 +123,7 @@ g++ -O2 -std=c++17 -I. test/host_sim.cpp -o host_sim && ./host_sim /tmp
 ```
 
 * **Oscillator rates:** match the integrator/Schmitt analysis within 0.3% from 40 Hz to 5 kHz.
+* **Resonance taper:** Q rises in equal dB steps across the knob.
 * **Rungler:** the DAC levels match the R-2R closed form, the XOR truth table matches, and SW1 with Chaos fully either way gives 8-step and 16-step loops.
 * **Filter:** the lowpass response matches an independent complex-frequency solve of the circuit equations, written directly from the netlist, within 0.03 dB over cutoff, resonance and frequency.
 * **Stress:** a 20-second test with random pots and external input stays bounded.
