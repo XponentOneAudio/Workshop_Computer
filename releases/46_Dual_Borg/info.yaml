@@ -1,0 +1,55 @@
+draft: true
+Name: Dual Borg
+short-description: "Two contrasting 12 dB low-pass filters, one mellow and one shrieking, inspired by the Dual Borg, with a VCA (low-pass gate) mode."
+summary: |
+  A model of a dual "Borg" style filter: two deliberately different 2-pole low-pass filters side by side, drawing on the Buchla 292 low-pass gate and the Korg MS-20 filter.
+  **Borg I** (left column) is slow and mellow, with a vactrol-like response and resonance that never self-oscillates.
+  **Borg II** (right column) is fast and bright, and its MS-20 style resonance shrieks and self-oscillates with ~1V/oct tracking.
+  The switch selects VCA mode (combined VCA + filter for percussive plucks), filter without resonance (Main knob = drive), or filter with resonance.
+  Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
+Language: "C++ (Pico SDK + ComputerCard)"
+Creator: "Martyn Quickenden"
+Version: "0.1"
+Status: "Beta"
+License: MIT
+date-created: 2026-10-30
+date-updated: 2026-10-30
+tags:
+  - filter
+  - effect
+  - vca
+
+panel:
+  inputs:
+    - { id: AudioIn1, name: Borg I In, type: audio, description: "Input to Borg I. Also feeds Borg II when Audio In 2 is unpatched." }
+    - { id: AudioIn2, name: Borg II In, type: audio, description: "Input to Borg II (normalled to Audio In 1)." }
+    - { id: CVIn1, name: Borg I Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In VCA mode a positive CV also opens the gate." }
+    - { id: CVIn2, name: Borg II Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In VCA mode a positive CV also opens the gate." }
+    - { id: PulseIn1, name: Borg I Ping, type: pulse, description: "Slow (~350 ms) ping envelope: sweeps the cutoff up, or strikes the gate in VCA mode. With no audio patched it also injects a noise burst." }
+    - { id: PulseIn2, name: Borg II Ping, type: pulse, description: "Fast (~120 ms) ping envelope: sweeps the cutoff up, or strikes the gate in VCA mode. With no audio patched it also injects a noise burst." }
+  outputs:
+    - { id: AudioOut1, name: Borg I Out, type: audio }
+    - { id: AudioOut2, name: Borg II Out, type: audio }
+    - { id: CVOut1, name: Borg I Cutoff, type: cv, description: "Slewed cutoff control of Borg I, 0 to +6V." }
+    - { id: CVOut2, name: Borg II Cutoff, type: cv, description: "Slewed cutoff control of Borg II, 0 to +6V." }
+
+controls:
+  switch:
+    up:     { name: Filter + Resonance, description: "12 dB low-pass filters with resonance on. Borg II can self-oscillate." }
+    middle: { name: Filter, description: "12 dB low-pass filters with resonance off. Main knob sets input drive." }
+    down:   { name: VCA Mode, description: "Low-pass gate: level and cutoff open together, for percussive sounds." }
+  knobs:
+    - main: { name: Resonance, description: "Resonance for both filters. Borg I stays below self-oscillation." }
+      x:    { name: Borg I Cutoff, description: "25 Hz to 9 kHz. In VCA mode, how far the gate rests open." }
+      y:    { name: Borg II Cutoff, description: "25 Hz to 16 kHz. In VCA mode, how far the gate rests open." }
+    - when: { z: middle }
+      main: { name: Drive, description: "Input drive for both filters, 1x to 8x." }
+  leds:
+    - display: list
+      items:
+        - { id: "0", name: Borg I Level }
+        - { id: "1", name: Borg II Level }
+        - { id: "2", name: Borg I Cutoff }
+        - { id: "3", name: Borg II Cutoff }
+        - { id: "4", name: Borg I Ping }
+        - { id: "5", name: Borg II Ping }
