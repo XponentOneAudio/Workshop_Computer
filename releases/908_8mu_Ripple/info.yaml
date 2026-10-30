@@ -1,0 +1,129 @@
+draft: false
+Name: 8mu Ripple
+short-description: Divided-noise synth with feedback, played from the faders of an 8mu
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1.0"
+Status: Beta
+License: MIT
+date-created: 2026-10-30
+date-updated: 2026-10-30
+
+tags:
+  - noise
+  - synth-voice
+  - lfsr
+  - divider
+  - filter
+  - midi-host
+
+summary: |
+  A clock steps a shift-register noise source, and the rising edges of the noise bit drive a ripple
+  counter. The raw bit and the /2 to /32 counter outputs are mixed on the 8mu's faders, fed back to the
+  clock pitch, and sent through a resonant stereo filter whose cutoff is modulated by the clock.
+  Hold the 8mu's buttons for further fader pages: LFSR length, noise colour, hiss, drive, stereo
+  panning, count length, edge mode and tilt control. A fourth button locks the noise pattern into a loop.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Bit Source
+      type: audio
+      description: When patched, a comparator on this input replaces the noise bit, so the counter divides any audio
+    - id: AudioIn2
+      name: Clock FM
+      type: audio
+      description: Exponential FM of the clock, about +-2 octaves
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: Clock pitch, about 1V/octave, added to the main knob
+    - id: CVIn2
+      name: Cutoff
+      type: cv
+      description: Filter cutoff, about 1V/octave, added to knob X
+    - id: PulseIn1
+      name: Ext Clock
+      type: pulse
+      description: When patched, rising edges step the noise register instead of the internal clock
+    - id: PulseIn2
+      name: Reset
+      type: pulse
+      description: Reseeds the noise register and clears the counter
+  outputs:
+    - id: AudioOut1
+      name: Left Out
+      type: audio
+      description: Filtered mix, left
+    - id: AudioOut2
+      name: Right Out
+      type: audio
+      description: Filtered mix, right
+    - id: CVOut1
+      name: Random CV
+      type: cv
+      description: Stepped random voltage, new value each counter cycle
+    - id: CVOut2
+      name: Noise Mod CV
+      type: cv
+      description: The feedback signal driving the clock pitch
+    - id: PulseOut1
+      name: Cycle
+      type: pulse
+      description: 5ms trigger each time the counter completes a cycle
+    - id: PulseOut2
+      name: Noise Bit
+      type: pulse
+      description: The raw noise bit (/1)
+
+controls:
+  knobs:
+    - main:
+        name: Clock Pitch
+        description: About 0.5Hz to 32kHz
+      x:
+        name: Cutoff
+        description: Filter cutoff, 20Hz to 16kHz
+      y:
+        name: Resonance
+        description: Filter resonance, up to near self-oscillation
+  switch:
+    up:
+      name: Lowpass
+      description: Lowpass filter
+    middle:
+      name: Bandpass
+      description: Bandpass filter
+    down:
+      name: Reset
+      description: Momentary. Reseeds the noise register and clears the counter
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: /1
+          description: Raw noise bit
+        - id: LED1
+          name: /2
+          description: Counter output /2
+        - id: LED2
+          name: /4
+          description: Counter output /4
+        - id: LED3
+          name: /8
+          description: Counter output /8
+        - id: LED4
+          name: /16
+          description: Counter output /16
+        - id: LED5
+          name: /32
+          description: Counter output /32
+
+host:
+  usb:
+    - name: Music Thing Modular 8mu
+      role: controller
+      description: >
+        Optional, plugged into the Computer's USB socket. Faders set tap levels, noise mod and filter mod,
+        with three more pages (Noise, Divide, Motion) reached by holding buttons 1-3, and soft takeover
+        between pages. Button 4 toggles loop lock. Without an 8mu, the fader parameters keep their defaults.
