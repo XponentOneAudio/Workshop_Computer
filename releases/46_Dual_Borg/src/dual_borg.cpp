@@ -1,39 +1,46 @@
 // Dual Borg — a model of a dual "Borg" style 12 dB filter / VCA
 //
 // Inspired by the Malekko / Richter Dual Borg: two deliberately *different*
-// 2-pole low-pass filters side by side, drawing on the Buchla 292 low-pass gate
-// and the Korg MS-20 filter. Each side can run as a resonant filter or, in VCA
-// mode, as a combined VCA + filter for short percussive sounds.
+// vactrol-style filters side by side. With resonance off each side is a
+// low-pass gate (filter + VCA together, Buchla 292 style); with resonance on it
+// is a 12 dB filter with an MS-20 style shriek. A continuous control morphs
+// each filter from low-pass through notch to high-pass, and the two can run in
+// parallel or in series.
 //
-//   Borg I  (left column)  slow, mellow, vactrol-ish response; soft saturation;
+//   Borg I  (left column)  slow, mellow vactrol response; soft saturation;
 //                          resonance sings but never self-oscillates.
-//   Borg II (right column) fast, bright, MS-20 style; the resonance loop clips
-//                          hard, so it shrieks and will self-oscillate.
+//   Borg II (right column) fast, bright; the resonance loop clips hard, so it
+//                          shrieks and will self-oscillate.
 //
 // I/O (left column of jacks = Borg I, right column = Borg II):
-//   Audio In 1/2     filter input. Audio In 2 is normalled to Audio In 1, so a
-//                    single source feeds both filters.
-//   Audio Out 1/2    filter output
-//   CV In 1/2        cutoff CV (~1V/oct, uncalibrated). In VCA mode it also
+//   Audio In 1/2     Parallel: filter inputs, Audio In 2 normalled to In 1.
+//                    Series: both inputs are mixed into Borg I.
+//   Audio Out 1/2    Parallel: Borg I / Borg II. Series: both carry Borg II.
+//   CV In 1/2        cutoff CV (~1V/oct, uncalibrated). In LPG mode it also
 //                    opens the gate.
 //   Pulse In 1/2     ping: a decaying envelope that sweeps the cutoff up
-//                    (filter modes) or strikes the gate open (VCA mode).
+//                    (filter mode) or strikes the gate open (LPG mode).
 //                    With no audio patched, a ping also injects a short
 //                    noise burst, so the filters can be played as drums.
 //   CV Out 1/2       each filter's (slewed) cutoff control, 0..+6V
 //   Knob X / Knob Y  cutoff for Borg I / Borg II
-//   Main knob        Switch Up / Down: resonance for both filters
-//                    Switch Middle:    input drive for both filters
-//   Switch           Down   = VCA mode (low-pass gate: level + cutoff together)
-//                    Middle = Filter, resonance off (Main = drive)
-//                    Up     = Filter, resonance on  (Main = resonance)
-//   LEDs             top: output level, middle: cutoff, bottom: ping envelope
+//   Main knob        Switch Up:     resonance for both filters
+//                    Switch Middle: LP -> notch -> HP for both filters
+//                    Each setting is kept when the switch moves, and the knob
+//                    picks it up again once turned past the kept value.
+//   Switch           Up     = Filter, resonance on (12 dB)
+//                    Middle = Low-pass gate, resonance off
+//                    Down   = (momentary) tap to toggle parallel / series
+//   LEDs             top: output level, middle: cutoff, bottom: ping envelope.
+//                    For 1s after a routing change: all six = series,
+//                    top pair only = parallel.
 //
 // All audio processing is integer; float is only used at a decimated control
 // rate to turn cutoff/resonance into filter coefficients.
 
 #include "ComputerCard.h"
 #include <cmath>
+#include <cstdlib>
 
 static int32_t __not_in_flash_func(rnd12)()
 {
@@ -69,7 +76,7 @@ template <unsigned SAT>
 class NonlinearSVF
 {
 	int32_t ic1eq = 0, ic2eq = 0;
-	int32_t a1 = 0, a2 = 0, a3 = 0;
+	int32_t a1 = 0, a2 = 0, a3 = 0, kQ24 = 0;
 public:
 	void SetCoeffs(float g, float k)
 	{
@@ -77,9 +84,12 @@ public:
 		a1 = int32_t(fa1 * 16777216.0f);
 		a2 = int32_t(fa1 * g * 16777216.0f);
 		a3 = int32_t(fa1 * g * g * 16777216.0f);
+		kQ24 = int32_t(k * 16777216.0f);
 	}
 
-	int32_t __not_in_flash_func(operator())(int32_t x)
+	// morph: 0 = low-pass, 2048 = notch, 4096 = high-pass. Notch is LP + HP
+	// at full level, matching the hardware's "notch is a mix of the two".
+	int32_t __not_in_flash_func(operator())(int32_t x, int32_t morph)
 	{
 		int32_t v3 = x - ic2eq;
 		int32_t v1 = int32_t(((int64_t)a1 * ic1eq + (int64_t)a2 * v3 + (1 << 23)) >> 24);
@@ -88,12 +98,23 @@ public:
 		ic2eq = 2 * v2 - ic2eq;
 		if (ic2eq > (1 << 22)) ic2eq = 1 << 22;
 		if (ic2eq < -(1 << 22)) ic2eq = -(1 << 22);
-		return v2;
+		if (morph <= 0) return v2;
+
+		int64_t hp = (int64_t)x - v2 - (((int64_t)kQ24 * v1) >> 24);
+		int32_t wl = morph < 2048 ? 4096 : 2 * (4096 - morph); // LP weight, Q12
+		int32_t wh = morph > 2048 ? 4096 : 2 * morph;          // HP weight, Q12
+		int64_t y = ((int64_t)v2 * wl + hp * wh) >> 12;
+		if (y > (1 << 22)) y = 1 << 22;
+		if (y < -(1 << 22)) y = -(1 << 22);
+		return int32_t(y);
 	}
 };
 
 class DualBorg : public ComputerCard
 {
+#ifdef COMPUTERCARD_HOST_SIM
+	friend struct SimProbe;   // lets sim/render.cpp check internal state
+#endif
 	static constexpr int CTRL_DECIM = 8;            // control rate = 6kHz
 	static constexpr float CTRL_RATE = 48000.0f / CTRL_DECIM;
 
@@ -113,15 +134,16 @@ class DualBorg : public ComputerCard
 		float releaseMs;     // control response, closing
 		float pingMs;        // ping envelope decay time constant
 		float kMinFilter;    // 1/Q at full resonance (switch Up)
-		float kMinVCA;       // 1/Q at full resonance (switch Down)
-		float kNoRes;        // 1/Q with resonance switched off (Middle)
+		float kLPG;          // 1/Q in low-pass gate mode (resonance off)
 	};
 	static constexpr Character chars[2] = {
 		// Borg I: slow, mellow, never self-oscillates
-		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 0.45f, 1.4f },
+		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 1.4f },
 		// Borg II: fast, bright, screams
-		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 0.25f, 1.1f },
+		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f },
 	};
+	static constexpr int PICKUP = 64;               // Main knob catch window
+	static constexpr int ROUTE_SHOW = 48000;        // routing LED display, 1s
 
 	float gTable[NUM_STEPS + 1]; // tan(pi f / fs) per cutoff step
 
@@ -136,7 +158,12 @@ class DualBorg : public ComputerCard
 	int burst[2];
 	int32_t level[2];            // output level follower for LEDs
 	int32_t gainQ15[2];          // VCA gain
-	int32_t driveQ8;
+	int32_t res, morph;          // Main knob settings, 0..4095
+	bool resLive, morphLive;     // knob has picked up the setting
+	bool started;
+	bool series;
+	Switch lastSwitch;
+	int routeShow;               // samples left of routing LED display
 	int ctrl;
 
 	static int32_t onePoleQ16(float ms)
@@ -166,18 +193,37 @@ public:
 			level[i] = 0;
 			gainQ15[i] = 0;
 		}
-		driveQ8 = 256;
+		// The setting for the switch position at power-on follows the knob
+		// straight away; the other starts at zero (no resonance / low-pass).
+		res = morph = 0;
+		resLive = morphLive = false;
+		started = false;
+		series = false;
+		lastSwitch = Middle;
+		routeShow = 0;
 		ctrl = 0;
-		borg1.SetCoeffs(gTable[0], 1.4f);
-		borg2.SetCoeffs(gTable[0], 1.1f);
+		borg1.SetCoeffs(gTable[0], chars[0].kLPG);
+		borg2.SetCoeffs(gTable[0], chars[1].kLPG);
+	}
+
+	// Main knob drives one setting at a time; the other keeps its value until
+	// the knob comes back to it, so changing the switch never jumps a setting.
+	static void Follow(int32_t knob, int32_t &value, bool &live)
+	{
+		if (!live && std::abs(knob - value) < PICKUP) live = true;
+		if (live) value = knob;
 	}
 
 	// Recompute cutoff/resonance/gain for both filters (control rate)
-	void UpdateControls(Switch mode)
+	void UpdateControls(bool lpg)
 	{
-		float r = KnobVal(Main) * (1.0f / 4095.0f);
+		int32_t knob = KnobVal(Main);
+		if (!started) { started = true; (lpg ? morphLive : resLive) = true; }
+		if (lpg) { Follow(knob, morph, morphLive); resLive = false; }
+		else { Follow(knob, res, resLive); morphLive = false; }
+
+		float r = res * (1.0f / 4095.0f);
 		float inv = (1.0f - r) * (1.0f - r);
-		driveQ8 = (mode == Middle) ? 256 + int32_t(r * 7.0f * 256.0f) : 256;
 
 		for (int i = 0; i < 2; i++)
 		{
@@ -190,7 +236,7 @@ public:
 			// Target cutoff in steps: knob + CV (~1V/oct) + ping
 			int32_t knob = (KnobVal(i ? Y : X) * maxStep[i]) >> 12;
 			int32_t cv = (CVIn(i) * 288) >> 10;   // ~341 counts/V -> 96 steps/V
-			int32_t pingAmt = (mode == Down) ? maxStep[i] : PING_OCTAVES * STEPS_PER_OCT;
+			int32_t pingAmt = lpg ? maxStep[i] : PING_OCTAVES * STEPS_PER_OCT;
 			int32_t target = knob + cv + ((ping[i] * pingAmt) >> 16);
 			if (target < 0) target = 0;
 			if (target > maxStep[i]) target = maxStep[i];
@@ -205,18 +251,12 @@ public:
 			float frac = (smooth[i] & 0xFFFF) * (1.0f / 65536.0f);
 			float g = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
 
-			float k;
-			if (mode == Middle) k = c.kNoRes;
-			else
-			{
-				float kMin = (mode == Up) ? c.kMinFilter : c.kMinVCA;
-				k = kMin + (1.6f - kMin) * inv;
-			}
+			float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * inv;
 			if (i == 0) borg1.SetCoeffs(g, k);
 			else borg2.SetCoeffs(g, k);
 
-			// VCA mode: level follows the same control, squared for a natural taper
-			if (mode == Down)
+			// LPG mode: level follows the same control, squared for a natural taper
+			if (lpg)
 			{
 				int32_t open = (smooth[i] >> 1) / maxStep[i]; // 0..32768
 				gainQ15[i] = (open * open) >> 15;
@@ -227,7 +267,16 @@ public:
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
-		Switch mode = SwitchVal();
+		// Down is momentary and springs back to Middle, so it is a tap to
+		// change routing; while held the card stays in LPG mode.
+		Switch sw = SwitchVal();
+		if (sw == Down && lastSwitch != Down)
+		{
+			series = !series;
+			routeShow = ROUTE_SHOW;
+		}
+		lastSwitch = sw;
+		bool lpg = sw != Up;
 
 		for (int i = 0; i < 2; i++)
 		{
@@ -242,33 +291,36 @@ public:
 		if (--ctrl <= 0)
 		{
 			ctrl = CTRL_DECIM;
-			UpdateControls(mode);
+			UpdateControls(lpg);
 		}
 
-		// Audio In 2 is normalled to Audio In 1
+		// Parallel: Audio In 2 is normalled to Audio In 1.
+		// Series: both inputs are mixed into Borg I, which feeds Borg II.
 		int32_t in1 = AudioIn1();
 		int32_t in2 = Connected(Audio2) ? AudioIn2() : in1;
 		int32_t ins[2] = { in1, in2 };
+		if (series) ins[0] = Connected(Audio2) ? in1 + in2 : in1;
 
+		int32_t outs[2];
+		int32_t prev = 0;                 // Borg I output, internal scale
 		for (int i = 0; i < 2; i++)
 		{
-			int32_t x = ins[i];
-			if (burst[i] > 0) { burst[i]--; x += (rnd12() - 2048) >> 1; }
-
-			// To internal scale, with drive and a touch of dither so a silent,
-			// fully resonant Borg II can still start to self-oscillate.
-			x *= driveQ8;                     // audio << 8, times drive
+			// To internal scale (audio << 8), with a touch of dither so a
+			// silent, fully resonant Borg II can still start to self-oscillate.
+			int32_t x = (series && i == 1) ? prev : ins[i] << 8;
+			if (burst[i] > 0) { burst[i]--; x += (rnd12() - 2048) << 7; }
 			x += (rnd12() - 2048) >> 6;
 
 			int32_t y;
-			if (i == 0) y = borg1(softClip<20>(x));
-			else y = borg2(softClip<19>(x));
+			if (i == 0) y = borg1(softClip<20>(x), morph);
+			else y = borg2(softClip<19>(x), morph);
 
 			y = int32_t(((int64_t)y * gainQ15[i]) >> 15);
+			prev = y;
 			int32_t out = softClip<19>(y) >> 8;
 			if (out > 2047) out = 2047;
 			if (out < -2048) out = -2048;
-			AudioOut(i, out);
+			outs[i] = out;
 
 			// Cutoff control out, 0..+6V
 			int32_t cvOut = (smooth[i] >> 5) / maxStep[i];
@@ -277,8 +329,16 @@ public:
 			int32_t a = out < 0 ? -out : out;
 			level[i] += ((a << 4) - level[i]) >> 9;
 		}
+		AudioOut1(series ? outs[1] : outs[0]);
+		AudioOut2(outs[1]);
 
-		if (ctrl == CTRL_DECIM)
+		if (routeShow > 0)
+		{
+			routeShow--;
+			if (ctrl == CTRL_DECIM)
+				for (int i = 0; i < 6; i++) LedBrightness(i, (series || i < 2) ? 4095 : 0);
+		}
+		else if (ctrl == CTRL_DECIM)
 		{
 			for (int i = 0; i < 2; i++)
 			{

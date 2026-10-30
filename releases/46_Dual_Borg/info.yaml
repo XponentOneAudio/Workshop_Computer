@@ -1,15 +1,15 @@
 draft: true
 Name: Dual Borg
-short-description: "Two contrasting 12 dB low-pass filters, one mellow and one shrieking, inspired by the Dual Borg, with a VCA (low-pass gate) mode."
+short-description: "Two contrasting vactrol-style filters, one mellow and one shrieking, inspired by the Dual Borg: low-pass gate or 12 dB resonant filter, LP/notch/HP, series or parallel."
 summary: |
-  A model of a dual "Borg" style filter: two deliberately different 2-pole low-pass filters side by side, drawing on the Buchla 292 low-pass gate and the Korg MS-20 filter.
-  **Borg I** (left column) is slow and mellow, with a vactrol-like response and resonance that never self-oscillates.
+  A model of a dual "Borg" filter: two deliberately different vactrol-style filters side by side, drawing on the Buchla 292 low-pass gate and the Korg MS-20 filter.
+  **Borg I** (left column) is slow and mellow, with resonance that never self-oscillates.
   **Borg II** (right column) is fast and bright, and its MS-20 style resonance shrieks and self-oscillates with ~1V/oct tracking.
-  The switch selects VCA mode (combined VCA + filter for percussive plucks), filter without resonance (Main knob = drive), or filter with resonance.
-  Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
+  Switch Up gives a 12 dB resonant filter (Main = resonance); Middle gives a low-pass gate (Main = LP -> notch -> HP). Tap the momentary Down position to toggle parallel and series routing.
+  In parallel, Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
 Language: "C++ (Pico SDK + ComputerCard)"
 Creator: "Martyn Quickenden"
-Version: "0.1"
+Version: "0.2"
 Status: "Beta"
 License: MIT
 date-created: 2026-10-30
@@ -21,29 +21,31 @@ tags:
 
 panel:
   inputs:
-    - { id: AudioIn1, name: Borg I In, type: audio, description: "Input to Borg I. Also feeds Borg II when Audio In 2 is unpatched." }
-    - { id: AudioIn2, name: Borg II In, type: audio, description: "Input to Borg II (normalled to Audio In 1)." }
-    - { id: CVIn1, name: Borg I Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In VCA mode a positive CV also opens the gate." }
-    - { id: CVIn2, name: Borg II Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In VCA mode a positive CV also opens the gate." }
-    - { id: PulseIn1, name: Borg I Ping, type: pulse, description: "Slow (~350 ms) ping envelope: sweeps the cutoff up, or strikes the gate in VCA mode. With no audio patched it also injects a noise burst." }
-    - { id: PulseIn2, name: Borg II Ping, type: pulse, description: "Fast (~120 ms) ping envelope: sweeps the cutoff up, or strikes the gate in VCA mode. With no audio patched it also injects a noise burst." }
+    - { id: AudioIn1, name: Borg I In, type: audio, description: "Input to Borg I. In parallel it also feeds Borg II when Audio In 2 is unpatched." }
+    - { id: AudioIn2, name: Borg II In, type: audio, description: "Parallel: input to Borg II (normalled to Audio In 1). Series: mixed into Borg I." }
+    - { id: CVIn1, name: Borg I Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In LPG mode a positive CV also opens the gate." }
+    - { id: CVIn2, name: Borg II Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In LPG mode a positive CV also opens the gate." }
+    - { id: PulseIn1, name: Borg I Ping, type: pulse, description: "Slow (~350 ms) ping envelope: sweeps the cutoff up, or strikes the gate in LPG mode. With no audio patched it also injects a noise burst." }
+    - { id: PulseIn2, name: Borg II Ping, type: pulse, description: "Fast (~120 ms) ping envelope: sweeps the cutoff up, or strikes the gate in LPG mode. With no audio patched it also injects a noise burst." }
   outputs:
-    - { id: AudioOut1, name: Borg I Out, type: audio }
-    - { id: AudioOut2, name: Borg II Out, type: audio }
+    - { id: AudioOut1, name: Borg I Out, type: audio, description: "Parallel: Borg I. Series: end of the chain (same as Out 2)." }
+    - { id: AudioOut2, name: Borg II Out, type: audio, description: "Borg II (the end of the chain in series)." }
     - { id: CVOut1, name: Borg I Cutoff, type: cv, description: "Slewed cutoff control of Borg I, 0 to +6V." }
     - { id: CVOut2, name: Borg II Cutoff, type: cv, description: "Slewed cutoff control of Borg II, 0 to +6V." }
 
 controls:
   switch:
-    up:     { name: Filter + Resonance, description: "12 dB low-pass filters with resonance on. Borg II can self-oscillate." }
-    middle: { name: Filter, description: "12 dB low-pass filters with resonance off. Main knob sets input drive." }
-    down:   { name: VCA Mode, description: "Low-pass gate: level and cutoff open together, for percussive sounds." }
+    up:     { name: Filter, description: "12 dB filters with resonance on. Borg II can self-oscillate. Main = resonance." }
+    middle: { name: Low-pass gate, description: "Resonance off: filter and VCA together, for percussive sounds. Main = LP -> notch -> HP." }
+    down:   { name: Series / Parallel, description: "Momentary: tap to toggle series and parallel routing. The LEDs show the new routing for 1 s (all six = series, top pair = parallel)." }
   knobs:
     - main: { name: Resonance, description: "Resonance for both filters. Borg I stays below self-oscillation." }
-      x:    { name: Borg I Cutoff, description: "25 Hz to 9 kHz. In VCA mode, how far the gate rests open." }
-      y:    { name: Borg II Cutoff, description: "25 Hz to 16 kHz. In VCA mode, how far the gate rests open." }
+      x:    { name: Borg I Cutoff, description: "25 Hz to 9 kHz." }
+      y:    { name: Borg II Cutoff, description: "25 Hz to 16 kHz." }
     - when: { z: middle }
-      main: { name: Drive, description: "Input drive for both filters, 1x to 8x." }
+      main: { name: LP / Notch / HP, description: "Morphs both filters from low-pass (anticlockwise) through notch (noon) to high-pass (clockwise)." }
+      x:    { name: Borg I Cutoff, description: "Also sets how far the gate rests open." }
+      y:    { name: Borg II Cutoff, description: "Also sets how far the gate rests open." }
   leds:
     - display: list
       items:
