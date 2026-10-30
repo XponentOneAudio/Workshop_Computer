@@ -19,6 +19,13 @@
 static constexpr int SR = 48000;
 using CC = ComputerCard;
 
+struct SimProbe
+{
+	static int res(const DualBorg &c) { return c.res; }
+	static int morph(const DualBorg &c) { return c.morph; }
+	static bool series(const DualBorg &c) { return c.series; }
+};
+
 static void writeWav(const std::string &path, const std::vector<int16_t> &samples)
 {
 	FILE *f = fopen(path.c_str(), "wb");
@@ -132,14 +139,15 @@ static void renderSelfOsc(const std::string &dir)
 	finalize(dir, "out_selfosc.wav", "no input, max reso, CV2 steps 0..3V", raw);
 }
 
-// 3) VCA mode: saw + pings -> plucks. Borg I rings longer & softer.
+// 3) LPG mode (switch Middle): saw + pings -> plucks. Borg I rings longer &
+//    softer. Main = 0 keeps both Borgs low-pass.
 static void renderVCA(const std::string &dir)
 {
 	DualBorg card;
-	card.simSwitch = CC::Down;
+	card.simSwitch = CC::Middle;
 	card.simConnected[CC::Audio1] = true;
 	card.simKnob[CC::X] = card.simKnob[CC::Y] = 0;   // gate closed at rest
-	card.simKnob[CC::Main] = 2600;
+	card.simKnob[CC::Main] = 0;
 	Saw saw;
 	const double seq[] = { 110, 130.8, 164.8, 98 };
 	std::vector<int32_t> raw;
@@ -150,16 +158,18 @@ static void renderVCA(const std::string &dir)
 		card.simPulse[0] = card.simPulse[1] = pulseAt(n, step);
 		run(card, raw);
 	}
-	finalize(dir, "out_vca.wav", "VCA mode, saw arpeggio + pings", raw);
+	finalize(dir, "out_vca.wav", "LPG mode, saw arpeggio + pings", raw);
 }
 
-// 4) Filter, resonance off: Main = drive, swept up.
-static void renderDrive(const std::string &dir)
+// 4) Switch Middle: Main swept LP -> notch -> HP, with the gates held open.
+//    Then flick Up: resonance must pick up from 0, not jump to the morph knob.
+static void renderMorph(const std::string &dir)
 {
 	DualBorg card;
 	card.simSwitch = CC::Middle;
 	card.simConnected[CC::Audio1] = true;
-	card.simKnob[CC::X] = card.simKnob[CC::Y] = 2400;
+	card.simKnob[CC::Main] = 0;
+	card.simKnob[CC::X] = card.simKnob[CC::Y] = 3200;
 	Saw saw;
 	std::vector<int32_t> raw;
 	for (long n = 0; n < 6 * SR; n++)
@@ -168,10 +178,40 @@ static void renderDrive(const std::string &dir)
 		card.simAudioIn[0] = saw.next(82.4, 1200);
 		run(card, raw);
 	}
-	finalize(dir, "out_drive.wav", "reso off, drive swept 1x..8x", raw);
+	card.simSwitch = CC::Up;            // Main still at 4095: res must stay 0
+	for (long n = 0; n < SR; n++) { card.simAudioIn[0] = saw.next(82.4, 1200); run(card, raw); }
+	printf("  pickup: after Middle->Up with Main at max, res=%d morph=%d (want 0, 4095)\n",
+	       SimProbe::res(card), SimProbe::morph(card));
+	finalize(dir, "out_morph.wav", "LPG open, LP -> notch -> HP sweep", raw);
 }
 
-// 5) Nothing patched, pings only: filter drums (noise-burst excitation).
+// 5) Tap Down: series routing. Out 1 and Out 2 must then match.
+static void renderSeries(const std::string &dir)
+{
+	DualBorg card;
+	card.simSwitch = CC::Up;
+	card.simConnected[CC::Audio1] = true;
+	card.simKnob[CC::Main] = 2500;
+	card.simKnob[CC::X] = 2600;
+	card.simKnob[CC::Y] = 2000;
+	Saw saw;
+	std::vector<int32_t> raw;
+	long same = 0;
+	for (long n = 0; n < 6 * SR; n++)
+	{
+		// tap: Up -> Middle -> Down -> Middle -> Up, around 2s
+		long t = n - 2 * SR;
+		card.simSwitch = (t >= 0 && t < 4800) ? (t < 2400 ? CC::Down : CC::Middle) : CC::Up;
+		card.simAudioIn[0] = saw.next(110, 1500);
+		run(card, raw);
+		if (n > 3 * SR && card.simAudioOut[0] == card.simAudioOut[1]) same++;
+	}
+	printf("  series: %s, outputs identical %.1f%% of the time after the tap\n",
+	       SimProbe::series(card) ? "on" : "OFF", 100.0 * same / (3 * SR));
+	finalize(dir, "out_series.wav", "parallel, then tap Down -> series", raw);
+}
+
+// 6) Nothing patched, pings only: filter drums (noise-burst excitation).
 static void renderDrums(const std::string &dir)
 {
 	DualBorg card;
@@ -196,7 +236,8 @@ int main(int argc, char **argv)
 	renderSweep(dir);
 	renderSelfOsc(dir);
 	renderVCA(dir);
-	renderDrive(dir);
+	renderMorph(dir);
+	renderSeries(dir);
 	renderDrums(dir);
 	return 0;
 }
