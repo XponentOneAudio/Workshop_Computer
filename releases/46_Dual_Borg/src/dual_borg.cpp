@@ -300,7 +300,7 @@ int main()
 {
 	set_sys_clock_khz(192000, true);
 
-	DualBorg borg;
+	static DualBorg borg; // static: ~4KB of tables, too big for the stack
 	borg.EnableNormalisationProbe();
 	borg.Run();
 }
