@@ -3,7 +3,7 @@ Name: 8mu Ripple
 short-description: Divided-noise synth with feedback, played from the faders of an 8mu
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Martyn Quickenden
-Version: "0.1.0"
+Version: "0.2.0"
 Status: Beta
 License: MIT
 date-created: 2026-10-30
@@ -14,22 +14,25 @@ tags:
   - synth-voice
   - lfsr
   - divider
+  - logic
   - filter
   - midi-host
 
 summary: |
-  A clock steps a shift-register noise source, and the rising edges of the noise bit drive a ripple
-  counter. The raw bit and the /2 to /32 counter outputs are mixed on the 8mu's faders, fed back to the
-  clock pitch, and sent through a resonant stereo filter whose cutoff is modulated by the clock.
-  Hold the 8mu's buttons for further fader pages: LFSR length, noise colour, hiss, drive, stereo
-  panning, count length, edge mode and tilt control. A fourth button locks the noise pattern into a loop.
+  A clock steps a shift-register noise source, and the rising edges of the noise bit drive five
+  dividers: binary /2 to /32 by default, or any ratio from 2 to 37 including the primes. The raw bit,
+  the divider outputs and four XOR/AND/OR/AND-NOT combinations of them are mixed on the 8mu's faders,
+  fed back to the clock pitch, and sent through a stereo filter (lowpass, bandpass, highpass, notch,
+  4-pole ladder or tuned comb) whose cutoff is modulated by the clock. Tap the 8mu's buttons to step
+  through seven fader pages, covering logic, LFSR length, noise colour, hiss, filter types, stereo
+  panning, divide ratios, count length and tilt control. A fourth button locks the noise pattern into a loop.
 
 panel:
   inputs:
     - id: AudioIn1
       name: Bit Source
       type: audio
-      description: When patched, a comparator on this input replaces the noise bit, so the counter divides any audio
+      description: When patched, a comparator on this input replaces the noise bit, so the dividers divide any audio
     - id: AudioIn2
       name: Clock FM
       type: audio
@@ -49,7 +52,7 @@ panel:
     - id: PulseIn2
       name: Reset
       type: pulse
-      description: Reseeds the noise register and clears the counter
+      description: Reseeds the noise register and clears the dividers
   outputs:
     - id: AudioOut1
       name: Left Out
@@ -83,20 +86,20 @@ controls:
         description: About 0.5Hz to 32kHz
       x:
         name: Cutoff
-        description: Filter cutoff, 20Hz to 16kHz
+        description: Filter cutoff or comb pitch, 20Hz to 16kHz; with clock tune, an interval of +-4 octaves from the clock
       y:
         name: Resonance
-        description: Filter resonance, up to near self-oscillation
+        description: Filter resonance, or comb feedback
   switch:
     up:
-      name: Lowpass
-      description: Lowpass filter
+      name: Filter A
+      description: Filter type A, set on the Filter page (default lowpass)
     middle:
-      name: Bandpass
-      description: Bandpass filter
+      name: Filter B
+      description: Filter type B, set on the Filter page (default bandpass)
     down:
       name: Reset
-      description: Momentary. Reseeds the noise register and clears the counter
+      description: Momentary. Reseeds the noise register and clears the dividers
   leds:
     - display: list
       items:
@@ -124,6 +127,7 @@ host:
     - name: Music Thing Modular 8mu
       role: controller
       description: >
-        Optional, plugged into the Computer's USB socket. Faders set tap levels, noise mod and filter mod,
-        with three more pages (Noise, Divide, Motion) reached by holding buttons 1-3, and soft takeover
-        between pages. Button 4 toggles loop lock. Without an 8mu, the fader parameters keep their defaults.
+        Optional, plugged into the Computer's USB socket. Seven fader pages with soft takeover: tap
+        button 1 for Play/Logic, button 2 for Noise/Filter, button 3 for Divide/Ratios/Motion, tapping
+        again to step through each group. Button 4 toggles loop lock. Without an 8mu, the fader
+        parameters keep their defaults.
