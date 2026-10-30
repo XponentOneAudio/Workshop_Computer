@@ -19,8 +19,9 @@ together) for short, percussive sounds.
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.1 beta**. The DSP has only been tested in the host simulator
-> (`sim/`), not yet on hardware, and no `.uf2` is committed yet (see **Build**).
+> Status: **0.1 beta**. The firmware builds and the DSP has been tested in the
+> host simulator (`sim/`), but it has not yet been tested on hardware.
+> Prebuilt firmware: [`build/dual_borg.uf2`](build/dual_borg.uf2).
 
 ## Panel / I/O
 
