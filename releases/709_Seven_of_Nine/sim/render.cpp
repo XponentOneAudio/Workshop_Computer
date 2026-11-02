@@ -1,6 +1,6 @@
 // render.cpp — offline audio renderer for the Dual Borg card.
 //
-// Compiles the REAL src/dual_borg.cpp against a mock hardware layer, drives it
+// Compiles the REAL src/seven_of_nine.cpp against a mock hardware layer, drives it
 // with generated test signals at 48kHz, and writes stereo WAV files.
 //
 //   Audio Out 1 (Borg I) -> left channel,  Audio Out 2 (Borg II) -> right.
@@ -8,7 +8,7 @@
 // Build & run:  ./build.sh
 
 #include "computercard_mock.h"   // must come first: fakes the hardware layer
-#include "../src/dual_borg.cpp"  // the actual card under test (its main() is skipped)
+#include "../src/seven_of_nine.cpp"  // the actual card under test (its main() is skipped)
 
 #include <cstdio>
 #include <cstdint>

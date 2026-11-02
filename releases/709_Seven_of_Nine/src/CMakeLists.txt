@@ -20,4 +20,4 @@ macro (add_program _name)
   endmacro()
 
 
-add_program(dual_borg)
+add_program(seven_of_nine)

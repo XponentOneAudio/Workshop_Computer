@@ -1,23 +1,23 @@
 // computercard_mock.h
 //
 // A host-side fake of the ComputerCard hardware layer, so the *real*
-// src/dual_borg.cpp can be compiled and run on a normal computer (Mac / Linux /
+// src/seven_of_nine.cpp can be compiled and run on a normal computer (Mac / Linux /
 // Raspberry Pi SBC) to render audio you can listen to — no Workshop Computer
 // hardware required.
 //
 // It implements the same public API as the real ComputerCard.h, but every
 // jack/knob/LED is just a variable the renderer pokes. Include this BEFORE
-// including ../src/dual_borg.cpp.
+// including ../src/seven_of_nine.cpp.
 
 #ifndef COMPUTERCARD_MOCK_H
 #define COMPUTERCARD_MOCK_H
 
 #include <cstdint>
 
-// Make the real (Pico-only) ComputerCard.h self-skip when dual_borg.cpp includes
+// Make the real (Pico-only) ComputerCard.h self-skip when seven_of_nine.cpp includes
 // it: its guard is #ifndef COMPUTERCARD_H.
 #define COMPUTERCARD_H
-// Tell dual_borg.cpp to omit its hardware main().
+// Tell seven_of_nine.cpp to omit its hardware main().
 #define COMPUTERCARD_HOST_SIM
 // The Pico "keep this function in RAM" attribute is a no-op on the host.
 #define __not_in_flash_func(x) x

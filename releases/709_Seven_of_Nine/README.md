@@ -22,7 +22,7 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 >
 > Status: **0.2 beta**. The firmware builds and the DSP has been tested in the
 > host simulator (`sim/`), but it has not yet been tested on hardware.
-> Prebuilt firmware: [`build/dual_borg.uf2`](build/dual_borg.uf2).
+> Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
 
@@ -101,7 +101,7 @@ cutoff and the ping decay are what give the two Borgs their different "speed".
 Filter coefficients are recomputed with float maths at a 6 kHz control rate;
 the per-sample audio path is integer only.
 
-The constants for each Borg are in the `chars[]` table in `src/dual_borg.cpp`.
+The constants for each Borg are in the `chars[]` table in `src/seven_of_nine.cpp`.
 
 ## Listen without hardware
 
@@ -128,7 +128,7 @@ cmake ..
 make
 ```
 
-This produces `dual_borg.uf2`. To flash it, hold BOOTSEL and copy the file onto
+This produces `seven_of_nine.uf2`. To flash it, hold BOOTSEL and copy the file onto
 the `RPI-RP2` drive.
 
 Built with [Chris Johnson's ComputerCard library](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard).
