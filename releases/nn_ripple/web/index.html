@@ -173,6 +173,7 @@
         <div class="readout"><div class="k">Inputs</div><div class="v" id="ro-inputs">-</div><div class="sub" id="ro-busy"></div></div>
       </div>
       <canvas id="flow" aria-label="Signal flow, live: the clock, the noise register, the dividers, the logic, the mix and the filter"></canvas>
+      <div class="caption" id="busy"></div>
       <div class="caption">The signal flow, live. Each source&rsquo;s light shows how much of the last 50&nbsp;ms it spent high; its bar is its level. The register&rsquo;s cells are its bits, the newest on the left.</div>
     </section>
 
@@ -338,7 +339,7 @@ const zoneValue = (i, n) => Math.round((i + 0.5) / n * 127);
 const sq12 = (q) => (q * q) >> 12;
 const exp2 = (x) => Math.pow(2, x);
 
-const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x52, PROTOCOL_VERSION = 1;
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x52, PROTOCOL_VERSION = 2;
 const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, RESEED: 6, STATUS: 7, PING: 9, FREEZE: 10, MOTION: 11 };
 const FIRST_FADER_CC = 34, FIRST_MOTION_CC = 42;
 const BUTTON_NOTES = [36, 48, 60, 72];
@@ -367,7 +368,7 @@ const state = {
     pitch: 6 * 4096, pitchMin: 6 * 4096, pitchMax: 6 * 4096,
     cutoff: 7 * 4096, cutoffMin: 7 * 4096, cutoffMax: 7 * 4096,
     main: 64, x: 80, y: 32, length: 31, reg: 0xACE1, cycles: 0, cycleRate: 0,
-    peakL: 0, peakR: 0, busy: -1, bits: 0,
+    peakL: 0, peakR: 0, busy: -1, parts: null, bits: 0,
   },
   bitHist: [],                      // [time ms, bits], once a millisecond
   trace: [],                        // [time, pitchMin, pitchMax, cutoffMin, cutoffMax]
@@ -848,7 +849,7 @@ function handleCardMessage(m) {
     for (const o of mus) reengage(o);
     say('Read the faders from the card.');
     changed();
-  } else if (cmd === CMD.STATUS && p.length >= 29) {
+  } else if (cmd === CMD.STATUS && p.length >= 34) {
     const L = state.live;
     L.flags = p[0]; L.type = clamp(p[1], 0, 5); L.typeB = !!(p[0] & 2);
     if (!!(p[0] & 1) !== state.freeze) setFreeze(!!(p[0] & 1), false);
@@ -862,7 +863,8 @@ function handleCardMessage(m) {
     L.cycles = p[23];
     L.cycleRate = L.cycleRate * 0.8 + p[23] * 30 * 0.2;
     L.peakL = p[24]; L.peakR = p[25]; L.busy = p[26];
-    let k = 27;
+    L.parts = p.slice(27, 32);
+    let k = 32;
     const sc = p[k++];
     if (sc && p.length >= k + sc) state.scope = p.slice(k, k + sc);
     k += sc;
@@ -1265,7 +1267,10 @@ function drawReadouts(now) {
   if (live) { if (L.flags & 4) ins.push('ext clock'); if (L.flags & 8) ins.push('audio bit'); if (L.flags & 16) ins.push('FM'); }
   $('ro-inputs').textContent = live ? (ins.length ? ins.join(', ') : 'none patched') : '-';
   $('ro-busy').textContent = live && L.busy >= 0 ? 'card load ' + L.busy + ' / ~20 µs' : '';
-  $('ro-busy').style.color = live && L.busy >= 17 ? cssVar('--bad') : '';
+  $('ro-busy').style.color = live && L.busy >= 19 ? cssVar('--bad') : '';
+  $('busy').textContent = live && L.parts ? 'Card load, the worst sample over the last second (\u00b5s of the ~20.8 each sample has): engine alone ' + L.parts[0]
+    + ', with knobs & pages ' + L.parts[1] + ', with coefficients ' + L.parts[2] + ', with LEDs ' + L.parts[3] + ', with this status ' + L.parts[4] + '.' : '';
+  $('busy').style.color = live && L.busy >= 19 ? cssVar('--bad') : '';
   for (const id of ['pv-main', 'pv-x', 'pv-y', 'pv-sw']) $(id).disabled = live;
   if (live) { $('pv-main').value = L.main; $('pv-x').value = L.x; $('pv-y').value = L.y; $('pv-sw').value = L.typeB ? '1' : '0'; }
   $('pv-main-o').textContent = fmtHz(pitchHz(fromFader(+$('pv-main').value) * 16 - 4096));

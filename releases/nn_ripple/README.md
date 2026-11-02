@@ -67,7 +67,9 @@ Open [`web/index.html`](web/index.html) in Chrome or Edge, with the computer plu
 * **Sharing with other editors.** With another Workshop editor open too (WaveSeq, CVSeq, Weights), the 8mus drive whichever editor you last clicked in.
 * **Preview.** Without a card, the page simulates the noise register, dividers, logic and feedback (but not the sound). Three sliders stand in for the knobs, so you can design patterns and presets anywhere.
 
-The protocol is documented in [`sysex.h`](sysex.h). The card and the editor must be the same version (protocol 1).
+**Card load.** The editor shows the longest the card took to work out any one sample over the last second. It has about 20.8µs per sample. The caption under the signal flow breaks this down by the part of the work done on that sample: the engine alone, then with the knobs and pages, the engine's coefficients, the LEDs, or the editor's status. If the total sits near or above 20µs, those numbers show where the time goes.
+
+The protocol is documented in [`sysex.h`](sysex.h). The card and the editor must be the same version (protocol 2).
 
 ### Controls
 

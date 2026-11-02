@@ -226,10 +226,34 @@ public:
 	{
 		uint32_t startUs = time_us_32();
 
-		if (++controlCounter >= controlInterval)
+		// The control work is split into parts, each on a different sample
+		// of the 8-sample cycle, so that no one sample carries it all
+		int phase = controlCounter;
+		controlCounter = (controlCounter + 1) & (controlInterval - 1);
+		int part = 0;
+		switch (phase)
 		{
-			controlCounter = 0;
+		case 0:
 			Control();
+			part = 1;
+			break;
+		case 2:
+			engine.Update(params);
+			part = 2;
+			break;
+		case 4:
+			Leds(have8mu);
+			part = 3;
+			break;
+		case 6:
+			if (WebLinked())
+			{
+				TrackStatus();
+				part = 4;
+			}
+			break;
+		default:
+			break;
 		}
 
 		ripple::Inputs in;
@@ -262,21 +286,31 @@ public:
 			Observe(out);
 		}
 
+		// The longest this has taken over the last second, overall and for
+		// each part: 0 the engine alone, then with the knobs and pages, the
+		// engine's coefficients, the LEDs, and the editor's status
 		uint32_t us = time_us_32() - startUs;
 		if (us > busiestUs) busiestUs = us;
+		if (us > busiestPart[part]) busiestPart[part] = us;
 		if (++busySamples >= 48000)
 		{
 			busySamples = 0;
 			shownBusiestUs = busiestUs;
 			busiestUs = 0;
+			for (int i = 0; i < numParts; i++)
+			{
+				shownPart[i] = busiestPart[i];
+				busiestPart[i] = 0;
+			}
 		}
 	}
 
 private:
-	// Control-rate work, at 6kHz
+	// Knobs, switch, 8mu and pages, at 6kHz.  Leaves the engine's new
+	// parameters in params, for a later sample to hand over.
 	void __not_in_flash_func(Control)()
 	{
-		bool have8mu = hostMode && mu.Connected();
+		have8mu = hostMode && mu.Connected();
 
 		// Buttons 1-3: a tap selects that button's group of pages, and further
 		// taps step through the group
@@ -340,7 +374,7 @@ private:
 			resetPending = true;
 		}
 
-		ripple::Params p;
+		ripple::Params &p = params;
 		for (int i = 0; i < ripple::numTaps; i++)
 		{
 			p.level[i] = play[i];
@@ -415,15 +449,6 @@ private:
 
 		p.resonance = KnobVal(Y);
 		p.freeze = freeze;
-
-		engine.Update(p);
-
-		Leds(have8mu);
-
-		if (WebLinked())
-		{
-			TrackStatus();
-		}
 	}
 
 	void __not_in_flash_func(Leds)(bool have8mu)
@@ -492,10 +517,8 @@ private:
 		if (++bitSampleCounter >= bitSampleInterval)
 		{
 			bitSampleCounter = 0;
-			if (bitCount < sysex::kMaxBits)
-			{
-				bitAcc[bitCount++] = out.bits;
-			}
+			bitRing[bitHead & (bitRingSize - 1)] = out.bits;
+			bitHead = bitHead + 1;
 		}
 
 		int32_t aL = out.left < 0 ? -out.left : out.left;
@@ -527,8 +550,8 @@ private:
 		}
 	}
 
-	// Per control step: the range of pitch and cutoff, and every ~33ms a new
-	// STATUS
+	// Every 8 samples: the range of pitch and cutoff, and every ~33ms a
+	// snapshot for core1 to send as a STATUS
 	void __not_in_flash_func(TrackStatus)()
 	{
 		int32_t pe = (lastOut.pitch + 32768) >> 3;
@@ -544,60 +567,98 @@ private:
 		}
 		statusCounter = 0;
 
-		// Build into the buffer core1 isn't reading, then hand it over
-		int b = statusPublished ^ 1;
-		uint8_t *s = statusBuf[b];
-		int n = 0;
-		s[n++] = uint8_t((freeze ? 1 : 0) | (typeB ? 2 : 0) | (Connected(Input::Pulse1) ? 4 : 0)
+		// Fill the snapshot core1 isn't reading, then hand it over
+		int b = snapPublished ^ 1;
+		Snapshot &sn = snap[b];
+		sn.flags = uint8_t((freeze ? 1 : 0) | (typeB ? 2 : 0) | (Connected(Input::Pulse1) ? 4 : 0)
 			| (Connected(Input::Audio1) ? 8 : 0) | (Connected(Input::Audio2) ? 16 : 0));
-		s[n++] = uint8_t(filterType);
-		n += sysex::Put14(s + n, pe);
-		n += sysex::Put14(s + n, pitchMin);
-		n += sysex::Put14(s + n, pitchMax);
-		n += sysex::Put14(s + n, ce);
-		n += sysex::Put14(s + n, cutoffMin);
-		n += sysex::Put14(s + n, cutoffMax);
-		s[n++] = uint8_t(KnobVal(Main) >> 5);
-		s[n++] = uint8_t(KnobVal(X) >> 5);
-		s[n++] = uint8_t(KnobVal(Y) >> 5);
-		s[n++] = uint8_t(engine.Length());
-		uint32_t reg = engine.Register();
+		sn.type = uint8_t(filterType);
+		sn.pitch = pe;
+		sn.pitchMin = pitchMin;
+		sn.pitchMax = pitchMax;
+		sn.cutoff = ce;
+		sn.cutoffMin = cutoffMin;
+		sn.cutoffMax = cutoffMax;
+		sn.knobs[0] = uint8_t(KnobVal(Main) >> 5);
+		sn.knobs[1] = uint8_t(KnobVal(X) >> 5);
+		sn.knobs[2] = uint8_t(KnobVal(Y) >> 5);
+		sn.length = uint8_t(engine.Length());
+		sn.reg = engine.Register();
+		sn.cycles = uint8_t(cycles);
+		sn.peakL = uint8_t(Clip(peakL >> 4, 0, 127));
+		sn.peakR = uint8_t(Clip(peakR >> 4, 0, 127));
+		sn.busy = uint8_t(shownBusiestUs > 127 ? 127 : shownBusiestUs);
+		for (int i = 0; i < numParts; i++)
+		{
+			sn.parts[i] = uint8_t(shownPart[i] > 127 ? 127 : shownPart[i]);
+		}
+		snapPublished = b;
+		snapSeq = snapSeq + 1;
+
+		cycles = 0;
+		peakL = peakR = 0;
+		pitchMin = cutoffMin = 16383;
+		pitchMax = cutoffMax = 0;
+	}
+
+	// On core1: a STATUS from the latest snapshot, the scope if a capture is
+	// ready, and the source bits sampled since the last one
+	int EncodeStatus(uint8_t *msg, uint32_t &bitTail)
+	{
+		const Snapshot &sn = snap[snapPublished];
+		int n = sysex::Header(msg, sysex::Status);
+		msg[n++] = sn.flags;
+		msg[n++] = sn.type;
+		n += sysex::Put14(msg + n, sn.pitch);
+		n += sysex::Put14(msg + n, sn.pitchMin);
+		n += sysex::Put14(msg + n, sn.pitchMax);
+		n += sysex::Put14(msg + n, sn.cutoff);
+		n += sysex::Put14(msg + n, sn.cutoffMin);
+		n += sysex::Put14(msg + n, sn.cutoffMax);
+		for (int i = 0; i < 3; i++)
+		{
+			msg[n++] = sn.knobs[i] & 0x7F;
+		}
+		msg[n++] = sn.length;
 		for (int i = 4; i >= 0; i--)
 		{
-			s[n++] = uint8_t((reg >> (7 * i)) & 0x7F);
+			msg[n++] = uint8_t((sn.reg >> (7 * i)) & 0x7F);
 		}
-		s[n++] = uint8_t(cycles);
-		s[n++] = uint8_t(Clip(peakL >> 4, 0, 127));
-		s[n++] = uint8_t(Clip(peakR >> 4, 0, 127));
-		s[n++] = uint8_t(shownBusiestUs > 127 ? 127 : shownBusiestUs);
+		msg[n++] = sn.cycles & 0x7F;
+		msg[n++] = sn.peakL;
+		msg[n++] = sn.peakR;
+		msg[n++] = sn.busy;
+		for (int i = 0; i < numParts; i++)
+		{
+			msg[n++] = sn.parts[i];
+		}
 		if (scopeState == ScopeFull)
 		{
-			s[n++] = sysex::kScopeLen;
+			msg[n++] = sysex::kScopeLen;
 			for (int i = 0; i < sysex::kScopeLen; i++)
 			{
-				s[n++] = scopeBuf[i];
+				msg[n++] = scopeBuf[i] & 0x7F;
 			}
 			scopeState = ScopeArmed;
 		}
 		else
 		{
-			s[n++] = 0;
+			msg[n++] = 0;
 		}
-		s[n++] = uint8_t(bitCount);
-		for (int i = 0; i < bitCount; i++)
+		uint32_t head = bitHead;
+		if (head - bitTail > uint32_t(sysex::kMaxBits))
 		{
-			s[n++] = uint8_t(bitAcc[i] >> 7);
-			s[n++] = uint8_t(bitAcc[i] & 0x7F);
+			bitTail = head - sysex::kMaxBits;
 		}
-		statusLen[b] = n;
-		statusPublished = b;
-		statusSeq = statusSeq + 1;
-
-		bitCount = 0;
-		cycles = 0;
-		peakL = peakR = 0;
-		pitchMin = cutoffMin = 16383;
-		pitchMax = cutoffMax = 0;
+		msg[n++] = uint8_t(head - bitTail);
+		for (; bitTail != head; bitTail++)
+		{
+			uint16_t b = bitRing[bitTail & (bitRingSize - 1)];
+			msg[n++] = uint8_t((b >> 7) & 0x7F);
+			msg[n++] = uint8_t(b & 0x7F);
+		}
+		msg[n++] = 0xF7;
+		return n;
 	}
 
 	//------------------------------------------------------------------------
@@ -628,6 +689,7 @@ private:
 		tud_init(0);
 		sysex::Parser parser;
 		uint32_t sentSeq = 0;
+		uint32_t bitTail = gCard->bitHead;
 		while (true)
 		{
 			tud_task();
@@ -645,19 +707,11 @@ private:
 				}
 			}
 
-			if (gCard->WebLinked() && gCard->statusSeq != sentSeq)
+			if (gCard->WebLinked() && gCard->snapSeq != sentSeq)
 			{
-				sentSeq = gCard->statusSeq;
-				int b = gCard->statusPublished;
+				sentSeq = gCard->snapSeq;
 				uint8_t msg[sysex::kStatusMaxLen];
-				int n = sysex::Header(msg, sysex::Status);
-				int len = gCard->statusLen[b];
-				for (int i = 0; i < len; i++)
-				{
-					msg[n++] = gCard->statusBuf[b][i] & 0x7F;
-				}
-				msg[n++] = 0xF7;
-				Write(msg, n);
+				Write(msg, gCard->EncodeStatus(msg, bitTail));
 			}
 		}
 	}
@@ -743,7 +797,9 @@ private:
 
 	EightMU mu;
 	ripple::Engine engine;
+	ripple::Params params;
 	ripple::Outputs lastOut;
+	bool have8mu = false;
 	Page pages[numPages];
 	int currentPage = PagePlay;
 	int pageFlash = 0;
@@ -767,25 +823,37 @@ private:
 
 	// Observation for the web editor, on core0
 	int bitSampleCounter = 0;
-	int bitCount = 0;
-	uint16_t bitAcc[sysex::kMaxBits] = {};
+	static constexpr int bitRingSize = 256;
+	volatile uint16_t bitRing[bitRingSize] = {};
+	volatile uint32_t bitHead = 0;
 	int32_t peakL = 0, peakR = 0;
 	int32_t cycles = 0;
 	int32_t pitchMin = 16383, pitchMax = 0, cutoffMin = 16383, cutoffMax = 0;
 	int statusCounter = 0;
 	enum ScopeState {ScopeArmed, ScopeCapturing, ScopeFull};
-	ScopeState scopeState = ScopeArmed;
+	volatile ScopeState scopeState = ScopeArmed;
 	int scopeN = 0, scopeWait = 0, scopeSkip = 0;
 	int32_t lastScopeIn = 0;
 	uint8_t scopeBuf[sysex::kScopeLen] = {};
+	static constexpr int numParts = 5;
 	uint32_t busiestUs = 0, shownBusiestUs = 0;
+	uint32_t busiestPart[numParts] = {}, shownPart[numParts] = {};
 	int32_t busySamples = 0;
 
-	// STATUS, double-buffered: built on core0, sent from core1
-	uint8_t statusBuf[2][sysex::kStatusMaxPayload] = {};
-	volatile int statusLen[2] = {};
-	volatile int statusPublished = 0;
-	volatile uint32_t statusSeq = 0;
+	// Snapshot for the STATUS, double-buffered: taken on core0, sent from
+	// core1
+	struct Snapshot
+	{
+		uint8_t flags, type;
+		int32_t pitch, pitchMin, pitchMax, cutoff, cutoffMin, cutoffMax;
+		uint8_t knobs[3], length;
+		uint32_t reg;
+		uint8_t cycles, peakL, peakR, busy;
+		uint8_t parts[numParts];
+	};
+	Snapshot snap[2] = {};
+	volatile int snapPublished = 0;
+	volatile uint32_t snapSeq = 0;
 };
 
 

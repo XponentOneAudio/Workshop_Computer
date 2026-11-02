@@ -25,7 +25,7 @@
 //   STATE     02 version freeze values[56]
 //   STATUS    07 flags type pitch(2) pitchMin(2) pitchMax(2)
 //                cutoff(2) cutoffMin(2) cutoffMax(2) main x y length reg[5]
-//                cycles peakL peakR busy scopeCount scope[scopeCount]
+//                cycles peakL peakR busy parts[5] scopeCount scope[scopeCount]
 //                bitCount bits[2 * bitCount]
 //             flags      bit 0 loop lock, bit 1 switch middle (filter type
 //                        B), bit 2 a jack in Pulse In 1 (external clock),
@@ -43,6 +43,10 @@
 //             peakL/R    output peak levels, 0-127
 //             busy       the longest the audio interrupt took over the last
 //                        second, in microseconds (it has about 20)
+//             parts      the same, for the samples doing each part of the
+//                        work: the engine alone, then with the knobs and
+//                        pages, the engine's coefficients, the LEDs, and
+//                        this status
 //             scope      Audio Out 1, every second sample from a rising zero
 //                        crossing, 0-127; sent when a new capture is ready
 //             bits       the sources sampled once a millisecond since the
@@ -59,7 +63,7 @@ namespace sysex
 
 static constexpr uint8_t kMfr = 0x7D;
 static constexpr uint8_t kProduct = 0x52;
-static constexpr uint8_t kVersion = 1;
+static constexpr uint8_t kVersion = 2;
 static constexpr int kPages = 7;
 static constexpr int kNumValues = kPages * 8;
 static constexpr int kScopeLen = 120; // fits in one 7-bit count byte
@@ -151,7 +155,7 @@ inline int32_t FromFader(int32_t v) {return (v * 4095 + 63) / 127;}
 inline int32_t ToFader(int32_t v) {return (v * 127 + 2047) / 4095;}
 
 static constexpr int kStateLen = 4 + 2 + kNumValues + 1;
-static constexpr int kStatusFixed = 27;
+static constexpr int kStatusFixed = 32;
 static constexpr int kStatusMaxPayload = kStatusFixed + 1 + kScopeLen + 1 + 2 * kMaxBits;
 static constexpr int kStatusMaxLen = 4 + kStatusMaxPayload + 1;
 
