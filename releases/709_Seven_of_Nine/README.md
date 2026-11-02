@@ -1,4 +1,4 @@
-# 46_Dual_Borg
+# 709_Seven_of_Nine
 
 **Two contrasting vactrol-style filters** for the Music Thing Workshop System
 Computer, modelled on the Malekko / Richter **Dual Borg**: one module, two
@@ -112,7 +112,7 @@ also prints Borg II's self-oscillation pitch for each CV voltage, to check
 tracking:
 
 ```sh
-cd releases/46_Dual_Borg/sim
+cd releases/709_Seven_of_Nine/sim
 ./build.sh
 ```
 
@@ -122,7 +122,7 @@ Requires the [RPi Pico SDK](https://github.com/raspberrypi/pico-sdk) with
 `PICO_SDK_PATH` set:
 
 ```sh
-cd releases/46_Dual_Borg/src
+cd releases/709_Seven_of_Nine/src
 mkdir -p build && cd build
 cmake ..
 make
