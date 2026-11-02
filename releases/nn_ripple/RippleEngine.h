@@ -363,10 +363,13 @@ struct Outputs
 {
 	int32_t left = 0, right = 0; // +-2047
 	bool tap[numTaps] = {};
+	uint16_t bits = 0;           // all sources: bit 0 /1, 1-5 dividers, 6-9 logic
 	bool clockHigh = false;
 	bool cyclePulse = false;     // high for 5ms when the counter cycles
 	int32_t randomCV = 0;        // +-2047, new value each counter cycle
 	int32_t modCV = 0;           // +-2047, the feedback signal
+	int32_t pitch = 0;           // clock pitch in use, Q12 octaves above 1Hz
+	int32_t cutoff = 0;          // cutoff in use, Q12 octaves above 20Hz
 };
 
 
@@ -521,6 +524,10 @@ public:
 		{
 			out.tap[i] = bits[i];
 		}
+		for (int i = 0; i < numSources; i++)
+		{
+			out.bits |= uint16_t(bits[i] << i);
+		}
 
 		// Feedback signal, optionally slewed
 		fbS += ((int64_t)(mono * 16 - fbS) * fbAlpha) >> 16;
@@ -589,8 +596,13 @@ public:
 		out.cyclePulse = pulseTimer > 0;
 		out.randomCV = randomCV;
 		out.modCV = Clip((int32_t)(fbS >> 4) >> 1, -2047, 2047);
+		out.pitch = p;
+		out.cutoff = c;
 		return out;
 	}
+
+	uint32_t Register() const {return reg;}
+	int Length() const {return len;}
 
 	void Reset()
 	{

@@ -38,10 +38,20 @@
 //             Motion: tilt->pitch, roll->cutoff, rotate->noise mod, glide,
 //                     volume
 //   Button 4  tap to toggle loop lock (freeze the register pattern)
+//
+// USB, chosen once at power-up
+//   Port supplying power (an 8mu, or nothing yet): USB host, reading the 8mu.
+//   Computer plugged in: USB MIDI device called "Ripple", for the web editor
+//   (protocol in sysex.h), which passes on any 8mus plugged into the
+//   computer. Either way the card runs on its own.
 
 
+// First, so TinyUSB is configured for host and device modes before
+// EightMU.h supplies its host-only defaults
+#include "tusb_config.h"
 #include "ComputerCard.h"
 #include "EightMU.h"
+#include "sysex.h"
 #include "RippleEngine.h"
 
 using ripple::Clip;
@@ -63,6 +73,7 @@ enum PageId
 	PageMotion,
 	numPages
 };
+static_assert(numPages == sysex::kPages, "pages match the protocol");
 
 // Pages reached by each of buttons 1-3, in the order repeated taps step
 // through them
@@ -83,6 +94,11 @@ static constexpr uint8_t usedFaders[numPages] = {
 
 // LED page indicator time after a page change, in control steps (6kHz)
 static constexpr int pageFlashTime = 3000;
+
+// The web editor's STATUS is built every this many control steps (~30Hz)
+static constexpr int statusInterval = 200;
+// and the sources are sampled for it every this many samples (1ms)
+static constexpr int bitSampleInterval = 48;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -130,6 +146,10 @@ struct Page
 		}
 	}
 };
+
+
+class EightMURipple;
+static EightMURipple *gCard = nullptr;
 
 
 class EightMURipple : public ComputerCard
@@ -191,19 +211,21 @@ public:
 		v[3] = d.glide;
 		v[7] = d.volume;
 
-		EnableNormalisationProbe();
-
-		// Give the USB power circuitry time to settle, then only start the
-		// USB host stack if this really is a host port.
+		// Give the USB power circuitry time to settle, then pick the USB
+		// mode once: host if the port is supplying power (an 8mu, or nothing
+		// yet), device if a computer is (the web editor).  Boards older than
+		// Rev 1.1 can't tell, and are always a device.
 		sleep_us(150000);
-		if (USBPowerState() == DFP)
-		{
-			mu.Start(); // claims core1
-		}
+		gCard = this;
+		EnableNormalisationProbe();
+		hostMode = USBPowerState() == DFP;
+		multicore_launch_core1(hostMode ? Core1Host : Core1Device);
 	}
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
+		uint32_t startUs = time_us_32();
+
 		if (++controlCounter >= controlInterval)
 		{
 			controlCounter = 0;
@@ -229,14 +251,32 @@ public:
 		PulseOut1(out.cyclePulse);
 		PulseOut2(out.tap[0]);
 
+		if (out.cyclePulse && !lastOut.cyclePulse && cycles < 127)
+		{
+			cycles++;
+		}
 		lastOut = out;
+
+		if (!hostMode)
+		{
+			Observe(out);
+		}
+
+		uint32_t us = time_us_32() - startUs;
+		if (us > busiestUs) busiestUs = us;
+		if (++busySamples >= 48000)
+		{
+			busySamples = 0;
+			shownBusiestUs = busiestUs;
+			busiestUs = 0;
+		}
 	}
 
 private:
 	// Control-rate work, at 6kHz
 	void __not_in_flash_func(Control)()
 	{
-		bool have8mu = mu.Connected();
+		bool have8mu = hostMode && mu.Connected();
 
 		// Buttons 1-3: a tap selects that button's group of pages, and further
 		// taps step through the group
@@ -323,6 +363,7 @@ private:
 
 		int32_t typeValue = typeB ? filter[1] : filter[0];
 		p.filterType = Clip((typeValue * ripple::numFilterTypes) >> 12, 0, ripple::numFilterTypes - 1);
+		filterType = p.filterType;
 		p.combDamp = filter[2];
 		p.modShape = filter[3];
 		p.keyTrack = filter[4];
@@ -341,16 +382,25 @@ private:
 		p.glide = motion[3];
 		p.volume = motion[7];
 
-		// 8mu motion: tilt --> pitch (+-1.5 oct), roll --> cutoff (+-2 oct),
+		// 8mu motion, from the 8mu on the card or one passed on by the web
+		// editor: tilt --> pitch (+-1.5 oct), roll --> cutoff (+-2 oct),
 		// rotation --> extra noise mod
-		int32_t tilt = 0, roll = 0, yaw = 0;
+		int32_t mPitch = 0, mRoll = 0, mYaw = 0;
 		if (have8mu)
 		{
-			tilt = (mu.Pitch() * motion[0]) >> 12;
-			roll = (mu.Roll() * motion[1]) >> 12;
-			yaw = mu.Yaw();
-			yaw = ((yaw < 0 ? -yaw : yaw) * motion[2]) >> 11;
+			mPitch = mu.Pitch();
+			mRoll = mu.Roll();
+			mYaw = mu.Yaw();
 		}
+		else if (!hostMode)
+		{
+			mPitch = webPitch;
+			mRoll = webRoll;
+			mYaw = webYaw;
+		}
+		int32_t tilt = (mPitch * motion[0]) >> 12;
+		int32_t roll = (mRoll * motion[1]) >> 12;
+		int32_t yaw = ((mYaw < 0 ? -mYaw : mYaw) * motion[2]) >> 11;
 		p.noiseMod = Clip(p.noiseMod + yaw, 0, 4095);
 
 		// Main knob: ~0.5Hz to ~32kHz, CV in 1 at ~1V/oct (341 counts per volt)
@@ -369,6 +419,11 @@ private:
 		engine.Update(p);
 
 		Leds(have8mu);
+
+		if (WebLinked())
+		{
+			TrackStatus();
+		}
 	}
 
 	void __not_in_flash_func(Leds)(bool have8mu)
@@ -426,6 +481,266 @@ private:
 		}
 	}
 
+	//------------------------------------------------------------------------
+	// Watching the engine for the web editor (device mode only)
+	//------------------------------------------------------------------------
+
+	// Per sample: source bits once a millisecond, a scope capture of Audio
+	// Out 1, and output peaks
+	void __not_in_flash_func(Observe)(const ripple::Outputs &out)
+	{
+		if (++bitSampleCounter >= bitSampleInterval)
+		{
+			bitSampleCounter = 0;
+			if (bitCount < sysex::kMaxBits)
+			{
+				bitAcc[bitCount++] = out.bits;
+			}
+		}
+
+		int32_t aL = out.left < 0 ? -out.left : out.left;
+		int32_t aR = out.right < 0 ? -out.right : out.right;
+		if (aL > peakL) peakL = aL;
+		if (aR > peakR) peakR = aR;
+
+		// Scope: wait (up to ~40ms) for a rising zero crossing, then take
+		// every second sample
+		if (scopeState == ScopeArmed)
+		{
+			bool rising = lastScopeIn < 0 && out.left >= 0;
+			lastScopeIn = out.left;
+			if (rising || ++scopeWait > 2000)
+			{
+				scopeState = ScopeCapturing;
+				scopeN = 0;
+				scopeWait = 0;
+				scopeSkip = 0;
+			}
+		}
+		if (scopeState == ScopeCapturing && (scopeSkip++ & 1) == 0)
+		{
+			scopeBuf[scopeN++] = uint8_t(Clip((out.left + 2048) >> 5, 0, 127));
+			if (scopeN >= sysex::kScopeLen)
+			{
+				scopeState = ScopeFull;
+			}
+		}
+	}
+
+	// Per control step: the range of pitch and cutoff, and every ~33ms a new
+	// STATUS
+	void __not_in_flash_func(TrackStatus)()
+	{
+		int32_t pe = (lastOut.pitch + 32768) >> 3;
+		int32_t ce = lastOut.cutoff >> 2;
+		if (pe < pitchMin) pitchMin = pe;
+		if (pe > pitchMax) pitchMax = pe;
+		if (ce < cutoffMin) cutoffMin = ce;
+		if (ce > cutoffMax) cutoffMax = ce;
+
+		if (++statusCounter < statusInterval)
+		{
+			return;
+		}
+		statusCounter = 0;
+
+		// Build into the buffer core1 isn't reading, then hand it over
+		int b = statusPublished ^ 1;
+		uint8_t *s = statusBuf[b];
+		int n = 0;
+		s[n++] = uint8_t((freeze ? 1 : 0) | (typeB ? 2 : 0) | (Connected(Input::Pulse1) ? 4 : 0)
+			| (Connected(Input::Audio1) ? 8 : 0) | (Connected(Input::Audio2) ? 16 : 0));
+		s[n++] = uint8_t(filterType);
+		n += sysex::Put14(s + n, pe);
+		n += sysex::Put14(s + n, pitchMin);
+		n += sysex::Put14(s + n, pitchMax);
+		n += sysex::Put14(s + n, ce);
+		n += sysex::Put14(s + n, cutoffMin);
+		n += sysex::Put14(s + n, cutoffMax);
+		s[n++] = uint8_t(KnobVal(Main) >> 5);
+		s[n++] = uint8_t(KnobVal(X) >> 5);
+		s[n++] = uint8_t(KnobVal(Y) >> 5);
+		s[n++] = uint8_t(engine.Length());
+		uint32_t reg = engine.Register();
+		for (int i = 4; i >= 0; i--)
+		{
+			s[n++] = uint8_t((reg >> (7 * i)) & 0x7F);
+		}
+		s[n++] = uint8_t(cycles);
+		s[n++] = uint8_t(Clip(peakL >> 4, 0, 127));
+		s[n++] = uint8_t(Clip(peakR >> 4, 0, 127));
+		s[n++] = uint8_t(shownBusiestUs > 127 ? 127 : shownBusiestUs);
+		if (scopeState == ScopeFull)
+		{
+			s[n++] = sysex::kScopeLen;
+			for (int i = 0; i < sysex::kScopeLen; i++)
+			{
+				s[n++] = scopeBuf[i];
+			}
+			scopeState = ScopeArmed;
+		}
+		else
+		{
+			s[n++] = 0;
+		}
+		s[n++] = uint8_t(bitCount);
+		for (int i = 0; i < bitCount; i++)
+		{
+			s[n++] = uint8_t(bitAcc[i] >> 7);
+			s[n++] = uint8_t(bitAcc[i] & 0x7F);
+		}
+		statusLen[b] = n;
+		statusPublished = b;
+		statusSeq = statusSeq + 1;
+
+		bitCount = 0;
+		cycles = 0;
+		peakL = peakR = 0;
+		pitchMin = cutoffMin = 16383;
+		pitchMax = cutoffMax = 0;
+	}
+
+	//------------------------------------------------------------------------
+	// USB, on core1
+	//------------------------------------------------------------------------
+
+	// The web editor counts as linked while its pings keep arriving
+	bool WebLinked() const
+	{
+		return !hostMode && pinged && (time_us_32() - lastPingUs) < 3000000;
+	}
+
+	// Host mode: read an 8mu plugged straight into the Computer
+	static void Core1Host()
+	{
+		board_init();
+		tuh_init(0);
+		while (true)
+		{
+			gCard->mu.Poll();
+		}
+	}
+
+	// Device mode: talk to the web editor
+	static void Core1Device()
+	{
+		board_init();
+		tud_init(0);
+		sysex::Parser parser;
+		uint32_t sentSeq = 0;
+		while (true)
+		{
+			tud_task();
+			uint8_t buf[64];
+			while (tud_midi_available())
+			{
+				uint32_t n = tud_midi_stream_read(buf, sizeof(buf));
+				if (n == 0) break;
+				for (uint32_t i = 0; i < n; i++)
+				{
+					if (parser.Feed(buf[i]))
+					{
+						gCard->OnSysEx(parser.cmd, parser.payload, parser.length);
+					}
+				}
+			}
+
+			if (gCard->WebLinked() && gCard->statusSeq != sentSeq)
+			{
+				sentSeq = gCard->statusSeq;
+				int b = gCard->statusPublished;
+				uint8_t msg[sysex::kStatusMaxLen];
+				int n = sysex::Header(msg, sysex::Status);
+				int len = gCard->statusLen[b];
+				for (int i = 0; i < len; i++)
+				{
+					msg[n++] = gCard->statusBuf[b][i] & 0x7F;
+				}
+				msg[n++] = 0xF7;
+				Write(msg, n);
+			}
+		}
+	}
+
+	// Send a whole message, waiting briefly for room if need be.  If the
+	// computer isn't reading, the rest is dropped; the editor's parser
+	// resynchronises on the next F0.
+	static void Write(const uint8_t *msg, int len)
+	{
+		uint32_t start = time_us_32();
+		int sent = 0;
+		while (sent < len && tud_mounted())
+		{
+			sent += int(tud_midi_stream_write(0, msg + sent, uint32_t(len - sent)));
+			if (sent < len)
+			{
+				if (time_us_32() - start > 50000) return;
+				tud_task();
+			}
+		}
+	}
+
+	// Handle one message from the web editor
+	void OnSysEx(uint8_t cmd, const uint8_t *p, int len)
+	{
+		switch (cmd)
+		{
+		case sysex::Hello:
+			SendState();
+			break;
+		case sysex::Set:
+			if (len >= 3 && p[0] < numPages && p[1] < numFaders)
+			{
+				pages[p[0]].value[p[1]] = sysex::FromFader(p[2] & 0x7F);
+			}
+			break;
+		case sysex::SetAll:
+			if (len >= 2 + sysex::kNumValues && p[0] == sysex::kVersion)
+			{
+				freeze = p[1] != 0;
+				for (int i = 0; i < sysex::kNumValues; i++)
+				{
+					pages[i / numFaders].value[i % numFaders] = sysex::FromFader(p[2 + i] & 0x7F);
+				}
+			}
+			break;
+		case sysex::Reseed:
+			resetPending = true;
+			break;
+		case sysex::Ping:
+			lastPingUs = time_us_32();
+			pinged = true;
+			break;
+		case sysex::Freeze:
+			if (len >= 1) freeze = p[0] != 0;
+			break;
+		case sysex::Motion:
+			if (len >= 6)
+			{
+				webPitch = Clip(sysex::Get14(p) - 8192, -2032, 2032);
+				webRoll = Clip(sysex::Get14(p + 2) - 8192, -2032, 2032);
+				webYaw = Clip(sysex::Get14(p + 4) - 8192, -2032, 2032);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	void SendState()
+	{
+		uint8_t msg[sysex::kStateLen];
+		int n = sysex::Header(msg, sysex::State);
+		msg[n++] = sysex::kVersion;
+		msg[n++] = freeze ? 1 : 0;
+		for (int i = 0; i < sysex::kNumValues; i++)
+		{
+			msg[n++] = uint8_t(sysex::ToFader(pages[i / numFaders].value[i % numFaders]) & 0x7F);
+		}
+		msg[n++] = 0xF7;
+		Write(msg, n);
+	}
+
 	EightMU mu;
 	ripple::Engine engine;
 	ripple::Outputs lastOut;
@@ -434,12 +749,43 @@ private:
 	int pageFlash = 0;
 	bool had8mu = false;
 	bool lastButton[4] = {};
-	bool freeze = false;
+	volatile bool freeze = false;
 	bool typeB = false;
-	bool resetPending = false;
+	int filterType = 0;
+	volatile bool resetPending = false;
 	int32_t cutoffMod = 0;
 	int controlCounter = 0;
 	int blinkCounter = 0;
+
+	// USB mode, fixed at power-up
+	bool hostMode = true;
+
+	// Device mode: written on core1, read on core0
+	volatile uint32_t lastPingUs = 0;
+	volatile bool pinged = false;
+	volatile int32_t webPitch = 0, webRoll = 0, webYaw = 0;
+
+	// Observation for the web editor, on core0
+	int bitSampleCounter = 0;
+	int bitCount = 0;
+	uint16_t bitAcc[sysex::kMaxBits] = {};
+	int32_t peakL = 0, peakR = 0;
+	int32_t cycles = 0;
+	int32_t pitchMin = 16383, pitchMax = 0, cutoffMin = 16383, cutoffMax = 0;
+	int statusCounter = 0;
+	enum ScopeState {ScopeArmed, ScopeCapturing, ScopeFull};
+	ScopeState scopeState = ScopeArmed;
+	int scopeN = 0, scopeWait = 0, scopeSkip = 0;
+	int32_t lastScopeIn = 0;
+	uint8_t scopeBuf[sysex::kScopeLen] = {};
+	uint32_t busiestUs = 0, shownBusiestUs = 0;
+	int32_t busySamples = 0;
+
+	// STATUS, double-buffered: built on core0, sent from core1
+	uint8_t statusBuf[2][sysex::kStatusMaxPayload] = {};
+	volatile int statusLen[2] = {};
+	volatile int statusPublished = 0;
+	volatile uint32_t statusSeq = 0;
 };
 
 

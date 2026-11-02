@@ -3,11 +3,12 @@ Name: 8mu Ripple
 short-description: Divided-noise synth with feedback, played from the faders of an 8mu
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Martyn Quickenden
-Version: "0.2.0"
+Version: "0.3.0"
 Status: Beta
 License: MIT
+Editor: web
 date-created: 2026-10-30
-date-updated: 2026-10-30
+date-updated: 2026-11-02
 
 tags:
   - noise
@@ -17,6 +18,8 @@ tags:
   - logic
   - filter
   - midi-host
+  - midi
+  - 8mu
 
 summary: |
   A clock steps a shift-register noise source, and the rising edges of the noise bit drive five
@@ -26,6 +29,9 @@ summary: |
   4-pole ladder or tuned comb) whose cutoff is modulated by the clock. Tap the 8mu's buttons to step
   through seven fader pages, covering logic, LFSR length, noise colour, hiss, filter types, stereo
   panning, divide ratios, count length and tilt control. A fourth button locks the noise pattern into a loop.
+  With a computer plugged in instead, a web editor shows the card live (signal flow, a logic analyser of
+  every source, clock and cutoff traces, a scope and the filter's response), keeps presets, and passes on
+  any number of 8mus plugged into the computer, each on its own page.
 
 panel:
   inputs:
@@ -131,3 +137,9 @@ host:
         button 1 for Play/Logic, button 2 for Noise/Filter, button 3 for Divide/Ratios/Motion, tapping
         again to step through each group. Button 4 toggles loop lock. Without an 8mu, the fader
         parameters keep their defaults.
+    - name: Computer (web editor)
+      role: editor
+      description: >
+        Plugged in instead of an 8mu (power-cycle the module afterwards), the card is a USB MIDI device
+        called Ripple. web/index.html, in Chrome or Edge, shows the card live, keeps presets, and passes
+        on any 8mus plugged into the computer, each on its own page.

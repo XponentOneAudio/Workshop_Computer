@@ -30,6 +30,45 @@ This is the classic divided-noise topology, built around a clock-driven noise re
 
 The card also works without an 8mu. The fader parameters then stay at their default settings, a mid-level mix with some noise mod and filter mod, and you play it from the knobs and jacks.
 
+### Three ways to use it
+
+| Plugged into the Computer's USB socket | The card is | The faders are |
+|---|---|---|
+| an 8mu | USB host | the 8mu's, read directly. No computer needed |
+| a computer | a USB MIDI device called **Ripple** | the web editor's, and any 8mus plugged into the *computer* are passed on by the editor |
+| nothing | USB host, waiting | (plug an 8mu in any time) |
+
+The card picks its mode once, at power-up, so **after plugging a computer in, power-cycle the module**. Older boards than Rev 1.1 are always a USB device.
+
+### Web editor
+
+Open [`web/index.html`](web/index.html) in Chrome or Edge, with the computer plugged into the Computer's USB socket and the module power-cycled, and press **Connect card & 8mus**. It is a single file and needs no network. The page reads the faders from the card, then sends every edit as you make it.
+
+* **What's going on.** A live signal-flow picture of the card:
+    * the clock frequency and its range
+    * the noise register's bits as they shift
+    * each source's activity and level
+    * the count length and cycles per second
+    * the filter type, cutoff and resonance
+    * the output levels
+    * the noise mod and filter mod paths
+
+  Readouts show which inputs are patched and how hard the card is working.
+* **Logic analyser.** The last two seconds of all ten sources (/1, the five dividers and logic A to D), sampled once a millisecond on the card. This is the clearest way to see prime ratios drifting, count-length bars repeating and logic outputs forming.
+* **Clock & cutoff.** Eight seconds of the clock frequency and the filter cutoff on one log scale. Each is drawn as a band, so the swing that noise mod and filter mod cause shows as width.
+* **Output & filter.** A triggered scope of Audio Out 1, and the response curve of the filter in use. The curve is calculated from the same coefficients as the card, for the filter type, cutoff, resonance and comb damping, with the cutoff's range shaded.
+* **Faders.** All seven pages, with what each fader does in words (ratios, filter types, logic functions, times and octaves). A dashed line marks a waiting 8mu fader, and a row of dots copies the 8mu's LEDs.
+* **Presets.** Nine built in, plus your own, kept in the browser. You can save, update, rename, delete, export and import them as JSON. A preset is all seven pages plus loop lock; the clock, cutoff, resonance and filter A/B stay on the knobs and switch. Loading one sends it to the card.
+* **Several 8mus.** Each 8mu on the computer has its own page. You change it with its buttons, exactly as on the card, or from the 8mu list. New 8mus start on different pages (Play, Noise, Divide, Logic and so on), so with two or three you can have, say, Play, Logic and Filter under your hands at once.
+    * Pickup and LEDs are separate for each 8mu.
+    * Button 4 on any of them toggles loop lock.
+    * You choose which 8mu's tilt goes to the card, for the Motion page.
+    * With one 8mu, clicking a page tab moves it there.
+* **Sharing with other editors.** With another Workshop editor open too (WaveSeq, CVSeq, Weights), the 8mus drive whichever editor you last clicked in.
+* **Preview.** Without a card, the page simulates the noise register, dividers, logic and feedback (but not the sound). Three sliders stand in for the knobs, so you can design patterns and presets anywhere.
+
+The protocol is documented in [`sysex.h`](sysex.h). The card and the editor must be the same version (protocol 1).
+
 ### Controls
 
 * **Main knob:** clock pitch, from about 0.5Hz to about 32kHz. CV in 1 adds to it at about 1V/octave.
@@ -179,11 +218,12 @@ These faders set how much the 8mu's motion sensors play the synth. All three are
 * **Envelope or LPG per cycle:** a decaying envelope retriggered on each counter cycle, on the filter or a VCA, for plucked and percussive patterns.
 * **Bit crushing and sample-rate reduction** on the output, in time with the clock.
 * **Quantised CV out:** quantise CV out 1 to a scale, so the random steps play melodies.
-* **Presets:** save and recall all seven fader pages to flash with 8mu button combinations.
+* **Presets on the card:** save and recall all seven fader pages to flash with 8mu button combinations, so they survive power-off. Today presets live in the web editor.
+* **Audio preview in the editor:** port the engine to an AudioWorklet so presets can be heard without the card.
 
 ### Building
 
-The card is built with the Pico SDK (2.1 or later) and [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard). `EightMU.h` provides the 8mu USB host support.
+The card is built with the Pico SDK (2.1 or later) and [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard). `EightMU.h` provides the 8mu USB host support, and `tusb_config.h` and `usb_descriptors.c` the USB MIDI device for the web editor.
 
 ```
 mkdir build

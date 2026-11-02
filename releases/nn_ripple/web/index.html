@@ -1,0 +1,1442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ripple editor</title>
+<!--
+  RIPPLE - web editor for the 8mu Ripple card for the Music Thing Modular
+  Workshop Computer. One static file, no network needed. Talks to the card
+  over WebMIDI + SysEx (protocol: ../sysex.h). The card works without this
+  page; the page adds pictures of what is going on, presets, and any number
+  of 8mus plugged into this computer, each on its own page.
+
+  The fader units (0-127, as an 8mu sends them), the pages, the pickup and
+  the 8mu's LEDs mirror ../RippleEngine.h and ../main.cpp. Visual style and
+  8mu sharing between editors follow the WaveSeq, CVSeq and Weights editors.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --v1: #0b7d78; --v2: #b5560a; --v3: #6b4fbb; --led: #e8401c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --v1: #4fd1c5; --v2: #f0a35e; --v3: #b49cff; --led: #ff6a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .muown { padding: 2px 8px; font-size: 12px; border-color: var(--accent); }
+  .muown.away { color: var(--muted); border-color: var(--line); border-style: dashed; }
+  button, select {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  select { padding: 3px 6px; font-size: 12px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  button.on { background: var(--warm-soft); border-color: var(--warm); }
+  #msg { padding: 6px 16px; min-height: 1.4em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 340px; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card > h2 { display: flex; align-items: center; gap: 8px; }
+  .card > h2 .fold { margin-left: auto; padding: 0 7px; min-width: 26px; height: 22px; line-height: 1; font-size: 14px;
+    color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  .card > h2 .fold:hover { color: var(--ink); border-color: var(--accent); }
+  .card.folded > :not(h2) { display: none; }
+  .card.folded > h2 { margin-bottom: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  #flow { height: 330px; }
+  #lanes { height: 250px; }
+  #trace { height: 180px; }
+  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 640px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+  #scope, #response { height: 160px; }
+  .jacks { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+  .jacks th, .jacks td { text-align: left; vertical-align: top; padding: 4px 0; border-top: 1px solid var(--line); }
+  .jacks th { white-space: nowrap; padding-right: 10px; font-weight: 600; }
+  .jacks td { color: var(--muted); }
+  .jacks tr.grp th { border-top: 0; padding-top: 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .jacks tr.grp:first-child th { padding-top: 0; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .readout .sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .notes { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .notes p { margin: 6px 0 0; }
+  .notes b { color: var(--ink); font-weight: 600; }
+
+  /* Pages and faders */
+  .tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+  .tab { padding: 4px 2px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; background: var(--panel);
+    font-size: 12px; line-height: 1.3; text-align: center; min-width: 0; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab b { display: inline-block; min-width: 2em; text-align: center; border-radius: 4px; background: var(--track); font-size: 12px; }
+  .tab .who { font-size: 10px; color: var(--accent); min-height: 1.3em; }
+  .tab.on { border-color: var(--accent); background: var(--accent-soft); }
+  .tab.on b { background: var(--accent); color: var(--panel); }
+  .ledrow { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+  .ledrow span { justify-self: center; width: 12px; height: 12px; border-radius: 50%; background: var(--led); opacity: .08; border: 1px solid var(--line); }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; }
+  .fader.unused { opacity: .3; }
+  .fader .name { font-size: 12px; color: var(--muted); text-align: center; min-height: 2.6em; overflow-wrap: anywhere; }
+  .fader .slot { position: relative; height: 150px; width: 32px; }
+  .fader input[type=range] {
+    writing-mode: vertical-lr; direction: rtl; width: 32px; height: 150px; margin: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }
+  .fader .ghost { position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm); pointer-events: none; }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .fader .desc { font-size: 11px; color: var(--ink); text-align: center; min-height: 2.6em; overflow-wrap: anywhere; }
+  @media (max-width: 640px) { .faders, .ledrow { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+  /* 8mus */
+  .mulist { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .mulist li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+  .mulist li b { min-width: 3.5em; }
+  .mulist .chip { width: 10px; height: 10px; border-radius: 50%; }
+  .mulist label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+
+  /* Preview */
+  .preview { display: grid; gap: 6px; font-size: 12px; }
+  .preview label { display: grid; grid-template-columns: 7em 1fr 5em; align-items: center; gap: 6px; color: var(--muted); }
+  .preview input[type=range] { accent-color: var(--accent); }
+  .preview output { font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; }
+
+  /* Presets */
+  #presets { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow: auto; }
+  #presets li { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 6px; }
+  #presets li:hover { background: var(--accent-soft); }
+  #presets li .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #presets li .tag { font-size: 11px; color: var(--muted); }
+  #presets li button { padding: 2px 6px; font-size: 12px; }
+  .preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  details { margin-top: 16px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ripple</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <button id="mu-owner" class="muown" hidden></button>
+  <div class="spacer"></div>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mus</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-read" disabled>Read from card</button>
+  <button id="btn-send" disabled>Send to card</button>
+  <button id="btn-freeze" title="Loop lock: the noise register repeats its current pattern (8mu button 4)">Loop lock</button>
+  <button id="btn-reseed" title="Restart the pattern: reseed the register and clear the dividers (as switch down or Pulse In 2)">Reseed</button>
+  <button id="btn-reset">Reset</button>
+</header>
+<div id="msg"></div>
+
+<main>
+  <div style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>What&rsquo;s going on</h2>
+      <div class="readouts">
+        <div class="readout"><div class="k">Clock</div><div class="v" id="ro-clock">-</div><div class="sub" id="ro-clock-sub"></div></div>
+        <div class="readout"><div class="k">Cutoff</div><div class="v" id="ro-cutoff">-</div><div class="sub" id="ro-cutoff-sub"></div></div>
+        <div class="readout"><div class="k">Filter</div><div class="v" id="ro-filter">-</div><div class="sub" id="ro-filter-sub"></div></div>
+        <div class="readout"><div class="k">Pattern</div><div class="v" id="ro-pattern">-</div><div class="sub" id="ro-pattern-sub"></div></div>
+        <div class="readout"><div class="k">Inputs</div><div class="v" id="ro-inputs">-</div><div class="sub" id="ro-busy"></div></div>
+      </div>
+      <canvas id="flow" aria-label="Signal flow, live: the clock, the noise register, the dividers, the logic, the mix and the filter"></canvas>
+      <div class="caption">The signal flow, live. Each source&rsquo;s light shows how much of the last 50&nbsp;ms it spent high; its bar is its level. The register&rsquo;s cells are its bits, the newest on the left.</div>
+    </section>
+
+    <section class="card">
+      <h2>Logic analyser</h2>
+      <canvas id="lanes" aria-label="The last two seconds of every source, sampled once a millisecond"></canvas>
+      <div class="caption">The last two seconds of every source, sampled once a millisecond on the card. Faint lanes are turned down. Above a few hundred hertz the clock is faster than the samples, so lanes turn to noise.</div>
+    </section>
+
+    <section class="card">
+      <h2>Clock &amp; cutoff</h2>
+      <canvas id="trace" aria-label="The clock frequency and filter cutoff over the last eight seconds"></canvas>
+      <div class="caption">The last eight seconds, on one log frequency scale. The bands are each one&rsquo;s range within every 33&nbsp;ms, so noise mod and filter mod show as width.</div>
+    </section>
+
+    <section class="card">
+      <h2>Output &amp; filter</h2>
+      <div class="pair">
+        <div><canvas id="scope" aria-label="Audio Out 1 waveform"></canvas><div class="caption" id="scope-cap">Audio Out 1, about 5 ms from a rising zero crossing.</div></div>
+        <div><canvas id="response" aria-label="The filter's frequency response"></canvas><div class="caption" id="resp-cap">The filter&rsquo;s response at the cutoff in use; the shaded band is the cutoff&rsquo;s range.</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Faders</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="ledrow" id="ledrow" title="The 8mu's LEDs on this page, as the card lights them"></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="page-hint"></div>
+    </section>
+  </div>
+
+  <aside style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Presets</h2>
+      <ul id="presets"></ul>
+      <div class="preset-actions">
+        <button id="btn-save">Save current…</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-import">Import</button>
+        <input type="file" id="import-file" accept=".json,application/json" hidden>
+      </div>
+      <div class="caption">A preset is all seven pages of faders and loop lock. The clock, cutoff, resonance and filter A/B stay on the knobs and switch. Presets live in this browser; loading one sends it to the card if one is connected. The card itself keeps nothing over power-off.</div>
+    </section>
+
+    <section class="card">
+      <h2>8mus</h2>
+      <ul class="mulist" id="mulist"></ul>
+      <div class="caption" id="mu-none">No 8mu on this computer. Press <b>Connect</b> after plugging one in.</div>
+      <div class="notes">
+        <p>Every 8mu on this computer has <b>its own page</b>, chosen with its buttons as on the card (1: Play, Logic; 2: Noise, Filter; 3: Divide, Ratios, Motion; 4: loop lock) or here. Several 8mus can play several pages at once, say one on <b>Play</b> and one on <b>Logic</b>. Two on the same page both drive it.</p>
+        <p>Pickup is per 8mu: after a page change, a fader does nothing until it meets the stored value. A dashed line on the on-screen fader shows where a waiting 8mu fader is.</p>
+        <p><b>Tilt</b> picks which 8mu&rsquo;s motion is sent to the card, for the Motion page.</p>
+      </div>
+    </section>
+
+    <section class="card" id="preview-card">
+      <h2>Preview</h2>
+      <div class="preview">
+        <label>Clock (Main)<input type="range" id="pv-main" min="0" max="127" value="64"><output id="pv-main-o"></output></label>
+        <label>Cutoff (X)<input type="range" id="pv-x" min="0" max="127" value="80"><output id="pv-x-o"></output></label>
+        <label>Resonance (Y)<input type="range" id="pv-y" min="0" max="127" value="32"><output id="pv-y-o"></output></label>
+        <label>Switch<select id="pv-sw"><option value="0">Up: type A</option><option value="1">Middle: type B</option></select><span></span></label>
+      </div>
+      <div class="caption">Without a card, the page simulates the noise register, dividers, logic and feedback (not the sound) so you can design patterns. These stand in for the knobs and switch. With a card connected the real knobs are shown instead.</div>
+    </section>
+
+    <section class="card">
+      <h2>Inputs &amp; outputs</h2>
+      <table class="jacks">
+        <tr class="grp"><th colspan="2">Inputs</th></tr>
+        <tr><th>Audio In 1</th><td>Patched: a comparator on it replaces the noise bit, so the dividers divide any audio</td></tr>
+        <tr><th>Audio In 2</th><td>Clock FM, about &plusmn;2 octaves</td></tr>
+        <tr><th>CV In 1, 2</th><td>Clock pitch and cutoff, about 1 V/oct</td></tr>
+        <tr><th>Pulse In 1</th><td>Patched: rising edges step the register instead of the clock</td></tr>
+        <tr><th>Pulse In 2</th><td>Reseed, as switch down</td></tr>
+        <tr class="grp"><th colspan="2">Outputs</th></tr>
+        <tr><th>Audio Out 1, 2</th><td>Left, right</td></tr>
+        <tr><th>CV Out 1</th><td>Random stepped voltage, each counter cycle</td></tr>
+        <tr><th>CV Out 2</th><td>The noise mod (feedback) signal</td></tr>
+        <tr><th>Pulse Out 1</th><td>5 ms trigger each counter cycle</td></tr>
+        <tr><th>Pulse Out 2</th><td>The raw noise bit (/1)</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Panel</h2>
+      <table class="jacks">
+        <tr><th>Main</th><td>Clock pitch, about 0.5 Hz to 32 kHz</td></tr>
+        <tr><th>X</th><td>Cutoff, 20 Hz to 16 kHz; with clock tune on, an interval of &plusmn;4 octaves from the clock (unison at noon)</td></tr>
+        <tr><th>Y</th><td>Resonance, or the comb&rsquo;s feedback</td></tr>
+        <tr><th>Switch</th><td>Up filter type A, middle type B, down (momentary) reseed</td></tr>
+        <tr><th>LEDs</th><td>/1 and dividers 1-5</td></tr>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>How it connects</h2>
+      <div class="caption" style="margin-top:0">
+        The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page isn't used.
+        <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Ripple</b>, and 8mus plugged
+        into this computer are passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.
+      </div>
+      <details>
+        <summary>Help</summary>
+        <ul class="caption">
+          <li>Use a USB-C <b>data</b> cable, and close any other app using the card or the 8mus (a DAW, another editor tab).</li>
+          <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
+          <li>Press <kbd>Connect card &amp; 8mus</kbd> and allow MIDI with SysEx when the browser asks.</li>
+          <li>On-screen faders: drag, or focus one and use the arrow keys. Double-click sets one to zero.</li>
+          <li>With one 8mu, clicking a page tab moves the 8mu to it. With several, the tabs only change what is shown here; move each 8mu with its buttons or its menu above.</li>
+          <li>With another Workshop editor open too (WaveSeq, CVSeq, Weights), the 8mus drive whichever editor you last clicked in; the header shows <b>8mu: here</b> or <b>8mu: elsewhere</b>.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+// ============================================================================
+// Constants mirroring the firmware (RippleEngine.h, main.cpp, sysex.h)
+// ============================================================================
+const NF = 8, NPAGES = 7;
+const PAGE_NAMES = ['Play', 'Logic', 'Noise', 'Filter', 'Divide', 'Ratios', 'Motion'];
+const PAGE_BUTTON = [0, 0, 1, 1, 2, 2, 2];
+const GROUP_FIRST = [0, 2, 4], GROUP_LAST = [1, 3, 6];
+const USED = [0xFF, 0xFF, 0x1F, 0x7F, 0x7F, 0xDF, 0x8F];
+// Pages new 8mus start on: the first of each group, then the rest
+const START_PAGES = [0, 2, 4, 1, 3, 5, 6];
+const PAGE_HINT = [
+  'Levels of the raw noise bit (/1) and the five dividers, then how far their mix bends the clock (noise mod) and how far the clock moves the cutoff (filter mod).',
+  'Four logic outputs of neighbouring dividers: A of 1 and 2, B of 2 and 3, C of 3 and 4, D of 4 and 5. Faders 1-4 their levels, 5-8 their functions.',
+  'The noise register’s length, the colour of the noise that makes the bit, a free-running hiss bed and its colour, and smoothing of the feedback.',
+  'Filter types for switch up (A) and middle (B), the comb’s damping, the filter mod’s shape, key tracking, drive, and clock tune (the cutoff follows the clock; X sets the interval).',
+  'Stereo position of /1 and each divider, and how far the logic outputs spread (A and C left, B and D right).',
+  'Each divider’s ratio, from 2 to 37: powers of two and primes. Count length resets all of them together after 2-63 edges, or at the top lets them run free. Edges: count rising edges, or both.',
+  'How much the 8mu’s tilt bends the clock, its roll moves the cutoff and twisting it adds noise mod; pitch glide; and the output volume.',
+];
+const FADER_NAMES = [
+  ['/1', 'Div 1', 'Div 2', 'Div 3', 'Div 4', 'Div 5', 'Noise mod', 'Filter mod'],
+  ['A level', 'B level', 'C level', 'D level', 'A func', 'B func', 'C func', 'D func'],
+  ['Length', 'Colour', 'Hiss', 'Hiss colour', 'Fb slew', '', '', ''],
+  ['Type A', 'Type B', 'Comb damp', 'Mod shape', 'Key track', 'Drive', 'Clock tune', ''],
+  ['/1 pan', 'Div 1 pan', 'Div 2 pan', 'Div 3 pan', 'Div 4 pan', 'Div 5 pan', 'Logic spread', ''],
+  ['Div 1', 'Div 2', 'Div 3', 'Div 4', 'Div 5', '', 'Count', 'Edges'],
+  ['Tilt → clock', 'Roll → cutoff', 'Twist → fb', 'Glide', '', '', '', 'Volume'],
+];
+const LENGTHS = [3, 4, 5, 6, 7, 9, 10, 11, 15, 17, 20, 23, 25, 28, 31];
+const TAP2 = [2, 3, 3, 5, 6, 5, 7, 9, 14, 14, 17, 18, 22, 25, 28];
+const RATIOS = [2, 3, 4, 5, 7, 8, 11, 13, 16, 17, 19, 23, 29, 31, 32, 37];
+const LOGIC_NAMES = ['XOR', 'AND', 'OR', 'AND NOT'];
+const LOGIC_SYM = ['⊕', '∧', '∨', '∧¬'];
+const FILTER_NAMES = ['Lowpass', 'Bandpass', 'Highpass', 'Notch', 'Ladder', 'Comb'];
+const SOURCE_NAMES = ['/1', 'D1', 'D2', 'D3', 'D4', 'D5', 'A', 'B', 'C', 'D'];
+const NSRC = 10;
+
+// Fader units (0-127) to and from the card's units (0-4095), as sysex.h
+const fromFader = (v) => Math.floor((v * 4095 + 63) / 127);
+const zone = (v, n) => Math.min(n - 1, (fromFader(v) * n) >> 12);
+const zoneValue = (i, n) => Math.round((i + 0.5) / n * 127);
+const sq12 = (q) => (q * q) >> 12;
+const exp2 = (x) => Math.pow(2, x);
+
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x52, PROTOCOL_VERSION = 1;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, RESEED: 6, STATUS: 7, PING: 9, FREEZE: 10, MOTION: 11 };
+const FIRST_FADER_CC = 34, FIRST_MOTION_CC = 42;
+const BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+const PAGE_FLASH_MS = 500;
+
+const DEFAULTS = [
+  [0, 64, 76, 51, 38, 64, 38, 38],
+  [0, 0, 0, 0, 16, 16, 16, 16],
+  [127, 0, 0, 64, 0, 0, 0, 0],
+  [11, 32, 32, 0, 0, 64, 0, 0],
+  [64, 64, 64, 64, 64, 64, 0, 0],
+  [4, 20, 44, 67, 115, 0, 127, 0],
+  [0, 0, 0, 0, 0, 0, 0, 95],
+];
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  values: DEFAULTS.map(r => r.slice()),
+  freeze: false,
+  view: 0,                          // page shown here
+  live: {
+    online: false, flags: 0, type: 0, typeB: false,
+    pitch: 6 * 4096, pitchMin: 6 * 4096, pitchMax: 6 * 4096,
+    cutoff: 7 * 4096, cutoffMin: 7 * 4096, cutoffMax: 7 * 4096,
+    main: 64, x: 80, y: 32, length: 31, reg: 0xACE1, cycles: 0, cycleRate: 0,
+    peakL: 0, peakR: 0, busy: -1, bits: 0,
+  },
+  bitHist: [],                      // [time ms, bits], once a millisecond
+  trace: [],                        // [time, pitchMin, pitchMax, cutoffMin, cutoffMax]
+  scope: null,
+};
+const link = { access: null, card: { in: null, out: null }, cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
+// 8mus on this computer, by input port id; kept across rescans so each keeps
+// its page
+const mus = [];
+const muById = new Map();
+let motionFrom = 0;                 // index into mus, or -1 for none
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const cardLive = () => link.cardOnline && performance.now() - link.lastStatus < 3000;
+const V = (pg, i) => state.values[pg][i];
+const Q = (pg, i) => fromFader(V(pg, i));
+const ratioOf = (d) => RATIOS[zone(V(5, d), 16)];
+const fmtHz = (hz) => hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 1 : 2) + ' kHz' : hz >= 10 ? Math.round(hz) + ' Hz' : hz.toFixed(2) + ' Hz';
+const fmtTime = (s) => s >= 1 ? s.toFixed(2) + ' s' : s >= 0.01 ? Math.round(s * 1000) + ' ms' : (s * 1000).toFixed(1) + ' ms';
+const pct = (v) => Math.round(v * 100 / 127) + '%';
+const pitchHz = (p) => exp2(p / 4096);
+const cutoffHz = (c) => 20 * exp2(c / 4096);
+
+// ============================================================================
+// What each fader means
+// ============================================================================
+function faderName(pg, i) {
+  if ((pg === 0 && i >= 1 && i <= 5) || (pg === 4 && i >= 1 && i <= 5)) return FADER_NAMES[pg][i] + ' ÷' + ratioOf(i - 1);
+  if (pg === 1 && i < 4) return FADER_NAMES[pg][i] + ' (' + LOGIC_SYM[zone(V(1, i + 4), 4)] + ')';
+  return FADER_NAMES[pg][i];
+}
+function describe(pg, i) {
+  const v = V(pg, i), q = fromFader(v);
+  switch (pg) {
+  case 0:
+    if (i < 6) return v ? pct(v) : 'off';
+    if (i === 6) return v ? '±' + (sq12(q) * 2 / 4096).toFixed(2) + ' oct/src' : 'off';
+    return v ? '±' + (sq12(q) * 3 / 4096).toFixed(2) + ' oct' : 'off';
+  case 1:
+    if (i < 4) return v ? pct(v) : 'off';
+    return LOGIC_NAMES[zone(v, 4)] + ' of ' + (i - 3) + ', ' + (i - 2);
+  case 2:
+    if (i === 0) { const l = LENGTHS[zone(v, 15)]; return l + ' bits · ' + (l < 20 ? (2 ** l - 1) + ' steps' : 'endless'); }
+    if (i === 1) return v ? 'red ' + pct(v) : 'white';
+    if (i === 2) return v ? pct(v) : 'off';
+    if (i === 3) return ['white', 'white/pink', 'pink', 'pink/brown', 'brown'][Math.min(4, Math.floor(q / 820))];
+    if (i === 4) return v ? '~' + fmtTime(1 / Math.max(1e-6, exp2(-q * 14 / 4096)) / 48000) : 'none';
+    return '';
+  case 3:
+    if (i < 2) return FILTER_NAMES[zone(v, 6)];
+    if (i === 2) return v ? pct(v) : 'bright';
+    if (i === 3) return v === 0 ? 'square' : v === 127 ? 'triangle' : pct(v) + ' tri';
+    if (i === 4) return v ? pct(v) : 'off';
+    if (i === 5) return '×' + exp2((q - 2048) * 2 / 4096).toFixed(2);
+    if (i === 6) return q >= 2048 ? 'on' : 'off';
+    return '';
+  case 4:
+    if (i < 6) { const d = q - 2048; return Math.abs(d) < 40 ? 'centre' : (d < 0 ? 'L ' : 'R ') + Math.round(Math.abs(d) * 100 / 2048) + '%'; }
+    if (i === 6) return v ? pct(v) : 'centre';
+    return '';
+  case 5:
+    if (i < 5) return '÷' + RATIOS[zone(v, 16)];
+    if (i === 6) { const n = 2 + ((q * 63) >> 12); return n >= 64 ? 'free run' : 'reset at ' + n; }
+    if (i === 7) return q >= 2048 ? 'both edges' : 'rising';
+    return '';
+  case 6:
+    if (i === 0) return v ? '±' + (q / 4096 * 1.5).toFixed(2) + ' oct' : 'off';
+    if (i === 1) return v ? '±' + (q / 4096 * 2).toFixed(2) + ' oct' : 'off';
+    if (i === 2) return v ? pct(v) : 'off';
+    if (i === 3) return v ? '~' + fmtTime(1 / Math.max(1e-6, exp2(-q * 14 / 4096)) / 48000) : 'none';
+    if (i === 7) return pct(v);
+    return '';
+  }
+  return '';
+}
+
+// ============================================================================
+// Faders
+// ============================================================================
+const faderEls = [], ledEls = [];
+function buildFaders() {
+  const tabs = $('tabs');
+  for (let pg = 0; pg < NPAGES; pg++) {
+    const t = document.createElement('button'); t.className = 'tab'; t.dataset.page = pg;
+    t.innerHTML = '<b>' + (PAGE_BUTTON[pg] + 1) + '</b><span>' + PAGE_NAMES[pg] + '</span><span class="who"></span>';
+    t.title = PAGE_NAMES[pg] + ' (8mu: button ' + (PAGE_BUTTON[pg] + 1) + ')';
+    t.addEventListener('click', () => showPage(pg, true)); tabs.appendChild(t);
+  }
+  const row = $('ledrow');
+  for (let i = 0; i < NF; i++) { const s = document.createElement('span'); row.appendChild(s); ledEls.push(s); }
+  const el = $('faders');
+  for (let i = 0; i < NF; i++) {
+    const f = document.createElement('div'); f.className = 'fader';
+    f.innerHTML = '<div class="name"></div><div class="slot"><input type="range" min="0" max="127" step="1"></div><div class="val"></div><div class="desc"></div>';
+    const input = f.querySelector('input');
+    input.setAttribute('aria-label', 'Fader ' + (i + 1));
+    input.addEventListener('input', () => userSetValue(state.view, i, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(state.view, i, 0));
+    el.appendChild(f);
+    faderEls.push({ root: f, input, slot: f.querySelector('.slot'), name: f.querySelector('.name'), val: f.querySelector('.val'), desc: f.querySelector('.desc'), ghosts: [] });
+  }
+}
+function refreshFaders() {
+  const pg = state.view, vals = state.values[pg];
+  [...$('tabs').children].forEach((t) => {
+    const p = +t.dataset.page;
+    t.classList.toggle('on', p === pg);
+    t.querySelector('.who').textContent = mus.filter(m => m.live && m.page === p).map(m => '●' + (m.index + 1)).join(' ');
+  });
+  $('page-hint').textContent = PAGE_HINT[pg];
+  const here = mus.filter(m => m.live && m.page === pg);
+  faderEls.forEach((f, i) => {
+    const v = vals[i];
+    if (document.activeElement !== f.input || +f.input.value !== v) f.input.value = v;
+    f.root.classList.toggle('unused', !((USED[pg] >> i) & 1));
+    f.name.textContent = faderName(pg, i) || '–';
+    f.val.textContent = v;
+    f.desc.textContent = describe(pg, i);
+    // A dashed line for each 8mu on this page whose fader is waiting
+    const waiting = here.filter(m => m.phys[i] >= 0 && !m.engaged[i]);
+    while (f.ghosts.length < waiting.length) { const g = document.createElement('div'); g.className = 'ghost'; f.slot.appendChild(g); f.ghosts.push(g); }
+    f.ghosts.forEach((g, k) => {
+      const m = waiting[k];
+      g.style.display = m ? 'block' : 'none';
+      if (m) { g.style.top = ((1 - m.phys[i] / 127) * 150) + 'px'; g.title = '8mu ' + (m.index + 1) + ' is here'; }
+    });
+  });
+  $('btn-freeze').classList.toggle('on', state.freeze);
+  renderMuList();
+}
+
+// ============================================================================
+// Changing values (from the screen, an 8mu, a preset or the card)
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+
+function userSetValue(page, i, v) {
+  v = clamp(v | 0, 0, 127);
+  if (state.values[page][i] === v) return;
+  state.values[page][i] = v;
+  for (const m of mus) if (m.page === page) m.engaged[i] = false;   // a physical fader must meet it again
+  queueSend('v' + page + '.' + i, sysex(CMD.SET, [page, i, v]));
+  changed();
+}
+function setFreeze(on, send) {
+  state.freeze = !!on;
+  if (send) queueSend('freeze', sysex(CMD.FREEZE, [state.freeze ? 1 : 0]));
+  changed();
+}
+function showPage(pg, fromTab) {
+  state.view = pg;
+  // With a single 8mu, a tab moves it too, as on the card
+  const live = mus.filter(m => m.live);
+  if (fromTab && live.length === 1) setMuPage(live[0], pg);
+  requestRender();
+}
+function setMuPage(m, pg) {
+  if (m.page === pg) return;
+  m.page = pg;
+  m.flashUntil = performance.now() + PAGE_FLASH_MS;
+  reengage(m);
+  requestRender();
+}
+// Which of an 8mu's faders already sit on their value
+function reengage(m) {
+  for (let i = 0; i < NF; i++) { const ph = m.phys[i];
+    m.engaged[i] = ph >= 0 && Math.abs(ph - state.values[m.page][i]) <= 1; }
+}
+
+let renderQueued = false, saveTimer = 0;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; refreshFaders(); renderPresets(); });
+}
+function changed() {
+  requestRender();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => store.set('ripple.last.v1', { v: state.values, freeze: state.freeze }), 400);
+}
+
+// ============================================================================
+// 8mus plugged into this computer
+// ============================================================================
+function newMu(id) {
+  return { id, index: 0, live: false, in: null, out: null, name: '', page: 0,
+           phys: new Array(NF).fill(-1), engaged: new Array(NF).fill(false),
+           cc: new Array(16).fill(0), ledSent: new Array(NF).fill(-1), lastBlinkOff: 0, flashUntil: 0 };
+}
+function eightmuFader(m, i, v) {
+  const last = m.phys[i], pg = m.page, target = state.values[pg][i];
+  m.phys[i] = v;
+  if (!m.engaged[i]) {
+    const near = Math.abs(v - target) <= 1;
+    const crossed = last >= 0 && ((last < target) !== (v < target));
+    if (!near && !crossed) { requestRender(); return; }
+    m.engaged[i] = true;
+  }
+  if (state.values[pg][i] !== v) {
+    state.values[pg][i] = v;
+    for (const o of mus) if (o !== m && o.page === pg) o.engaged[i] = false;
+    queueSend('v' + pg + '.' + i, sysex(CMD.SET, [pg, i, v]));
+    changed();
+  }
+}
+// Buttons act when pressed, as on the card
+function eightmuButton(m, b, down) {
+  if (!down) return;
+  if (b === 3) { setFreeze(!state.freeze, true); return; }
+  const pg = (m.page >= GROUP_FIRST[b] && m.page < GROUP_LAST[b]) ? m.page + 1 : GROUP_FIRST[b];
+  setMuPage(m, pg);
+  state.view = pg;          // show what was just reached
+  requestRender();
+}
+let motionSentAt = 0, motionTimer = 0;
+function eightmuMotion(m, k, v) {
+  m.cc[k] = v;
+  if (mus.indexOf(m) !== motionFrom) return;
+  if (motionTimer) return;
+  const wait = Math.max(0, 30 - (performance.now() - motionSentAt));
+  motionTimer = setTimeout(sendMotion, wait);
+}
+function sendMotion() {
+  motionTimer = 0; motionSentAt = performance.now();
+  const m = mus[motionFrom];
+  const c = m && m.live ? m.cc : new Array(16).fill(0);
+  // As EightMU: each axis is a pair of one-sided CCs, in units of 32
+  const axis = (k) => clamp((c[k] - c[k + 1]) * 16, -2032, 2032) + 8192;
+  const p = [];
+  for (const k of [0, 2, 4]) { const a = axis(k); p.push(a >> 7, a & 127); }
+  queueSend('motion', sysex(CMD.MOTION, p));
+}
+
+// ---- Which editor the 8mus drive.  With several Workshop editors open, the
+// 8mus on this computer drive one of them: the one last clicked in (or
+// opened).  A page claims them by telling the others, over a BroadcastChannel
+// and through localStorage, and they let go.  A page without them ignores
+// their faders and buttons and leaves their LEDs alone, but still follows
+// where the faders are, so they pick up on return.
+const EDITOR_NAME = 'Ripple';
+const OWNER_KEY = 'workshop.8mu.owner';
+const owner = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), here: true, other: '', chan: null };
+function claim8mu(announce) {
+  const was = owner.here;
+  owner.here = true;
+  const msg = { id: owner.id, name: EDITOR_NAME, t: Date.now() };
+  try { if (owner.chan) owner.chan.postMessage(msg); } catch (e) {}
+  try { localStorage.setItem(OWNER_KEY, JSON.stringify(msg)); } catch (e) {}
+  if (!was) {
+    for (const m of mus) { m.engaged.fill(false); reengage(m); m.ledSent.fill(-1); m.lastBlinkOff = 0; }
+    requestRender();
+    if (announce && mus.some(m => m.live)) say('The 8mus now drive this editor.');
+  }
+  refreshOwner();
+}
+function heardClaim(msg) {
+  if (!msg || msg.id === owner.id) return;
+  owner.other = msg.name || '';
+  if (owner.here) { owner.here = false; for (const m of mus) m.engaged.fill(false); requestRender(); }
+  refreshOwner();
+}
+function refreshOwner() {
+  const b = $('mu-owner'); if (!b) return;
+  b.hidden = !mus.some(m => m.live);
+  b.classList.toggle('away', !owner.here);
+  b.textContent = owner.here ? '8mu: here' : '8mu: elsewhere';
+  b.title = owner.here ? 'The 8mus on this computer drive this editor. Click in another editor to hand them over.'
+    : 'The 8mus are driving the ' + (owner.other || 'other') + ' editor. Click here, or anywhere on this page, to take them back.';
+}
+function setupOwnership() {
+  try { owner.chan = new BroadcastChannel('workshop-computer-8mu'); owner.chan.onmessage = (e) => heardClaim(e.data); } catch (e) {}
+  window.addEventListener('storage', (e) => { if (e.key === OWNER_KEY && e.newValue) { try { heardClaim(JSON.parse(e.newValue)); } catch (err) {} } });
+  const take = () => { if (!owner.here) claim8mu(true); };
+  window.addEventListener('pointerdown', take, true);
+  window.addEventListener('keydown', take, true);
+  window.addEventListener('focus', take);
+  $('mu-owner').addEventListener('click', () => claim8mu(true));
+  claim8mu(false);
+}
+
+function eightmuMessage(m, d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0, cc = d[1], val = d[2] & 0x7F;
+  if (type === 0xB0 && cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NF) {
+    if (owner.here) eightmuFader(m, cc - FIRST_FADER_CC, val);
+    else { m.phys[cc - FIRST_FADER_CC] = val; requestRender(); }
+  } else if (type === 0xB0 && cc >= FIRST_MOTION_CC && cc < FIRST_MOTION_CC + 8) {
+    if (owner.here) eightmuMotion(m, cc - FIRST_MOTION_CC, val);
+  } else if (owner.here && (type === 0x90 || type === 0x80)) {
+    const b = BUTTON_NOTES.indexOf(cc);
+    if (b >= 0) eightmuButton(m, b, type === 0x90 && val > 0);
+  }
+}
+
+// An 8mu's LEDs, as the card lights them (0-4095)
+function ledValues(m, now) {
+  const led = new Array(NF).fill(0);
+  if (now < m.flashUntil) { led[m.page] = 4095; return led; }
+  if (m.page === 0) {
+    const bits = state.live.bits;
+    for (let i = 0; i < 6; i++) led[i] = (bits >> i) & 1 ? 512 + ((fromFader(V(0, i)) * 7) >> 3) : 0;
+    const hz = pitchHz(state.live.pitch);
+    led[6] = hz < 15 ? ((now / 1000 * hz) % 1 < 0.5 ? 4095 : 0) : 2048;
+    led[7] = state.freeze ? 4095 : 0;
+    return led;
+  }
+  const blink = (now % 500) < 250;
+  for (let i = 0; i < NF; i++) if ((USED[m.page] >> i) & 1) led[i] = m.engaged[i] ? 4095 : (blink ? 800 : 0);
+  return led;
+}
+// SysEx to an 8mu must travel on its own, so LED notes pause around it
+function serviceEightmuLeds(now) {
+  if (!owner.here) return;
+  for (const m of mus) {
+    if (!m.live || !m.out) continue;
+    if (now - m.lastBlinkOff > 2000) {
+      m.lastBlinkOff = now;
+      try { m.out.send(EIGHTMU_BLINK_OFF); } catch (e) {}
+      m.ledSent.fill(-1);
+      continue;
+    }
+    if (now - m.lastBlinkOff < 60) continue;
+    const led = ledValues(m, now);
+    for (let i = 0; i < NF; i++) {
+      const v = led[i] >> 5;
+      if (v === m.ledSent[i]) continue;
+      m.ledSent[i] = v;
+      try { m.out.send([0x90, i, v]); } catch (e) {}
+    }
+  }
+}
+function drawLedRow(now) {
+  // The LEDs of the first 8mu on the page shown, or what one would show
+  const m = mus.find(o => o.live && o.page === state.view) || { page: state.view, engaged: new Array(NF).fill(true), flashUntil: 0 };
+  const led = ledValues(m, now);
+  ledEls.forEach((s, i) => { s.style.opacity = (0.08 + 0.92 * led[i] / 4095).toFixed(3); });
+}
+
+let muListSig = '';
+function renderMuList() {
+  const live = mus.filter(m => m.live);
+  const sig = live.map(m => m.id + ':' + m.page).join(',') + '|' + motionFrom;
+  $('mu-none').hidden = live.length > 0;
+  if (sig === muListSig) return;
+  muListSig = sig;
+  const ul = $('mulist'); ul.innerHTML = '';
+  const colours = ['--v1', '--v2', '--v3'];
+  for (const m of live) {
+    const li = document.createElement('li');
+    const chip = document.createElement('span'); chip.className = 'chip'; chip.style.background = cssVar(colours[m.index % 3]);
+    const name = document.createElement('b'); name.textContent = '8mu ' + (m.index + 1);
+    const sel = document.createElement('select'); sel.setAttribute('aria-label', 'Page of 8mu ' + (m.index + 1));
+    PAGE_NAMES.forEach((n, pg) => { const o = document.createElement('option'); o.value = pg; o.textContent = n; sel.appendChild(o); });
+    sel.value = m.page;
+    sel.addEventListener('change', () => { setMuPage(m, +sel.value); state.view = m.page; requestRender(); });
+    const lab = document.createElement('label');
+    const rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'motion'; rb.checked = mus.indexOf(m) === motionFrom;
+    rb.addEventListener('change', () => { motionFrom = mus.indexOf(m); sendMotion(); requestRender(); });
+    lab.append(rb, 'Tilt');
+    const port = document.createElement('span'); port.className = 'caption'; port.style.margin = '0'; port.textContent = /^8mu$/i.test(m.name) ? '' : m.name;
+    li.append(chip, name, sel, lab, port);
+    ul.appendChild(li);
+  }
+  if (live.length) {
+    const li = document.createElement('li');
+    const lab = document.createElement('label');
+    const rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'motion'; rb.checked = motionFrom < 0;
+    rb.addEventListener('change', () => { motionFrom = -1; sendMotion(); requestRender(); });
+    lab.append(rb, 'No tilt sent to the card');
+    li.append(lab); ul.appendChild(li);
+  }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /ripple/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow. The card shows up as “Ripple”.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
+  const outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  const unrecognised = ins.filter(p => p !== cardIn && !muIns.includes(p));
+
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+
+  // Each 8mu input, paired with the 8mu output of the same name in the same
+  // order (several 8mus usually share a name)
+  for (const m of mus) m.live = false;
+  const usedOuts = new Set();
+  muIns.forEach((p) => {
+    let m = muById.get(p.id);
+    if (!m) { m = newMu(p.id); m.page = START_PAGES[mus.length % START_PAGES.length]; muById.set(p.id, m); mus.push(m); }
+    m.live = true; m.in = p; m.name = p.name || '8mu';
+    m.out = muOuts.find(o => o.name === p.name && !usedOuts.has(o)) || muOuts.find(o => !usedOuts.has(o)) || null;
+    if (m.out) usedOuts.add(m.out);
+    m.lastBlinkOff = 0; m.ledSent.fill(-1);
+    p.onmidimessage = (ev) => eightmuMessage(m, ev.data);
+  });
+  mus.forEach((m, k) => { m.index = k; if (!m.live) m.phys.fill(-1); });
+  if (motionFrom >= mus.length || (motionFrom >= 0 && !mus[motionFrom].live)) motionFrom = mus.findIndex(m => m.live);
+  refreshOwner();
+
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut;
+  link.cardOnline = !!(cardIn && cardOut);
+  link.sysexBuf = []; link.sysexOn = false;
+  $('btn-read').disabled = $('btn-send').disabled = !link.cardOnline;
+  clearInterval(link.pingTimer);
+  const note = unrecognised.length ? ' Other MIDI inputs: ' + unrecognised.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : '';
+  const n = muIns.length, musText = n > 1 ? n + ' 8mus' : '8mu';
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: Ripple card' + (n ? ' + ' + musText : ''));
+    say(n ? 'The ' + musText + ' drive' + (n > 1 ? '' : 's') + ' this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug 8mus into this computer.' + note);
+    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));       // the card is the source of truth: read it
+    sendMotion();
+  } else if (n) {
+    setStatus('warn', 'Connected: ' + musText + ' only (no card)');
+    say('No “Ripple” card found, so editing and previewing here only. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
+  }
+  muListSig = '';
+  requestRender();
+}
+
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 400) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+
+const get14 = (p, k) => (p[k] << 7) | p[k + 1];
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3), now = performance.now();
+  if (cmd === CMD.STATE) {
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '. Use the matching editor and firmware.', true); return; }
+    if (p.length !== 2 + NPAGES * NF) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    for (let pg = 0; pg < NPAGES; pg++) for (let i = 0; i < NF; i++) state.values[pg][i] = clamp(p[2 + pg * NF + i], 0, 127);
+    setFreeze(!!p[1], false);
+    for (const o of mus) reengage(o);
+    say('Read the faders from the card.');
+    changed();
+  } else if (cmd === CMD.STATUS && p.length >= 29) {
+    const L = state.live;
+    L.flags = p[0]; L.type = clamp(p[1], 0, 5); L.typeB = !!(p[0] & 2);
+    if (!!(p[0] & 1) !== state.freeze) setFreeze(!!(p[0] & 1), false);
+    const P = (k) => get14(p, k) * 8 - 32768, C = (k) => get14(p, k) * 4;
+    L.pitch = P(2); L.pitchMin = P(4); L.pitchMax = P(6);
+    L.cutoff = C(8); L.cutoffMin = C(10); L.cutoffMax = C(12);
+    if (L.pitchMin > L.pitchMax) { L.pitchMin = L.pitchMax = L.pitch; }
+    if (L.cutoffMin > L.cutoffMax) { L.cutoffMin = L.cutoffMax = L.cutoff; }
+    L.main = p[14]; L.x = p[15]; L.y = p[16]; L.length = p[17];
+    L.reg = (((p[18] * 128 + p[19]) * 128 + p[20]) * 128 + p[21]) * 128 + p[22];
+    L.cycles = p[23];
+    L.cycleRate = L.cycleRate * 0.8 + p[23] * 30 * 0.2;
+    L.peakL = p[24]; L.peakR = p[25]; L.busy = p[26];
+    let k = 27;
+    const sc = p[k++];
+    if (sc && p.length >= k + sc) state.scope = p.slice(k, k + sc);
+    k += sc;
+    const nb = p[k++] || 0;
+    for (let i = 0; i < nb && k + 1 < p.length; i++, k += 2) {
+      const bits = get14(p, k);
+      state.bitHist.push([now - (nb - 1 - i), bits]);
+      L.bits = bits;
+    }
+    state.trace.push([now, L.pitchMin, L.pitchMax, L.cutoffMin, L.cutoffMax]);
+    link.lastStatus = now;
+  }
+}
+
+function sendAll() {
+  if (!link.cardOnline) return;
+  const payload = [PROTOCOL_VERSION, state.freeze ? 1 : 0];
+  for (let pg = 0; pg < NPAGES; pg++) for (let i = 0; i < NF; i++) payload.push(state.values[pg][i]);
+  sendRaw(sysex(CMD.SET_ALL, payload));
+}
+
+// ============================================================================
+// Simulation, when there's no card: the noise register, colour, dividers,
+// logic and feedback of RippleEngine.h, a millisecond at a time, with the
+// Preview controls standing in for the knobs.  No sound.
+// ============================================================================
+const sim = { reg: 0xACE1, colour: 0, src: false, div: [0, 0, 0, 0, 0], cyc: 0, phase: 0, fb: 0, t: 0, cycles: 0, sqPhase: 0 };
+function simParams() {
+  const len = LENGTHS[zone(V(2, 0), 15)], tap2 = TAP2[zone(V(2, 0), 15)];
+  const countN = 2 + ((Q(5, 6) * 63) >> 12);
+  return {
+    len, tap2, mask: len >= 31 ? 0x7FFFFFFF : (1 << len) - 1,
+    colourK: exp2(-Q(2, 1) * 10 / 4096), countN, freeRun: countN >= 64, both: Q(5, 7) >= 2048,
+    divN: [0, 1, 2, 3, 4].map(d => RATIOS[zone(V(5, d), 16)]),
+    funcs: [0, 1, 2, 3].map(k => zone(V(1, 4 + k), 4)),
+    levels: [...[0, 1, 2, 3, 4, 5].map(i => Q(0, i)), ...[0, 1, 2, 3].map(i => Q(1, i))],
+    nm: sq12(Q(0, 6)), fm: sq12(Q(0, 7)), shape: Q(3, 3), kt: Q(3, 4),
+    fbA: 1 - Math.pow(1 - exp2(-Q(2, 4) * 14 / 4096), 48),
+    clockTune: Q(3, 6) >= 2048,
+  };
+}
+function simTick(sp) {
+  const top = (sim.reg >>> (sp.len - 1)) & 1;
+  const bit = state.freeze ? top : (top ^ (sim.reg >>> (sp.tap2 - 1))) & 1;
+  sim.reg = ((sim.reg << 1) | bit) & sp.mask;
+  if (!sim.reg) sim.reg = 1;
+  const w = ((sim.reg << (32 - sp.len)) | 0) >> 16;
+  sim.colour += (w - sim.colour) * sp.colourK;
+  const nb = sim.colour >= 0;
+  const edge = sp.both ? nb !== sim.src : (nb && !sim.src);
+  sim.src = nb;
+  if (!edge) return;
+  for (let d = 0; d < 5; d++) if (++sim.div[d] >= sp.divN[d]) sim.div[d] = 0;
+  if (++sim.cyc >= sp.countN) { sim.cyc = 0; sim.cycles++; if (!sp.freeRun) sim.div.fill(0); }
+}
+function simBits(sp) {
+  const b = [sim.src];
+  for (let d = 0; d < 5; d++) b.push(sim.div[d] * 2 >= sp.divN[d]);
+  for (let k = 0; k < 4; k++) {
+    const a = b[k + 1], c = b[k + 2], f = sp.funcs[k];
+    b.push(f === 1 ? a && c : f === 2 ? a || c : f === 3 ? a && !c : a !== c);
+  }
+  return b;
+}
+function simulate(now) {
+  const L = state.live, sp = simParams();
+  const main = +$('pv-main').value, x = +$('pv-x').value;
+  if (!sim.t || now - sim.t > 500) sim.t = now - 1;
+  let pMin = 1e9, pMax = -1e9, cMin = 1e9, cMax = -1e9;
+  const base = fromFader(main) * 16 - 4096, cutBase = (fromFader(x) * 39500) >> 12;
+  while (sim.t < now) {
+    sim.t += 1;
+    const p = clamp(base + ((sim.fb * sp.nm) / 4096) * 2, -8 * 4096, 15 * 4096 + 2400);
+    const hz = pitchHz(p);
+    sim.phase += Math.min(hz, 48000) / 1000;
+    sim.sqPhase = (sim.sqPhase + hz / 1000) % 1;
+    let n = Math.floor(sim.phase); sim.phase -= n; n = Math.min(n, 48);
+    for (let i = 0; i < n; i++) simTick(sp);
+    const b = simBits(sp);
+    let mono = 0, bits = 0;
+    for (let i = 0; i < NSRC; i++) { mono += b[i] ? sp.levels[i] : -sp.levels[i]; if (b[i]) bits |= 1 << i; }
+    sim.fb += (mono - sim.fb) * sp.fbA;
+    state.bitHist.push([sim.t, bits]);
+    L.bits = bits;
+    const sq = sim.sqPhase < 0.5 ? 4096 : -4096, tri = (sim.sqPhase < 0.5 ? sim.sqPhase : 1 - sim.sqPhase) * 4 * 4096 - 4096;
+    const mod = sq + (tri - sq) * sp.shape / 4096;
+    let c = sp.clockTune ? p - 17702 + (fromFader(x) - 2048) * 8 : cutBase;
+    c = clamp(c + (mod * sp.fm / 4096) * 3 + (p - 8 * 4096) * sp.kt / 4096, 0, 39500);
+    pMin = Math.min(pMin, p); pMax = Math.max(pMax, p); cMin = Math.min(cMin, c); cMax = Math.max(cMax, c);
+    L.pitch = p; L.cutoff = c;
+  }
+  if (pMin <= pMax) {
+    L.pitchMin = pMin; L.pitchMax = pMax; L.cutoffMin = cMin; L.cutoffMax = cMax;
+    state.trace.push([now, pMin, pMax, cMin, cMax]);
+  }
+  L.reg = sim.reg; L.length = sp.len;
+  L.main = main; L.x = x; L.y = +$('pv-y').value; L.typeB = $('pv-sw').value === '1';
+  L.type = zone(V(3, L.typeB ? 1 : 0), 6);
+  const dt = Math.max(1, now - (sim.lastFrame || now - 16)); sim.lastFrame = now;
+  L.cycleRate = L.cycleRate * 0.95 + sim.cycles * 1000 / dt * 0.05; sim.cycles = 0;
+  L.flags = (state.freeze ? 1 : 0) | (L.typeB ? 2 : 0);
+}
+
+// ============================================================================
+// Drawing
+// ============================================================================
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+const visible = (cv) => !cv.closest('.folded');
+
+// Fraction of the last ms milliseconds each source was high
+function duty(now, ms) {
+  const d = new Array(NSRC).fill(0), h = state.bitHist;
+  let n = 0;
+  for (let k = h.length - 1; k >= 0 && h[k][0] > now - ms; k--, n++) for (let i = 0; i < NSRC; i++) if ((h[k][1] >> i) & 1) d[i]++;
+  return n ? d.map(x => x / n) : d;
+}
+const sourceLevel = (i) => i < 6 ? V(0, i) : V(1, i - 6);
+const sourceLabel = (i) => i === 0 ? '/1' : i < 6 ? 'D' + i + ' ÷' + ratioOf(i - 1) : SOURCE_NAMES[i] + ' ' + LOGIC_NAMES[zone(V(1, i - 2), 4)];
+
+function drawFlow(now) {
+  const cv = $('flow'); if (!visible(cv)) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const L = state.live, ink = cssVar('--ink'), muted = cssVar('--muted'), line = cssVar('--line'),
+    acc = cssVar('--accent'), warm = cssVar('--warm'), led = cssVar('--led'), track = cssVar('--track'), v3 = cssVar('--v3');
+  const s = Math.min(1, W / 930);           // scale down on narrow screens
+  ctx.save(); ctx.scale(s, s);
+  const w = W / s;
+  ctx.font = '12px system-ui'; ctx.textBaseline = 'middle'; ctx.lineWidth = 1.5;
+  const box = (x, y, bw, bh, title) => {
+    ctx.strokeStyle = line; ctx.fillStyle = cssVar('--panel');
+    ctx.beginPath(); ctx.roundRect(x, y, bw, bh, 6); ctx.fill(); ctx.stroke();
+    if (title) { ctx.fillStyle = muted; ctx.font = '10px system-ui'; ctx.fillText(title.toUpperCase(), x + 8, y + 10); ctx.font = '12px system-ui'; }
+  };
+  const arrow = (pts, col, label, lx, ly) => {
+    ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+    for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
+    ctx.stroke();
+    const n = pts.length, x1 = pts[n - 2], y1 = pts[n - 1], x0 = pts[n - 4], y0 = pts[n - 3];
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - 7 * Math.cos(a - 0.4), y1 - 7 * Math.sin(a - 0.4)); ctx.lineTo(x1 - 7 * Math.cos(a + 0.4), y1 - 7 * Math.sin(a + 0.4)); ctx.fill();
+    if (label) { ctx.fillStyle = col; ctx.font = '11px system-ui'; ctx.fillText(label, lx, ly); ctx.font = '12px system-ui'; }
+  };
+  const dot = (x, y, b, col) => {
+    ctx.globalAlpha = 0.12 + 0.88 * b; ctx.fillStyle = col || led;
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.stroke(); ctx.lineWidth = 1.5;
+  };
+  const bar = (x, y, bw, v, col) => { ctx.fillStyle = track; ctx.fillRect(x, y - 3, bw, 6); ctx.fillStyle = col; ctx.fillRect(x, y - 3, bw * v, 6); };
+
+  const hz = pitchHz(L.pitch);
+  // Clock
+  box(10, 40, 130, 90, 'Clock');
+  ctx.fillStyle = ink; ctx.font = '16px system-ui'; ctx.fillText(fmtHz(hz), 20, 70); ctx.font = '12px system-ui';
+  ctx.fillStyle = muted; ctx.fillText(fmtHz(pitchHz(L.pitchMin)) + '–' + fmtHz(pitchHz(L.pitchMax)), 20, 92);
+  if (L.flags & 4) { ctx.fillStyle = warm; ctx.fillText('Pulse In 1 clocks', 20, 114); }
+  else { // a little square wave, blinking at slow rates
+    const on = hz < 15 ? (now / 1000 * hz) % 1 < 0.5 : true;
+    ctx.strokeStyle = on ? acc : muted; ctx.beginPath(); ctx.moveTo(20, 120); ctx.lineTo(20, 108); ctx.lineTo(40, 108); ctx.lineTo(40, 120); ctx.lineTo(60, 120); ctx.lineTo(60, 108); ctx.lineTo(80, 108); ctx.stroke();
+  }
+
+  // Register
+  const len = clamp(L.length, 3, 31);
+  box(160, 20, 330, 72, 'Noise register · ' + len + ' bits' + (state.freeze ? ' · loop lock' : ''));
+  const cw = Math.min(10, 310 / len);
+  for (let b = 0; b < len; b++) {
+    const on = Math.floor(L.reg / Math.pow(2, b)) % 2 === 1;
+    ctx.fillStyle = on ? (state.freeze ? warm : acc) : track;
+    ctx.fillRect(170 + b * cw, 40, cw - 1, 14);
+  }
+  ctx.fillStyle = muted; ctx.font = '11px system-ui';
+  const colourV = V(2, 1);
+  ctx.fillText((L.flags & 8 ? 'Audio In 1 comparator replaces the bit' : 'colour: ' + (colourV ? 'red ' + pct(colourV) : 'white')) + (V(2, 2) ? ' · hiss ' + pct(V(2, 2)) : ''), 170, 72);
+  ctx.font = '12px system-ui';
+  arrow([140, 70, 160, 70], muted);
+
+  // Sources
+  const d = duty(now, 50);
+  const sx = 520, rows = [];
+  box(sx - 10, 10, 190, 300, 'Sources');
+  for (let i = 0; i < NSRC; i++) {
+    const y = 38 + i * 27 + (i >= 6 ? 8 : 0);
+    rows.push(y);
+    const lvl = sourceLevel(i) / 127;
+    ctx.globalAlpha = lvl ? 1 : 0.4;
+    dot(sx + 8, y, d[i], i >= 6 ? v3 : led);
+    ctx.fillStyle = ink; ctx.fillText(sourceLabel(i), sx + 22, y);
+    bar(sx + 118, y, 50, lvl, i >= 6 ? v3 : acc);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(sx, rows[5] + 17); ctx.lineTo(sx + 170, rows[5] + 17); ctx.stroke();
+  arrow([490, 56, 500, 56, 500, rows[0], sx - 10, rows[0]], muted);
+  ctx.fillStyle = muted; ctx.font = '11px system-ui';
+  ctx.fillText('edges → dividers' + (Q(5, 7) >= 2048 ? ' (both)' : ''), 335, 130);
+  const cn = 2 + ((Q(5, 6) * 63) >> 12);
+  ctx.fillText(cn >= 64 ? 'free running' : 'reset every ' + cn + ' edges', 335, 146);
+  ctx.fillText(Math.round(L.cycleRate * 10) / 10 + ' cycles/s', 335, 162);
+  ctx.font = '12px system-ui';
+
+  // Mix
+  const mx = 740, my = 160;
+  ctx.strokeStyle = line; ctx.fillStyle = cssVar('--panel'); ctx.beginPath(); ctx.arc(mx, my, 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = ink; ctx.font = '18px system-ui'; ctx.fillText('Σ', mx - 6, my + 1); ctx.font = '12px system-ui';
+  arrow([sx + 180, my, mx - 18, my], muted);
+  ctx.fillStyle = muted; ctx.font = '11px system-ui'; ctx.fillText('drive ×' + exp2((Q(3, 5) - 2048) * 2 / 4096).toFixed(1), mx - 26, my + 32); ctx.font = '12px system-ui';
+
+  // Filter
+  const fx = 780, fy = 110;
+  box(fx, fy, 110, 100, 'Filter ' + (L.typeB ? 'B' : 'A'));
+  ctx.fillStyle = ink; ctx.fillText(FILTER_NAMES[L.type], fx + 10, fy + 32);
+  ctx.font = '14px system-ui'; ctx.fillText(fmtHz(cutoffHz(L.cutoff)), fx + 10, fy + 54); ctx.font = '12px system-ui';
+  ctx.fillStyle = muted; ctx.fillText((L.type === 5 ? 'feedback ' : 'res ') + Math.round(L.y * 100 / 127) + '%', fx + 10, fy + 74);
+  if (Q(3, 6) >= 2048) { ctx.fillStyle = warm; ctx.fillText('clock tune', fx + 10, fy + 90); }
+  arrow([mx + 18, my, fx, my], muted);
+
+  // Outputs
+  {
+    for (let c = 0; c < 2; c++) {
+      const pk = (c ? L.peakR : L.peakL) / 127, x0 = fx + 118 + c * 10;
+      ctx.fillStyle = track; ctx.fillRect(x0, fy, 6, 100);
+      ctx.fillStyle = pk > 0.95 ? cssVar('--bad') : acc; ctx.fillRect(x0, fy + 100 * (1 - pk), 6, 100 * pk);
+    }
+    ctx.fillStyle = muted; ctx.font = '10px system-ui'; ctx.fillText('L R', fx + 116, fy + 110); ctx.font = '12px system-ui';
+  }
+
+  // Feedback: mix back to the clock
+  const nm = V(0, 6), fm = V(0, 7);
+  arrow([mx, my + 18, mx, 318, 75, 318, 75, 130], nm ? warm : line,
+    'noise mod ' + (nm ? pct(nm) : 'off') + (V(2, 4) ? ', slewed' : ''), 200, 308);
+  // Filter mod: clock to the filter
+  arrow([140, 50, 150, 50, 150, 4, 835, 4, 835, fy], fm ? acc : line,
+    'filter mod ' + (fm ? pct(fm) : 'off') + (V(3, 3) ? ' (' + Math.round(V(3, 3) * 100 / 127) + '% triangle)' : ''), 712, 14);
+  ctx.restore();
+}
+
+const LANE_MS = 2000;
+function drawLanes(now) {
+  const h = state.bitHist;
+  while (h.length && h[0][0] < now - LANE_MS - 500) h.shift();
+  const cv = $('lanes'); if (!visible(cv)) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const lw = 80, lh = H / NSRC;
+  const acc = cssVar('--accent'), v3 = cssVar('--v3'), muted = cssVar('--muted'), grid = cssVar('--grid');
+  ctx.font = '11px system-ui'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < NSRC; i++) {
+    const y0 = i * lh, lvl = sourceLevel(i);
+    ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(0, Math.round(y0) + 0.5); ctx.lineTo(W, Math.round(y0) + 0.5); ctx.stroke();
+    ctx.fillStyle = muted; ctx.fillText(sourceLabel(i), 4, y0 + lh / 2);
+    ctx.fillStyle = i >= 6 ? v3 : acc;
+    ctx.globalAlpha = lvl ? 0.35 + 0.65 * lvl / 127 : 0.15;
+    // Merge runs of highs into rectangles
+    let runStart = -1;
+    const xOf = (t) => lw + (W - lw) * (1 - (now - t) / LANE_MS);
+    for (let k = 0; k < h.length; k++) {
+      const [t, b] = h[k];
+      if (t < now - LANE_MS - 2) continue;
+      const hi = (b >> i) & 1;
+      if (hi && runStart < 0) runStart = t;
+      if ((!hi || k === h.length - 1) && runStart >= 0) {
+        const x0 = xOf(runStart), x1 = xOf(hi ? t + 1 : t);
+        ctx.fillRect(x0, y0 + 3, Math.max(1, x1 - x0), lh - 6);
+        runStart = -1;
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = grid;
+  for (let s = 0; s <= 4; s++) { const x = lw + (W - lw) * s / 4; ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, H); ctx.stroke(); }
+}
+
+const TRACE_MS = 8000;
+function drawTrace(now) {
+  const tr = state.trace;
+  while (tr.length && tr[0][0] < now - TRACE_MS - 500) tr.shift();
+  const cv = $('trace'); if (!visible(cv)) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const lo = Math.log2(0.5), hi = Math.log2(32000);
+  const y = (hz) => H - 4 - (Math.log2(Math.max(hz, 0.5)) - lo) / (hi - lo) * (H - 8);
+  ctx.strokeStyle = cssVar('--grid'); ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui'; ctx.lineWidth = 1;
+  for (const f of [1, 10, 100, 1000, 10000]) {
+    ctx.beginPath(); ctx.moveTo(0, Math.round(y(f)) + 0.5); ctx.lineTo(W, Math.round(y(f)) + 0.5); ctx.stroke();
+    ctx.fillText(fmtHz(f), 4, y(f) - 3);
+  }
+  const x = (t) => W - (now - t) / TRACE_MS * W;
+  const band = (lo, hiK, col) => {
+    ctx.fillStyle = col; ctx.globalAlpha = 0.35; ctx.beginPath();
+    tr.forEach((r, k) => { const X = x(r[0]), Y = y(hiK(r)[1]); if (k) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+    for (let k = tr.length - 1; k >= 0; k--) ctx.lineTo(x(tr[k][0]), y(hiK(tr[k])[0]));
+    ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath();
+    tr.forEach((r, k) => { const [a, b] = hiK(r), X = x(r[0]), Y = y(Math.sqrt(a * b)); if (k) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+    ctx.stroke();
+  };
+  if (tr.length > 1) {
+    band(0, (r) => [cutoffHz(r[3]), cutoffHz(r[4])], cssVar('--v2'));
+    band(0, (r) => [pitchHz(r[1]), pitchHz(r[2])], cssVar('--v1'));
+  }
+  ctx.font = '11px system-ui';
+  ctx.fillStyle = cssVar('--v1'); ctx.fillText('■ clock', W - 120, 12);
+  ctx.fillStyle = cssVar('--v2'); ctx.fillText('■ cutoff', W - 60, 12);
+}
+
+function drawScope() {
+  const cv = $('scope'); if (!visible(cv)) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H / 2 + 0.5); ctx.lineTo(W, H / 2 + 0.5); ctx.stroke();
+  const s = state.scope;
+  $('scope-cap').textContent = cardLive() ? 'Audio Out 1, about 5 ms from a rising zero crossing.' : 'Audio Out 1 appears here with a card connected.';
+  if (!s || !cardLive()) return;
+  ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; ctx.beginPath();
+  s.forEach((v, i) => { const X = i / (s.length - 1) * W, Y = H - 4 - v / 127 * (H - 8); if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+  ctx.stroke();
+}
+
+// The filter's magnitude response, from the same coefficients the card uses
+function filterResponse(type, c, res, damp) {
+  const fc = cutoffHz(c), g = Math.tan(Math.PI * Math.min(fc, 20000) / 48000);
+  const q12 = (res * 4095 / 127) | 0, r = 4096 - q12;
+  const k = (((r * r) >> 7) + 1300) / 65536;
+  const ladder = (q12 * 17200 / 4096) / 4096;
+  const fb = (q12 * 32440 / 4096) / 32768;
+  const a = (32768 - fromFader(damp) * 7) / 32768;
+  const period = clamp(48000 / fc, 2, 2040);
+  const pts = [];
+  for (let n = 0; n <= 240; n++) {
+    const f = 20 * Math.pow(1000, n / 240), w = 2 * Math.PI * f / 48000;
+    let re, im;
+    if (type <= 3) {
+      // Bilinear SVF: s = j tan(w/2) / g
+      const O = Math.tan(w / 2) / g;
+      const dr = 1 - O * O, di = k * O, dd = dr * dr + di * di;
+      let nr, ni;
+      if (type === 0) { nr = 1; ni = 0; } else if (type === 1) { nr = 0; ni = O; } else if (type === 2) { nr = -O * O; ni = 0; } else { nr = 1 - O * O; ni = 0; }
+      re = (nr * dr + ni * di) / dd; im = (ni * dr - nr * di) / dd;
+    } else if (type === 4) {
+      // Four TPT one-poles, global feedback through a unit delay
+      const O = Math.tan(w / 2) / g;
+      let hr = 1, hi = 0;
+      for (let s = 0; s < 4; s++) { const d = 1 + O * O; const pr = 1 / d, pi = -O / d; const t = hr * pr - hi * pi; hi = hr * pi + hi * pr; hr = t; }
+      const zr = Math.cos(w), zi = -Math.sin(w);
+      const lr = 1 + ladder * (hr * zr - hi * zi), li = ladder * (hr * zi + hi * zr), ld = lr * lr + li * li;
+      const comp = 1 + ladder / 3;
+      re = comp * (hr * lr + hi * li) / ld; im = comp * (hi * lr - hr * li) / ld;
+    } else {
+      // y = x + fb * lowpass(delay(y)), output halved
+      const dr = Math.cos(w * period), di = -Math.sin(w * period);
+      const er = 1 - (1 - a) * Math.cos(w), ei = (1 - a) * Math.sin(w), ed = er * er + ei * ei;
+      const lr = a * er / ed, li = -a * ei / ed;
+      const pr = dr * lr - di * li, pi = dr * li + di * lr;
+      const qr = 1 - fb * pr, qi = -fb * pi, qd = qr * qr + qi * qi;
+      re = 0.5 * qr / qd; im = -0.5 * qi / qd;
+    }
+    pts.push([f, 20 * Math.log10(Math.max(1e-6, Math.hypot(re, im)))]);
+  }
+  return pts;
+}
+function drawResponse() {
+  const cv = $('response'); if (!visible(cv)) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const L = state.live;
+  const x = (f) => Math.log(f / 20) / Math.log(1000) * W;
+  const lo = -36, hi = 30, y = (db) => H - 4 - (clamp(db, lo, hi) - lo) / (hi - lo) * (H - 8);
+  ctx.strokeStyle = cssVar('--grid'); ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui'; ctx.lineWidth = 1;
+  for (const f of [100, 1000, 10000]) { ctx.beginPath(); ctx.moveTo(Math.round(x(f)) + 0.5, 0); ctx.lineTo(Math.round(x(f)) + 0.5, H); ctx.stroke(); ctx.fillText(fmtHz(f), x(f) + 3, H - 8); }
+  for (const db of [-24, 0, 24]) { ctx.beginPath(); ctx.moveTo(0, Math.round(y(db)) + 0.5); ctx.lineTo(W, Math.round(y(db)) + 0.5); ctx.stroke(); ctx.fillText((db > 0 ? '+' : '') + db + ' dB', 3, y(db) - 4); }
+  ctx.fillStyle = cssVar('--warm-soft');
+  const x0 = x(Math.max(20, cutoffHz(L.cutoffMin))), x1 = x(Math.max(20, cutoffHz(L.cutoffMax)));
+  ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+  const pts = filterResponse(L.type, L.cutoff, L.y, V(3, 2));
+  ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5; ctx.beginPath();
+  pts.forEach(([f, db], k) => { if (k) ctx.lineTo(x(f), y(db)); else ctx.moveTo(x(f), y(db)); });
+  ctx.stroke();
+  $('resp-cap').textContent = FILTER_NAMES[L.type] + ' (type ' + (L.typeB ? 'B' : 'A') + ') at ' + fmtHz(cutoffHz(L.cutoff)) + '; the shaded band is the cutoff’s range.';
+}
+
+function drawReadouts(now) {
+  const L = state.live, live = cardLive();
+  $('ro-clock').textContent = L.flags & 4 ? 'Pulse In 1' : fmtHz(pitchHz(L.pitch));
+  $('ro-clock-sub').textContent = fmtHz(pitchHz(L.pitchMin)) + ' – ' + fmtHz(pitchHz(L.pitchMax)) + (live ? '' : ' · preview');
+  $('ro-cutoff').textContent = fmtHz(cutoffHz(L.cutoff));
+  $('ro-cutoff-sub').textContent = fmtHz(cutoffHz(L.cutoffMin)) + ' – ' + fmtHz(cutoffHz(L.cutoffMax));
+  $('ro-filter').textContent = FILTER_NAMES[L.type];
+  $('ro-filter-sub').textContent = 'type ' + (L.typeB ? 'B (switch middle)' : 'A (switch up)') + ' · ' + (L.type === 5 ? 'fb ' : 'res ') + Math.round(L.y * 100 / 127) + '%';
+  $('ro-pattern').textContent = state.freeze ? 'Loop lock' : L.length + '-bit LFSR';
+  const cn = 2 + ((Q(5, 6) * 63) >> 12);
+  $('ro-pattern-sub').textContent = (cn >= 64 ? 'free running' : 'bar of ' + cn + ' edges') + ' · ' + (Math.round(L.cycleRate * 10) / 10) + ' cycles/s';
+  const ins = [];
+  if (live) { if (L.flags & 4) ins.push('ext clock'); if (L.flags & 8) ins.push('audio bit'); if (L.flags & 16) ins.push('FM'); }
+  $('ro-inputs').textContent = live ? (ins.length ? ins.join(', ') : 'none patched') : '-';
+  $('ro-busy').textContent = live && L.busy >= 0 ? 'card load ' + L.busy + ' / ~20 µs' : '';
+  $('ro-busy').style.color = live && L.busy >= 17 ? cssVar('--bad') : '';
+  for (const id of ['pv-main', 'pv-x', 'pv-y', 'pv-sw']) $(id).disabled = live;
+  if (live) { $('pv-main').value = L.main; $('pv-x').value = L.x; $('pv-y').value = L.y; $('pv-sw').value = L.typeB ? '1' : '0'; }
+  $('pv-main-o').textContent = fmtHz(pitchHz(fromFader(+$('pv-main').value) * 16 - 4096));
+  $('pv-x-o').textContent = Q(3, 6) >= 2048 ? ((fromFader(+$('pv-x').value) - 2048) * 8 / 4096).toFixed(1) + ' oct' : fmtHz(cutoffHz((fromFader(+$('pv-x').value) * 39500) >> 12));
+  $('pv-y-o').textContent = pct(+$('pv-y').value);
+}
+
+function frame(now) {
+  if (!cardLive()) simulate(now);
+  drawReadouts(now); drawFlow(now); drawLanes(now); drawTrace(now); drawScope(); drawResponse(); drawLedRow(now);
+  serviceEightmuLeds(now);
+  requestAnimationFrame(frame);
+}
+
+// ============================================================================
+// Presets (localStorage)
+// ============================================================================
+const store = {
+  get(k, d) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+// A preset: 7 pages of 8 fader values, and loop lock
+function cleanPreset(o) {
+  if (!o || typeof o !== 'object' || !Array.isArray(o.v) || o.v.length !== NPAGES) return null;
+  const v = o.v.map(r => Array.isArray(r) && r.length === NF ? r.map(x => clamp(Math.round(+x) || 0, 0, 127)) : null);
+  if (v.some(r => !r)) return null;
+  return { name: String(o.name || 'Preset').slice(0, 60), v, freeze: !!o.freeze };
+}
+// Built-in presets, as changes to the defaults
+const zv = zoneValue;
+function preset(name, changes, freeze) {
+  const v = DEFAULTS.map(r => r.slice());
+  for (const [pg, vals] of Object.entries(changes)) vals.forEach((x, i) => { if (x !== null) v[pg][i] = x; });
+  return cleanPreset({ name, v, freeze });
+}
+const _ = null;
+const BUILTIN = [
+  preset('Default', {}),
+  preset('C64 chase', { 0: [0, 90, 60, 40, 0, 30, 30, 110], 2: [zv(3, 15)], 3: [zv(4, 6)] }),
+  preset('Prime polyrhythm', { 0: [0, 70, 60, 60, 50, 40, 12, 30], 5: [zv(1, 16), zv(3, 16), zv(4, 16), zv(6, 16), zv(7, 16), 0, 127, 0] }),
+  preset('Prime bars', { 0: [0, 70, 60, 60, 50, 40, 20, 40], 5: [zv(1, 16), zv(3, 16), zv(4, 16), zv(6, 16), zv(7, 16), 0, 44, 0] }),
+  preset('Logic lattice', { 0: [0, 20, 20, 20, 20, 20, 25, 50],
+    1: [90, 80, 70, 60, zv(0, 4), zv(1, 4), zv(2, 4), zv(3, 4)],
+    4: [_, _, _, _, _, _, 127, _], 5: [zv(1, 16), zv(2, 16), zv(3, 16), zv(4, 16), zv(5, 16), 0, 127, 0] }),
+  preset('Comb plucks', { 0: [0, 0, 40, 70, 60, 50, 20, 0], 3: [zv(5, 6), zv(0, 6), 60, 0, 0, 64, 127, 0] }),
+  preset('Red bubbles', { 0: [20, 60, 60, 50, 40, 30, 50, 60], 2: [127, 100, 40, 64, 70, 0, 0, 0], 5: [_, _, _, _, _, _, _, 127] }),
+  preset('Stereo scatter', { 0: [30, 70, 60, 50, 50, 40, 30, 40], 1: [50, 0, 50, 0, zv(0, 4), _, zv(2, 4), _],
+    4: [64, 0, 127, 15, 112, 40, 127, 0] }),
+  preset('Locked loop', { 0: [0, 80, 70, 60, 40, 60, 0, 60], 2: [zv(4, 15)] }, true),
+];
+let userPresets = [];
+function loadPresets() { userPresets = (store.get('ripple.presets.v1', []) || []).map(cleanPreset).filter(Boolean); }
+function savePresets() { if (!store.set('ripple.presets.v1', userPresets)) say('Could not save presets: browser storage is unavailable or full.', true); }
+function applyPreset(pr) {
+  state.values = pr.v.map(r => r.slice());
+  setFreeze(pr.freeze, false);
+  for (const m of mus) reengage(m);
+  sendAll();
+  say('Loaded “' + pr.name + '”' + (link.cardOnline ? ' and sent it to the card.' : '.'));
+  changed();
+}
+let presetsDirty = true, presetSig = '';
+function renderPresets() {
+  const sig = JSON.stringify(userPresets);
+  if (!presetsDirty && sig === presetSig) return;
+  presetsDirty = false; presetSig = sig;
+  const ul = $('presets'); ul.innerHTML = '';
+  const add = (pr, idx) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = pr.name; name.title = 'Load';
+    li.append(name);
+    name.addEventListener('click', () => applyPreset(pr));
+    if (idx < 0) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'built in'; li.append(t); }
+    else {
+      const mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.addEventListener('click', fn); li.append(b); };
+      mk('Update', 'Overwrite with what is on screen now', () => { userPresets[idx].v = state.values.map(r => r.slice()); userPresets[idx].freeze = state.freeze; savePresets(); presetsDirty = true; requestRender(); say('Updated “' + pr.name + '”.'); });
+      mk('Rename', 'Rename', () => { const n = prompt('New name', pr.name); if (n) { userPresets[idx].name = n.slice(0, 60); savePresets(); presetsDirty = true; requestRender(); } });
+      mk('✕', 'Delete', () => { if (confirm('Delete “' + pr.name + '”?')) { userPresets.splice(idx, 1); savePresets(); presetsDirty = true; requestRender(); } });
+    }
+    ul.append(li);
+  };
+  BUILTIN.forEach(pr => add(pr, -1));
+  userPresets.forEach((pr, i) => add(pr, i));
+}
+function saveCurrent() {
+  const n = prompt('Name for this preset', 'My ripple ' + (userPresets.length + 1));
+  if (!n) return;
+  userPresets.push({ name: n.slice(0, 60), v: state.values.map(r => r.slice()), freeze: state.freeze });
+  savePresets(); presetsDirty = true; requestRender(); say('Saved “' + n + '”.');
+}
+function exportPresets() {
+  const blob = new Blob([JSON.stringify({ format: 'ripple-presets', version: 1, presets: userPresets }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ripple-presets.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importPresets(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      const list = (Array.isArray(o) ? o : o.presets || []).map(cleanPreset).filter(Boolean);
+      if (!list.length) { say('No presets found in that file.', true); return; }
+      userPresets.push(...list); savePresets(); presetsDirty = true; requestRender();
+      say('Imported ' + list.length + ' preset' + (list.length > 1 ? 's' : '') + '.');
+    } catch (e) { say('That file isn’t a presets file: ' + e.message, true); }
+  };
+  r.readAsText(file);
+}
+
+// A button on every card's heading folds the card down to the heading;
+// which cards are folded is remembered in this browser
+function buildCollapsers() {
+  const folded = new Set(store.get('ripple.folded.v1', []) || []);
+  document.querySelectorAll('section.card').forEach((card) => {
+    const h = card.querySelector(':scope > h2'); if (!h) return;
+    const name = h.textContent.trim();
+    const b = document.createElement('button'); b.className = 'fold'; b.type = 'button';
+    const show = (f) => {
+      card.classList.toggle('folded', f);
+      b.textContent = f ? '+' : '−';
+      b.title = (f ? 'Show ' : 'Hide ') + name; b.setAttribute('aria-label', b.title);
+      b.setAttribute('aria-expanded', String(!f));
+    };
+    show(folded.has(name));
+    b.addEventListener('click', () => {
+      const f = !card.classList.contains('folded');
+      show(f);
+      if (f) folded.add(name); else folded.delete(name);
+      store.set('ripple.folded.v1', [...folded]);
+    });
+    h.appendChild(b);
+  });
+}
+
+// ============================================================================
+// Start
+// ============================================================================
+function init() {
+  const last = cleanPreset(Object.assign({ name: 'last' }, store.get('ripple.last.v1', null) || {}));
+  if (last) { state.values = last.v; state.freeze = last.freeze; }
+  loadPresets();
+  buildFaders(); buildCollapsers();
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', connect);
+  $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its faders.'); });
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent the faders and loop lock to the card.'); });
+  $('btn-freeze').addEventListener('click', () => setFreeze(!state.freeze, true));
+  $('btn-reseed').addEventListener('click', () => {
+    if (link.cardOnline) sendRaw(sysex(CMD.RESEED, []));
+    Object.assign(sim, { reg: 0xACE1, colour: 0, div: [0, 0, 0, 0, 0], cyc: 0 });
+  });
+  $('btn-reset').addEventListener('click', () => {
+    if (!confirm('Reset every page to the default?')) return;
+    state.values = DEFAULTS.map(r => r.slice());
+    setFreeze(false, false);
+    for (const m of mus) reengage(m);
+    sendAll();
+    changed();
+  });
+  $('btn-save').addEventListener('click', saveCurrent);
+  $('btn-export').addEventListener('click', exportPresets);
+  $('btn-import').addEventListener('click', () => $('import-file').click());
+  $('import-file').addEventListener('change', (e) => { if (e.target.files[0]) importPresets(e.target.files[0]); e.target.value = ''; });
+  window.addEventListener('resize', () => requestRender());
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. You can still edit, preview and keep presets here.');
+  else say('Press “Connect card & 8mus” to reach the card. Until then this page edits and previews on its own.');
+  changed();
+  setupOwnership();
+  requestAnimationFrame(frame);
+}
+init();
+</script>
+</body>
+</html>
