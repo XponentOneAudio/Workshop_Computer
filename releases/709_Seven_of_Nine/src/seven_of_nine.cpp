@@ -100,12 +100,12 @@ public:
 	}
 
 	// Damping k, plus whatever the resonance limiter needs: none while the
-	// band-pass peak is below thr, rising by `stiff` per multiple of thr above.
+	// band-pass peak is below thr, then rising by `scale` per unit above it.
 	// Called at control rate; the extra damping is smoothed (~2ms) so the
 	// limiter doesn't ripple at audio rate and add distortion of its own.
-	float LimitedK(float k, int32_t thr, float stiff)
+	float LimitedK(float k, int32_t thr, float scale)
 	{
-		float target = env > thr ? stiff * float(env - thr) / float(thr) : 0.0f;
+		float target = env > thr ? float(env - thr) * scale : 0.0f;
 		kLim += (target - kLim) * 0.08f;
 		float kl = k + kLim;
 		return kl > 2.0f ? 2.0f : kl;
@@ -145,7 +145,11 @@ class DualBorg : public ComputerCard
 #ifdef COMPUTERCARD_HOST_SIM
 	friend struct SimProbe;   // lets sim/render.cpp check internal state
 #endif
-	static constexpr int CTRL_DECIM = 8;            // control rate = 6kHz
+	// Control rate = 6kHz. The work is spread over different samples of each
+	// 8-sample frame (shared settings, Borg I, Borg II, LEDs) so that no single
+	// sample overruns the 48kHz deadline.
+	static constexpr int CTRL_DECIM = 8;
+	static constexpr int PHASE_SHARED = 8, PHASE_BORG1 = 6, PHASE_BORG2 = 4, PHASE_LEDS = 2;
 	static constexpr float CTRL_RATE = 48000.0f / CTRL_DECIM;
 
 	// Cutoff is handled in "steps" of 1/96 octave above F_MIN
@@ -193,7 +197,9 @@ class DualBorg : public ComputerCard
 	int burst[2];
 	int32_t level[2];            // output level follower for LEDs
 	int32_t gainQ15[2];          // VCA gain
-	int32_t inGainQ15[2];        // input trim, falls as resonance rises
+	int32_t inGainQ15;           // input trim, falls as resonance rises
+	float kInv;                  // (1 - resonance)^2, for the damping
+	float limScale[2];           // resonance limiter stiffness / threshold
 	int32_t res, morph;          // Main knob settings, 0..4095
 	bool resLive, morphLive;     // knob has picked up the setting
 	bool started;
@@ -228,11 +234,13 @@ public:
 			burst[i] = 0;
 			level[i] = 0;
 			gainQ15[i] = 0;
-			inGainQ15[i] = 32768;
+			limScale[i] = chars[i].limStiff / float(chars[i].limThr);
 		}
 		// The setting for the switch position at power-on follows the knob
 		// straight away; the other starts at zero (no resonance / low-pass).
 		res = morph = 0;
+		inGainQ15 = 32768;
+		kInv = 1.0f;
 		resLive = morphLive = false;
 		started = false;
 		series = false;
@@ -251,8 +259,8 @@ public:
 		if (live) value = knob;
 	}
 
-	// Recompute cutoff/resonance/gain for both filters (control rate)
-	void UpdateControls(bool lpg)
+	// Main knob settings shared by both filters (control rate)
+	void UpdateShared(bool lpg)
 	{
 		int32_t knob = KnobVal(Main);
 		if (!started) { started = true; (lpg ? morphLive : resLive) = true; }
@@ -260,49 +268,50 @@ public:
 		else { Follow(knob, res, resLive); morphLive = false; }
 
 		float r = res * (1.0f / 4095.0f);
-		float inv = (1.0f - r) * (1.0f - r);
+		kInv = (1.0f - r) * (1.0f - r);
+		// Up to ~5dB less input at full resonance, so loud signals don't
+		// slam the resonant peak (and the outputs) into saturation.
+		inGainQ15 = lpg ? 32768 : int32_t(32768.0f / (1.0f + 0.8f * r * r));
+	}
 
-		for (int i = 0; i < 2; i++)
+	// Recompute cutoff/resonance/gain for one filter (control rate)
+	void UpdateFilter(int i, bool lpg)
+	{
+		const Character &c = chars[i];
+
+		// Ping envelope
+		if (pinged[i]) { ping[i] = 65536; pinged[i] = false; }
+		else ping[i] = int32_t(((int64_t)ping[i] * pingDecayQ16[i]) >> 16);
+
+		// Target cutoff in steps: knob + CV (~1V/oct) + ping
+		int32_t knob = (KnobVal(i ? Y : X) * maxStep[i]) >> 12;
+		int32_t cv = (CVIn(i) * 288) >> 10;   // ~341 counts/V -> 96 steps/V
+		int32_t pingAmt = lpg ? maxStep[i] : PING_OCTAVES * STEPS_PER_OCT;
+		int32_t target = knob + cv + ((ping[i] * pingAmt) >> 16);
+		if (target < 0) target = 0;
+		if (target > maxStep[i]) target = maxStep[i];
+
+		// Asymmetric slew: the "response time" of each Borg
+		int32_t t16 = target << 16;
+		int32_t coef = (t16 > smooth[i]) ? attackQ16[i] : releaseQ16[i];
+		smooth[i] += int32_t(((int64_t)(t16 - smooth[i]) * coef) >> 16);
+
+		// Interpolated cutoff coefficient
+		int32_t idx = smooth[i] >> 16;
+		float frac = (smooth[i] & 0xFFFF) * (1.0f / 65536.0f);
+		float g = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
+
+		float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * kInv;
+		if (i == 0) borg1.SetCoeffs(g, borg1.LimitedK(k, c.limThr, limScale[0]));
+		else borg2.SetCoeffs(g, borg2.LimitedK(k, c.limThr, limScale[1]));
+
+		// LPG mode: level follows the same control, squared for a natural taper
+		if (lpg)
 		{
-			const Character &c = chars[i];
-
-			// Ping envelope
-			if (pinged[i]) { ping[i] = 65536; pinged[i] = false; }
-			else ping[i] = int32_t(((int64_t)ping[i] * pingDecayQ16[i]) >> 16);
-
-			// Target cutoff in steps: knob + CV (~1V/oct) + ping
-			int32_t knob = (KnobVal(i ? Y : X) * maxStep[i]) >> 12;
-			int32_t cv = (CVIn(i) * 288) >> 10;   // ~341 counts/V -> 96 steps/V
-			int32_t pingAmt = lpg ? maxStep[i] : PING_OCTAVES * STEPS_PER_OCT;
-			int32_t target = knob + cv + ((ping[i] * pingAmt) >> 16);
-			if (target < 0) target = 0;
-			if (target > maxStep[i]) target = maxStep[i];
-
-			// Asymmetric slew: the "response time" of each Borg
-			int32_t t16 = target << 16;
-			int32_t coef = (t16 > smooth[i]) ? attackQ16[i] : releaseQ16[i];
-			smooth[i] += int32_t(((int64_t)(t16 - smooth[i]) * coef) >> 16);
-
-			// Interpolated cutoff coefficient
-			int32_t idx = smooth[i] >> 16;
-			float frac = (smooth[i] & 0xFFFF) * (1.0f / 65536.0f);
-			float g = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
-
-			float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * inv;
-			// Up to ~5dB less input at full resonance, so loud signals don't
-			// slam the resonant peak (and the outputs) into saturation.
-			inGainQ15[i] = lpg ? 32768 : int32_t(32768.0f / (1.0f + 0.8f * r * r));
-			if (i == 0) borg1.SetCoeffs(g, borg1.LimitedK(k, c.limThr, c.limStiff));
-			else borg2.SetCoeffs(g, borg2.LimitedK(k, c.limThr, c.limStiff));
-
-			// LPG mode: level follows the same control, squared for a natural taper
-			if (lpg)
-			{
-				int32_t open = (smooth[i] >> 1) / maxStep[i]; // 0..32768
-				gainQ15[i] = (open * open) >> 15;
-			}
-			else gainQ15[i] = 32768;
+			int32_t open = (smooth[i] >> 1) / maxStep[i]; // 0..32768
+			gainQ15[i] = (open * open) >> 15;
 		}
+		else gainQ15[i] = 32768;
 	}
 
 	virtual void __not_in_flash_func(ProcessSample)()
@@ -328,11 +337,10 @@ public:
 			}
 		}
 
-		if (--ctrl <= 0)
-		{
-			ctrl = CTRL_DECIM;
-			UpdateControls(lpg);
-		}
+		if (--ctrl <= 0) ctrl = CTRL_DECIM;
+		if (ctrl == PHASE_SHARED) UpdateShared(lpg);
+		else if (ctrl == PHASE_BORG1) UpdateFilter(0, lpg);
+		else if (ctrl == PHASE_BORG2) UpdateFilter(1, lpg);
 
 		// Parallel: Audio In 2 is normalled to Audio In 1.
 		// Series: both inputs are mixed into Borg I, which feeds Borg II.
@@ -347,7 +355,7 @@ public:
 		{
 			// To internal scale (audio << 8), with a touch of dither so a
 			// silent, fully resonant Borg II can still start to self-oscillate.
-			int32_t x = (series && i == 1) ? prev : ins[i] * inGainQ15[i] >> 7;
+			int32_t x = (series && i == 1) ? prev : ins[i] * inGainQ15 >> 7;
 			if (burst[i] > 0) { burst[i]--; x += (rnd12() - 2048) << 7; }
 			x += (rnd12() - 2048) >> 6;
 
@@ -376,10 +384,10 @@ public:
 		if (routeShow > 0)
 		{
 			routeShow--;
-			if (ctrl == CTRL_DECIM)
+			if (ctrl == PHASE_LEDS)
 				for (int i = 0; i < 6; i++) LedBrightness(i, (series || i < 2) ? 4095 : 0);
 		}
-		else if (ctrl == CTRL_DECIM)
+		else if (ctrl == PHASE_LEDS)
 		{
 			for (int i = 0; i < 2; i++)
 			{
