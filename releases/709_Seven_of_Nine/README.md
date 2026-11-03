@@ -20,10 +20,11 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.3.1 beta**. The firmware builds and the DSP has been tested in the
+> Status: **0.3.2 beta**. The firmware builds and the DSP has been tested in the
 > host simulator (`sim/`). 0.3 cleans up the digital distortion reported on
 > hardware in 0.2 (see "How it works"). 0.3.1 fixes 0.3 freezing at power-on
-> (its control maths overran the 48kHz sample deadline).
+> (its control maths overran the 48kHz sample deadline). 0.3.2 restores the
+> resonance, which the 0.3 limiter was squashing at normal signal levels.
 > Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
@@ -94,8 +95,8 @@ form), whose low-pass and high-pass outputs are crossfaded for the LP → notch 
 HP control, in 32/64-bit integer arithmetic.
 
 Resonance is kept in check by a **limiter on the damping**, not by clipping.
-A peak follower watches each filter's band-pass state, and once it passes half
-of full scale the damping is raised (smoothly, at control rate) until the
+A peak follower watches each filter's band-pass state, and once it passes
+about 70% of full scale the damping is raised (smoothly, at control rate) until the
 resonance settles. Self-oscillation and loud resonant peaks stay round and
 steady instead of being hard-clipped, which is what caused the harsh,
 aliased "digital" distortion in 0.2. Borg I's limiter is gentle and its
@@ -105,8 +106,10 @@ gives its resonance an edge when driven.
 
 The inputs and outputs have headroom: signals pass through untouched up to 80%
 of full scale (about ±5 V, a typical modular level), then bend smoothly into
-the rails. With the switch Up, the input is also trimmed by up to about 5 dB as
-resonance rises, so loud signals don't slam the resonant peak into the outputs.
+the rails. With the switch Up, the input is also trimmed by up to about 9.5 dB as
+resonance rises. A very resonant filter rings at up to twice the size of a
+sharp edge in its input (a saw or square), and the trim leaves room for that
+ringing, so the resonance can sing at full strength without being squashed.
 
 Cutoff is computed in 1/96-octave steps from the knob, CV and ping envelope,
 then slewed with asymmetric attack and release times. These times, the top

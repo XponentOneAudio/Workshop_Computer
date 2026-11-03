@@ -174,9 +174,9 @@ class DualBorg : public ComputerCard
 	};
 	static constexpr Character chars[2] = {
 		// Borg I: slow, mellow, never self-oscillates
-		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 1.4f, 1.0f, 1 << 18 },
+		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 1.4f, 1.0f, 23 << 14 },
 		// Borg II: fast, bright, screams
-		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f, 2.0f, 1 << 18 },
+		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f, 2.0f, 23 << 14 },
 	};
 	static constexpr int PICKUP = 64;               // Main knob catch window
 	static constexpr int ROUTE_SHOW = 48000;        // routing LED display, 1s
@@ -269,9 +269,11 @@ public:
 
 		float r = res * (1.0f / 4095.0f);
 		kInv = (1.0f - r) * (1.0f - r);
-		// Up to ~5dB less input at full resonance, so loud signals don't
-		// slam the resonant peak (and the outputs) into saturation.
-		inGainQ15 = lpg ? 32768 : int32_t(32768.0f / (1.0f + 0.8f * r * r));
+		// Up to ~9.5dB less input at full resonance. A very resonant filter
+		// rings at up to twice the size of a sharp edge in its input (a saw or
+		// square), so this leaves room for that ringing without the limiter
+		// (or the outputs) having to squash it.
+		inGainQ15 = lpg ? 32768 : int32_t(32768.0f / (1.0f + 2.0f * r * r));
 	}
 
 	// Recompute cutoff/resonance/gain for one filter (control rate)
