@@ -207,6 +207,10 @@ class DualBorg : public ComputerCard
 	float nextG[2], nextK[2];    // cutoff and damping waiting to be applied
 	int16_t cvOutVal[2];         // CV Out value, updated at control rate
 	float kInv;                  // (1 - resonance)^2, for the damping
+	// Filter (0) / low-pass gate (1) mode, faded over ~50ms when the switch
+	// moves, so the damping, input trim and gate level glide rather than jump
+	int32_t lpgMixQ15;           // 0..32768
+	static constexpr int32_t MODE_FADE_STEP = int32_t(32768.0f / (0.05f * CTRL_RATE));
 	float limScale[2];           // resonance limiter stiffness / threshold
 	int32_t res, morph;          // Main knob settings, 0..4095
 	bool resLive, morphLive;     // knob has picked up the setting
@@ -252,6 +256,7 @@ public:
 		res = morph = 0;
 		inGainQ15 = 32768;
 		kInv = 1.0f;
+		lpgMixQ15 = 32768;
 		resLive = morphLive = false;
 		started = false;
 		series = false;
@@ -274,21 +279,33 @@ public:
 	void UpdateShared(bool lpg)
 	{
 		int32_t knob = KnobVal(Main);
-		if (!started) { started = true; (lpg ? morphLive : resLive) = true; }
+		if (!started)
+		{
+			started = true;
+			(lpg ? morphLive : resLive) = true;
+			lpgMixQ15 = lpg ? 32768 : 0;  // no fade at power-on
+		}
 		if (lpg) { Follow(knob, morph, morphLive); resLive = false; }
 		else { Follow(knob, res, resLive); morphLive = false; }
 
-		float r = res * (1.0f / 4095.0f);
-		kInv = (1.0f - r) * (1.0f - r);
+		// Integer maths here: this runs inside the audio interrupt
+		int32_t ir = 4095 - res;
+		kInv = float((ir * ir) >> 9) * (1.0f / 32768.0f);   // (1 - r)^2
 		// Up to ~9.5dB less input at full resonance. A very resonant filter
 		// rings at up to twice the size of a sharp edge in its input (a saw or
 		// square), so this leaves room for that ringing without the limiter
 		// (or the outputs) having to squash it.
-		inGainQ15 = lpg ? 32768 : int32_t(32768.0f / (1.0f + 2.0f * r * r));
+		int32_t r2Q15 = (res * res) >> 9;                     // r^2
+		int32_t trimQ15 = (1 << 30) / (32768 + 2 * r2Q15);    // 1 / (1 + 2 r^2)
+
+		if (lpg) { lpgMixQ15 += MODE_FADE_STEP; if (lpgMixQ15 > 32768) lpgMixQ15 = 32768; }
+		else { lpgMixQ15 -= MODE_FADE_STEP; if (lpgMixQ15 < 0) lpgMixQ15 = 0; }
+
+		inGainQ15 = trimQ15 + (((32768 - trimQ15) * lpgMixQ15) >> 15);
 	}
 
 	// Recompute the cutoff for one filter, and what follows from it (control rate)
-	void UpdateCutoff(int i, bool lpg)
+	void UpdateCutoff(int i)
 	{
 
 		// Ping envelope
@@ -298,7 +315,8 @@ public:
 		// Target cutoff in steps: knob + CV (~1V/oct) + ping
 		int32_t knob = (KnobVal(i ? Y : X) * maxStep[i]) >> 12;
 		int32_t cv = (CVIn(i) * 288) >> 10;   // ~341 counts/V -> 96 steps/V
-		int32_t pingAmt = lpg ? maxStep[i] : PING_OCTAVES * STEPS_PER_OCT;
+		int32_t pingFilter = PING_OCTAVES * STEPS_PER_OCT;
+		int32_t pingAmt = pingFilter + (((maxStep[i] - pingFilter) * lpgMixQ15) >> 15);
 		int32_t target = knob + cv + ((ping[i] * pingAmt) >> 16);
 		if (target < 0) target = 0;
 		if (target > maxStep[i]) target = maxStep[i];
@@ -313,13 +331,11 @@ public:
 		float frac = (smooth[i] & 0xFFFF) * (1.0f / 65536.0f);
 		nextG[i] = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
 
-		// LPG mode: level follows the same control, squared for a natural taper
-		if (lpg)
-		{
-			int32_t open = (smooth[i] >> 1) / maxStep[i]; // 0..32768
-			gainQ15[i] = (open * open) >> 15;
-		}
-		else gainQ15[i] = 32768;
+		// LPG mode: level follows the same control, squared for a natural
+		// taper. Filter mode: full level. Faded between the two.
+		int32_t open = (smooth[i] >> 1) / maxStep[i]; // 0..32768
+		int32_t lpgGain = (open * open) >> 15;
+		gainQ15[i] = 32768 + (((lpgGain - 32768) * lpgMixQ15) >> 15);
 
 		// Cutoff control out, 0..+6V
 		int32_t cvOut = (smooth[i] >> 5) / maxStep[i];
@@ -327,10 +343,13 @@ public:
 	}
 
 	// Recompute the damping (resonance, plus the limiter) for one filter
-	void UpdateDamping(int i, bool lpg)
+	void UpdateDamping(int i)
 	{
 		const Character &c = chars[i];
-		float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * kInv;
+		float kFilter = c.kMinFilter + (1.6f - c.kMinFilter) * kInv;
+		float k = lpgMixQ15 == 0 ? kFilter
+		        : lpgMixQ15 == 32768 ? c.kLPG
+		        : kFilter + (c.kLPG - kFilter) * (lpgMixQ15 * (1.0f / 32768.0f));
 		nextK[i] = i == 0 ? borg1.LimitedK(k, c.limThr, limScale[0])
 		                  : borg2.LimitedK(k, c.limThr, limScale[1]);
 	}
@@ -367,11 +386,11 @@ public:
 
 		if (--ctrl <= 0) ctrl = CTRL_DECIM;
 		if (ctrl == PHASE_SHARED) UpdateShared(lpg);
-		else if (ctrl == PHASE_CUTOFF[0]) UpdateCutoff(0, lpg);
-		else if (ctrl == PHASE_DAMP[0]) UpdateDamping(0, lpg);
+		else if (ctrl == PHASE_CUTOFF[0]) UpdateCutoff(0);
+		else if (ctrl == PHASE_DAMP[0]) UpdateDamping(0);
 		else if (ctrl == PHASE_COEFFS[0]) UpdateCoeffs(0);
-		else if (ctrl == PHASE_CUTOFF[1]) UpdateCutoff(1, lpg);
-		else if (ctrl == PHASE_DAMP[1]) UpdateDamping(1, lpg);
+		else if (ctrl == PHASE_CUTOFF[1]) UpdateCutoff(1);
+		else if (ctrl == PHASE_DAMP[1]) UpdateDamping(1);
 		else if (ctrl == PHASE_COEFFS[1]) UpdateCoeffs(1);
 
 		// Parallel: Audio In 2 is normalled to Audio In 1.

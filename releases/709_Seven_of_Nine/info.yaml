@@ -9,7 +9,7 @@ summary: |
   In parallel, Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
 Language: "C++ (Pico SDK + ComputerCard)"
 Creator: "Martyn Quickenden"
-Version: "0.3.3"
+Version: "0.3.4"
 Status: "Beta"
 License: MIT
 date-created: 2026-10-30

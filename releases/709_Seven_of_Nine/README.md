@@ -20,7 +20,7 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.3.3 beta**. The firmware builds and the DSP has been tested in the
+> Status: **0.3.4 beta**. The firmware builds and the DSP has been tested in the
 > host simulator (`sim/`). 0.3 cleans up the digital distortion reported on
 > hardware in 0.2 (see "How it works"). 0.3.1 fixes 0.3 freezing at power-on
 > (its control maths overran the 48kHz sample deadline). 0.3.2 restores the
@@ -28,6 +28,7 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > 0.3.3 fixes the knobs misreading (cutoff stuck open, LPG not closing): the
 > audio interrupt still overran on some samples, which upsets the knob
 > multiplexer. Every sample now has about 30% headroom.
+> 0.3.4 fades between filter and LPG mode over ~50 ms when the switch moves.
 > Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
@@ -52,6 +53,10 @@ you turn it past that value. Changing the switch never makes the resonance or
 the LP/HP setting jump. At power-on, the knob takes over the setting for the
 switch position straight away. The other setting starts at zero (no resonance,
 or low-pass).
+
+Moving the switch between Up and Middle changes the mode (resonant filter or
+low-pass gate), so the sound does change, but it fades across over about
+50 ms rather than jumping: the damping, input level and gate level all glide.
 
 Tapping Down leaves the switch in Middle (LPG mode). To go back to the
 resonant filter, flick it Up again.
