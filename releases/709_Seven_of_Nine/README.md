@@ -20,11 +20,14 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.3.2 beta**. The firmware builds and the DSP has been tested in the
+> Status: **0.3.3 beta**. The firmware builds and the DSP has been tested in the
 > host simulator (`sim/`). 0.3 cleans up the digital distortion reported on
 > hardware in 0.2 (see "How it works"). 0.3.1 fixes 0.3 freezing at power-on
 > (its control maths overran the 48kHz sample deadline). 0.3.2 restores the
 > resonance, which the 0.3 limiter was squashing at normal signal levels.
+> 0.3.3 fixes the knobs misreading (cutoff stuck open, LPG not closing): the
+> audio interrupt still overran on some samples, which upsets the knob
+> multiplexer. Every sample now has about 30% headroom.
 > Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
@@ -131,6 +134,10 @@ tracking:
 cd releases/709_Seven_of_Nine/sim
 ./build.sh
 ```
+
+`sim/isr_timing.py` estimates the cost of the real firmware's audio
+interrupt from the built `.elf`, in a Cortex-M0+ emulator. Each 48 kHz sample
+must stay under about 4000 cycles, or the knobs start to misread.
 
 ## Build
 

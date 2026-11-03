@@ -92,10 +92,12 @@ class NonlinearSVF
 public:
 	void SetCoeffs(float g, float k)
 	{
-		float fa1 = 1.0f / (1.0f + g * (g + k));
-		a1 = int32_t(fa1 * 16777216.0f);
-		a2 = int32_t(fa1 * g * 16777216.0f);
-		a3 = int32_t(fa1 * g * g * 16777216.0f);
+		// Written to reuse products: float maths is slow on the RP2040
+		float s1 = 16777216.0f / (1.0f + g * (g + k));   // a1 in Q24
+		float s2 = s1 * g;
+		a1 = int32_t(s1);
+		a2 = int32_t(s2);
+		a3 = int32_t(s2 * g);
 		kQ24 = int32_t(k * 16777216.0f);
 	}
 
@@ -146,10 +148,14 @@ class DualBorg : public ComputerCard
 	friend struct SimProbe;   // lets sim/render.cpp check internal state
 #endif
 	// Control rate = 6kHz. The work is spread over different samples of each
-	// 8-sample frame (shared settings, Borg I, Borg II, LEDs) so that no single
-	// sample overruns the 48kHz deadline.
+	// 8-sample frame, so that no single sample comes near the 48kHz deadline
+	// (~4000 cycles). An overrun delays the next ComputerCard interrupt,
+	// which upsets its knob/switch multiplexer and makes the knobs misread.
 	static constexpr int CTRL_DECIM = 8;
-	static constexpr int PHASE_SHARED = 8, PHASE_BORG1 = 6, PHASE_BORG2 = 4, PHASE_LEDS = 2;
+	static constexpr int PHASE_SHARED = 8, PHASE_LEDS = 7;
+	static constexpr int PHASE_CUTOFF[2] = { 6, 3 };   // per Borg: cutoff
+	static constexpr int PHASE_DAMP[2]   = { 5, 2 };   // per Borg: damping (resonance)
+	static constexpr int PHASE_COEFFS[2] = { 4, 1 };   // per Borg: filter coefficients
 	static constexpr float CTRL_RATE = 48000.0f / CTRL_DECIM;
 
 	// Cutoff is handled in "steps" of 1/96 octave above F_MIN
@@ -198,6 +204,8 @@ class DualBorg : public ComputerCard
 	int32_t level[2];            // output level follower for LEDs
 	int32_t gainQ15[2];          // VCA gain
 	int32_t inGainQ15;           // input trim, falls as resonance rises
+	float nextG[2], nextK[2];    // cutoff and damping waiting to be applied
+	int16_t cvOutVal[2];         // CV Out value, updated at control rate
 	float kInv;                  // (1 - resonance)^2, for the damping
 	float limScale[2];           // resonance limiter stiffness / threshold
 	int32_t res, morph;          // Main knob settings, 0..4095
@@ -235,6 +243,9 @@ public:
 			level[i] = 0;
 			gainQ15[i] = 0;
 			limScale[i] = chars[i].limStiff / float(chars[i].limThr);
+			nextG[i] = gTable[0];
+			nextK[i] = chars[i].kLPG;
+			cvOutVal[i] = 0;
 		}
 		// The setting for the switch position at power-on follows the knob
 		// straight away; the other starts at zero (no resonance / low-pass).
@@ -276,10 +287,9 @@ public:
 		inGainQ15 = lpg ? 32768 : int32_t(32768.0f / (1.0f + 2.0f * r * r));
 	}
 
-	// Recompute cutoff/resonance/gain for one filter (control rate)
-	void UpdateFilter(int i, bool lpg)
+	// Recompute the cutoff for one filter, and what follows from it (control rate)
+	void UpdateCutoff(int i, bool lpg)
 	{
-		const Character &c = chars[i];
 
 		// Ping envelope
 		if (pinged[i]) { ping[i] = 65536; pinged[i] = false; }
@@ -301,11 +311,7 @@ public:
 		// Interpolated cutoff coefficient
 		int32_t idx = smooth[i] >> 16;
 		float frac = (smooth[i] & 0xFFFF) * (1.0f / 65536.0f);
-		float g = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
-
-		float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * kInv;
-		if (i == 0) borg1.SetCoeffs(g, borg1.LimitedK(k, c.limThr, limScale[0]));
-		else borg2.SetCoeffs(g, borg2.LimitedK(k, c.limThr, limScale[1]));
+		nextG[i] = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
 
 		// LPG mode: level follows the same control, squared for a natural taper
 		if (lpg)
@@ -314,6 +320,26 @@ public:
 			gainQ15[i] = (open * open) >> 15;
 		}
 		else gainQ15[i] = 32768;
+
+		// Cutoff control out, 0..+6V
+		int32_t cvOut = (smooth[i] >> 5) / maxStep[i];
+		cvOutVal[i] = int16_t(cvOut > 2047 ? 2047 : cvOut);
+	}
+
+	// Recompute the damping (resonance, plus the limiter) for one filter
+	void UpdateDamping(int i, bool lpg)
+	{
+		const Character &c = chars[i];
+		float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * kInv;
+		nextK[i] = i == 0 ? borg1.LimitedK(k, c.limThr, limScale[0])
+		                  : borg2.LimitedK(k, c.limThr, limScale[1]);
+	}
+
+	// Turn them into filter coefficients (control rate)
+	void UpdateCoeffs(int i)
+	{
+		if (i == 0) borg1.SetCoeffs(nextG[0], nextK[0]);
+		else borg2.SetCoeffs(nextG[1], nextK[1]);
 	}
 
 	virtual void __not_in_flash_func(ProcessSample)()
@@ -341,8 +367,12 @@ public:
 
 		if (--ctrl <= 0) ctrl = CTRL_DECIM;
 		if (ctrl == PHASE_SHARED) UpdateShared(lpg);
-		else if (ctrl == PHASE_BORG1) UpdateFilter(0, lpg);
-		else if (ctrl == PHASE_BORG2) UpdateFilter(1, lpg);
+		else if (ctrl == PHASE_CUTOFF[0]) UpdateCutoff(0, lpg);
+		else if (ctrl == PHASE_DAMP[0]) UpdateDamping(0, lpg);
+		else if (ctrl == PHASE_COEFFS[0]) UpdateCoeffs(0);
+		else if (ctrl == PHASE_CUTOFF[1]) UpdateCutoff(1, lpg);
+		else if (ctrl == PHASE_DAMP[1]) UpdateDamping(1, lpg);
+		else if (ctrl == PHASE_COEFFS[1]) UpdateCoeffs(1);
 
 		// Parallel: Audio In 2 is normalled to Audio In 1.
 		// Series: both inputs are mixed into Borg I, which feeds Borg II.
@@ -373,9 +403,7 @@ public:
 			if (out < -2048) out = -2048;
 			outs[i] = out;
 
-			// Cutoff control out, 0..+6V
-			int32_t cvOut = (smooth[i] >> 5) / maxStep[i];
-			CVOut(i, int16_t(cvOut > 2047 ? 2047 : cvOut));
+			CVOut(i, cvOutVal[i]);
 
 			int32_t a = out < 0 ? -out : out;
 			level[i] += ((a << 4) - level[i]) >> 9;
