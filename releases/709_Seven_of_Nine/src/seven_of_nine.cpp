@@ -9,7 +9,7 @@
 //
 //   Borg I  (left column)  slow, mellow vactrol response; soft saturation;
 //                          resonance sings but never self-oscillates.
-//   Borg II (right column) fast, bright; the resonance loop clips hard, so it
+//   Borg II (right column) fast, bright; the resonance saturates when pushed, so it
 //                          shrieks and will self-oscillate.
 //
 // I/O (left column of jacks = Borg I, right column = Borg II):
@@ -36,7 +36,8 @@
 //                    top pair only = parallel.
 //
 // All audio processing is integer; float is only used at a decimated control
-// rate to turn cutoff/resonance into filter coefficients.
+// rate to turn cutoff/resonance (and the resonance limiter) into filter
+// coefficients.
 
 #include "ComputerCard.h"
 #include <cmath>
@@ -49,34 +50,45 @@ static int32_t __not_in_flash_func(rnd12)()
 	return lcg_seed >> 20; // 0..4095
 }
 
-// Cubic soft clipper in 32-bit arithmetic. Linear near zero, smoothly reaching
-// +/-L (L = 2^K) at |x| = 1.5L and flat beyond. Requires K >= 15.
-template <unsigned K>
-static inline int32_t __not_in_flash_func(softClip)(int32_t x)
+// Soft-knee clipper: exactly linear up to T, then bends smoothly (no kink in
+// level or slope) towards +/-L, which it only reaches at infinity. Signals
+// below the knee pass through untouched, so normal levels stay clean.
+template <int32_t T, int32_t L>
+static inline int32_t __not_in_flash_func(softKnee)(int32_t x)
 {
-	constexpr unsigned S = K - 15;
-	constexpr int32_t LIM = 3 << (K - 1);  // 1.5L
-	bool neg = x < 0;
-	int32_t a = neg ? -x : x;
-	if (a > LIM) a = LIM;
-	// Only the cubic correction is computed at reduced precision, so small
-	// signals pass through exactly.
-	uint32_t s = uint32_t(a) >> S;         // L -> 32768
-	uint32_t s2 = (s * s) >> 15;
-	uint32_t s3 = (s2 * s) >> 15;
-	int32_t y = a - (int32_t((s3 * 4855) >> 15) << S); // a - (4/27) a^3 / L^2
-	return neg ? -y : y;
+	static_assert(T > 0 && L > T, "knee must sit below the limit");
+	constexpr int32_t R = L - T;
+	int32_t a = x < 0 ? -x : x;
+	if (a <= T) return x;
+	int32_t e = a - T;
+	if (e > (1 << 24)) e = 1 << 24;            // far past the limit: keeps the maths in range
+	// y = T + R * e / (e + R). Both terms of the ratio are shifted down to 16
+	// bits first, so it is one 32-bit divide (in hardware on the RP2040).
+	uint32_t d = uint32_t(e + R);
+	int sh = 32 - __builtin_clz(d) - 16;
+	if (sh < 0) sh = 0;
+	uint32_t f15 = (uint32_t(e >> sh) << 15) / (d >> sh); // e / (e + R), Q15
+	int32_t y = T + int32_t(((int64_t)R * f15) >> 15);
+	return x < 0 ? -y : y;
 }
 
-// Zero-delay-feedback state-variable low-pass (Cytomic/Simper form) with a
-// saturating band-pass state. Signals are audio << 8 (full scale = 2^19);
-// coefficients are Q24. SAT sets where the resonant state starts to clip:
-// lower = grittier, more MS-20 "shriek".
-template <unsigned SAT>
+// Zero-delay-feedback state-variable filter (Cytomic/Simper form). Signals are
+// audio << 8 (full scale FS = 2^19); coefficients are Q24.
+//
+// Resonance is held in check by extra damping rather than by clipping: a peak
+// follower on the band-pass state raises the damping (at control rate) once
+// the resonance goes past a set level, much as a real filter's resonance
+// "gives way" when driven. That keeps self-oscillation and loud resonant peaks
+// round, without the aliasing of a hard-clipped feedback loop. A soft-knee
+// saturator on the band-pass state remains for grit (SAT_T/SAT_L) and as a
+// safety net.
+template <int32_t SAT_T, int32_t SAT_L>
 class NonlinearSVF
 {
 	int32_t ic1eq = 0, ic2eq = 0;
 	int32_t a1 = 0, a2 = 0, a3 = 0, kQ24 = 0;
+	int32_t env = 0;             // peak level of the band-pass state
+	float kLim = 0.0f;           // extra damping from the limiter, smoothed
 public:
 	void SetCoeffs(float g, float k)
 	{
@@ -87,6 +99,18 @@ public:
 		kQ24 = int32_t(k * 16777216.0f);
 	}
 
+	// Damping k, plus whatever the resonance limiter needs: none while the
+	// band-pass peak is below thr, rising by `stiff` per multiple of thr above.
+	// Called at control rate; the extra damping is smoothed (~2ms) so the
+	// limiter doesn't ripple at audio rate and add distortion of its own.
+	float LimitedK(float k, int32_t thr, float stiff)
+	{
+		float target = env > thr ? stiff * float(env - thr) / float(thr) : 0.0f;
+		kLim += (target - kLim) * 0.08f;
+		float kl = k + kLim;
+		return kl > 2.0f ? 2.0f : kl;
+	}
+
 	// morph: 0 = low-pass, 2048 = notch, 4096 = high-pass. Notch is LP + HP
 	// at full level, matching the hardware's "notch is a mix of the two".
 	int32_t __not_in_flash_func(operator())(int32_t x, int32_t morph)
@@ -94,10 +118,16 @@ public:
 		int32_t v3 = x - ic2eq;
 		int32_t v1 = int32_t(((int64_t)a1 * ic1eq + (int64_t)a2 * v3 + (1 << 23)) >> 24);
 		int32_t v2 = ic2eq + int32_t(((int64_t)a2 * ic1eq + (int64_t)a3 * v3 + (1 << 23)) >> 24);
-		ic1eq = softClip<SAT>(2 * v1 - ic1eq);
+		ic1eq = softKnee<SAT_T, SAT_L>(2 * v1 - ic1eq);
 		ic2eq = 2 * v2 - ic2eq;
 		if (ic2eq > (1 << 22)) ic2eq = 1 << 22;
 		if (ic2eq < -(1 << 22)) ic2eq = -(1 << 22);
+
+		// Peak follower: instant attack, ~85ms release
+		int32_t a = v1 < 0 ? -v1 : v1;
+		if (a > env) env = a;
+		else env -= env >> 12;
+
 		if (morph <= 0) return v2;
 
 		int64_t hp = (int64_t)x - v2 - (((int64_t)kQ24 * v1) >> 24);
@@ -135,20 +165,25 @@ class DualBorg : public ComputerCard
 		float pingMs;        // ping envelope decay time constant
 		float kMinFilter;    // 1/Q at full resonance (switch Up)
 		float kLPG;          // 1/Q in low-pass gate mode (resonance off)
+		float limStiff;      // how hard the resonance limiter clamps down
+		int32_t limThr;      // band-pass level where the limiter starts
 	};
 	static constexpr Character chars[2] = {
 		// Borg I: slow, mellow, never self-oscillates
-		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 1.4f },
+		{ 9000.0f,  5.0f, 80.0f, 350.0f,  0.17f, 1.4f, 1.0f, 1 << 18 },
 		// Borg II: fast, bright, screams
-		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f },
+		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f, 2.0f, 1 << 18 },
 	};
 	static constexpr int PICKUP = 64;               // Main knob catch window
 	static constexpr int ROUTE_SHOW = 48000;        // routing LED display, 1s
 
 	float gTable[NUM_STEPS + 1]; // tan(pi f / fs) per cutoff step
 
-	NonlinearSVF<21> borg1;      // clips at 4x full scale: soft, round
-	NonlinearSVF<19> borg2;      // clips at full scale: gritty, shrieking
+	// Band-pass saturation (full scale = 2^19). Borg I only saturates far
+	// above its limiter, so it stays round; Borg II bends from 3/4 of full
+	// scale, which gives its resonance an edge when pushed.
+	NonlinearSVF<1 << 21, 1 << 22> borg1;
+	NonlinearSVF<3 << 17, 3 << 18> borg2;
 
 	int32_t maxStep[2];          // knob range, in steps
 	int32_t attackQ16[2], releaseQ16[2], pingDecayQ16[2];
@@ -158,6 +193,7 @@ class DualBorg : public ComputerCard
 	int burst[2];
 	int32_t level[2];            // output level follower for LEDs
 	int32_t gainQ15[2];          // VCA gain
+	int32_t inGainQ15[2];        // input trim, falls as resonance rises
 	int32_t res, morph;          // Main knob settings, 0..4095
 	bool resLive, morphLive;     // knob has picked up the setting
 	bool started;
@@ -192,6 +228,7 @@ public:
 			burst[i] = 0;
 			level[i] = 0;
 			gainQ15[i] = 0;
+			inGainQ15[i] = 32768;
 		}
 		// The setting for the switch position at power-on follows the knob
 		// straight away; the other starts at zero (no resonance / low-pass).
@@ -252,8 +289,11 @@ public:
 			float g = gTable[idx] + (gTable[idx + 1] - gTable[idx]) * frac;
 
 			float k = lpg ? c.kLPG : c.kMinFilter + (1.6f - c.kMinFilter) * inv;
-			if (i == 0) borg1.SetCoeffs(g, k);
-			else borg2.SetCoeffs(g, k);
+			// Up to ~5dB less input at full resonance, so loud signals don't
+			// slam the resonant peak (and the outputs) into saturation.
+			inGainQ15[i] = lpg ? 32768 : int32_t(32768.0f / (1.0f + 0.8f * r * r));
+			if (i == 0) borg1.SetCoeffs(g, borg1.LimitedK(k, c.limThr, c.limStiff));
+			else borg2.SetCoeffs(g, borg2.LimitedK(k, c.limThr, c.limStiff));
 
 			// LPG mode: level follows the same control, squared for a natural taper
 			if (lpg)
@@ -307,17 +347,18 @@ public:
 		{
 			// To internal scale (audio << 8), with a touch of dither so a
 			// silent, fully resonant Borg II can still start to self-oscillate.
-			int32_t x = (series && i == 1) ? prev : ins[i] << 8;
+			int32_t x = (series && i == 1) ? prev : ins[i] * inGainQ15[i] >> 7;
 			if (burst[i] > 0) { burst[i]--; x += (rnd12() - 2048) << 7; }
 			x += (rnd12() - 2048) >> 6;
 
 			int32_t y;
-			if (i == 0) y = borg1(softClip<20>(x), morph);
-			else y = borg2(softClip<19>(x), morph);
+			if (i == 0) y = borg1(x, morph);
+			else y = borg2(x, morph);
 
 			y = int32_t(((int64_t)y * gainQ15[i]) >> 15);
 			prev = y;
-			int32_t out = softClip<19>(y) >> 8;
+			// Clean up to 80% of full scale, then a soft knee into the rails
+			int32_t out = softKnee<(4 << 19) / 5, 1 << 19>(y) >> 8;
 			if (out > 2047) out = 2047;
 			if (out < -2048) out = -2048;
 			outs[i] = out;

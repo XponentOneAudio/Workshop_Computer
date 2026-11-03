@@ -4,16 +4,16 @@ short-description: "Two contrasting vactrol-style filters, one mellow and one sh
 summary: |
   A model of a dual "Borg" filter: two deliberately different vactrol-style filters side by side, drawing on the Buchla 292 low-pass gate and the Korg MS-20 filter.
   **Borg I** (left column) is slow and mellow, with resonance that never self-oscillates.
-  **Borg II** (right column) is fast and bright, and its MS-20 style resonance shrieks and self-oscillates with ~1V/oct tracking.
+  **Borg II** (right column) is fast and bright, and its MS-20 style resonance shrieks when pushed and self-oscillates with ~1V/oct tracking.
   Switch Up gives a 12 dB resonant filter (Main = resonance); Middle gives a low-pass gate (Main = LP -> notch -> HP). Tap the momentary Down position to toggle parallel and series routing.
   In parallel, Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
 Language: "C++ (Pico SDK + ComputerCard)"
 Creator: "Martyn Quickenden"
-Version: "0.2"
+Version: "0.3"
 Status: "Beta"
 License: MIT
 date-created: 2026-10-30
-date-updated: 2026-10-30
+date-updated: 2026-11-03
 tags:
   - filter
   - effect

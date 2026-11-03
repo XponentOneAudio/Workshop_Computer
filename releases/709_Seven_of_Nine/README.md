@@ -8,8 +8,8 @@ filters that deliberately *do not* sound or respond the same.
   (cutoff opens in ~5 ms and closes in ~80 ms), it saturates softly, and its
   resonance sings but never self-oscillates.
 - **Borg II** (right column) is fast and bright. It follows control changes
-  almost instantly, and its resonance loop clips hard in the style of the MS-20,
-  so it shrieks and, at the top of the knob, self-oscillates.
+  almost instantly, and its resonance saturates in the style of the MS-20, so
+  it shrieks when pushed and, at the top of the knob, self-oscillates.
 
 As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 (filter and VCA together, Buchla 292 style), and with resonance **on** it is a
@@ -20,8 +20,9 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.2 beta**. The firmware builds and the DSP has been tested in the
-> host simulator (`sim/`), but it has not yet been tested on hardware.
+> Status: **0.3 beta**. The firmware builds and the DSP has been tested in the
+> host simulator (`sim/`). 0.3 cleans up the digital distortion reported on
+> hardware in 0.2 (see "How it works").
 > Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
@@ -89,11 +90,22 @@ Turning it towards high-pass gives thinner, clickier strikes.
 
 Each side is a zero-delay-feedback state-variable filter (Cytomic / Simper
 form), whose low-pass and high-pass outputs are crossfaded for the LP → notch →
-HP control, in 32/64-bit integer arithmetic. The band-pass state passes
-through a cubic soft clipper, which is what bounds the resonance. Borg II's
-clipper starts at full scale (gritty, and allows self-oscillation with a
-slightly negative damping), while Borg I's starts at 4× full scale (round), and
-Borg I's damping never goes below Q ≈ 6.
+HP control, in 32/64-bit integer arithmetic.
+
+Resonance is kept in check by a **limiter on the damping**, not by clipping.
+A peak follower watches each filter's band-pass state, and once it passes half
+of full scale the damping is raised (smoothly, at control rate) until the
+resonance settles. Self-oscillation and loud resonant peaks stay round and
+steady instead of being hard-clipped, which is what caused the harsh,
+aliased "digital" distortion in 0.2. Borg I's limiter is gentle and its
+resonance never self-oscillates. Borg II's limiter is firmer, and its band-pass
+state also passes through a soft-knee saturator from ¾ of full scale, which
+gives its resonance an edge when driven.
+
+The inputs and outputs have headroom: signals pass through untouched up to 80%
+of full scale (about ±5 V, a typical modular level), then bend smoothly into
+the rails. With the switch Up, the input is also trimmed by up to about 5 dB as
+resonance rises, so loud signals don't slam the resonant peak into the outputs.
 
 Cutoff is computed in 1/96-octave steps from the knob, CV and ping envelope,
 then slewed with asymmetric attack and release times. These times, the top
