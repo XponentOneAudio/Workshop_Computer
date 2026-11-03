@@ -16,8 +16,8 @@
 //   Audio In 1/2     Parallel: filter inputs, Audio In 2 normalled to In 1.
 //                    Series: both inputs are mixed into Borg I.
 //   Audio Out 1/2    Parallel: Borg I / Borg II. Series: both carry Borg II.
-//   CV In 1/2        cutoff CV (~1V/oct, uncalibrated). In LPG mode it also
-//                    opens the gate.
+//   CV In 1/2        cutoff CV (~1V/oct at 100% level, uncalibrated). In LPG
+//                    mode it also opens the gate.
 //   Pulse In 1/2     ping: a decaying envelope that sweeps the cutoff up
 //                    (filter mode) or strikes the gate open (LPG mode).
 //                    With no audio patched, a ping also injects a short
@@ -30,10 +30,16 @@
 //                    picks it up again once turned past the kept value.
 //   Switch           Up     = Filter, resonance on (12 dB)
 //                    Middle = Low-pass gate, resonance off
-//                    Down   = (momentary) tap to toggle parallel / series
+//                    Down   = (momentary) tap to toggle parallel / series.
+//                    Hold Down and turn:
+//                      Main   = routing: left half parallel, right half series
+//                      X / Y  = level of CV In 1 / 2, 0..100% (default 100%)
+//                    While Down is held the knobs only change these; on
+//                    release, cutoff and Main pick up again as above.
 //   LEDs             top: output level, middle: cutoff, bottom: ping envelope.
 //                    For 1s after a routing change: all six = series,
-//                    top pair only = parallel.
+//                    top pair only = parallel. While Down is held: top pair
+//                    on, middle = CV In 1 / 2 level, bottom pair on = series.
 //
 // All audio processing is integer; float is only used at a decimated control
 // rate to turn cutoff/resonance (and the resonance limiter) into filter
@@ -184,7 +190,9 @@ class DualBorg : public ComputerCard
 		// Borg II: fast, bright, screams
 		{ 16000.0f, 0.5f, 12.0f, 120.0f, -0.03f, 1.1f, 2.0f, 23 << 14 },
 	};
-	static constexpr int PICKUP = 64;               // Main knob catch window
+	static constexpr int PICKUP = 64;               // knob catch window
+	static constexpr int TAKEOVER = 160;            // knob movement that counts as a turn
+	static constexpr int ROUTE_HYST = 128;          // routing knob hysteresis
 	static constexpr int ROUTE_SHOW = 48000;        // routing LED display, 1s
 
 	float gTable[NUM_STEPS + 1]; // tan(pi f / fs) per cutoff step
@@ -216,7 +224,14 @@ class DualBorg : public ComputerCard
 	bool resLive, morphLive;     // knob has picked up the setting
 	bool started;
 	bool series;
-	Switch lastSwitch;
+	int32_t cutKnob[2];          // X / Y cutoff settings, 0..4095
+	bool cutLive[2];             // X / Y have picked up the cutoff setting
+	int32_t cvLevel[2];          // CV In 1 / 2 level, Q12 (4096 = 100%)
+	// Hold-Down shift layer: knob positions when Down was pressed, and which
+	// knobs have since been turned (and so taken over their shift setting)
+	bool holding;
+	int32_t holdKnob[3];
+	bool holdTaken[3];
 	int routeShow;               // samples left of routing LED display
 	int ctrl;
 
@@ -260,7 +275,14 @@ public:
 		resLive = morphLive = false;
 		started = false;
 		series = false;
-		lastSwitch = Middle;
+		for (int i = 0; i < 2; i++)
+		{
+			cutKnob[i] = 0;
+			cutLive[i] = true;           // follow the knobs from power-on
+			cvLevel[i] = 4096;
+		}
+		holding = false;
+		for (int i = 0; i < 3; i++) { holdKnob[i] = 0; holdTaken[i] = false; }
 		routeShow = 0;
 		ctrl = 0;
 		borg1.SetCoeffs(gTable[0], chars[0].kLPG);
@@ -275,9 +297,52 @@ public:
 		if (live) value = knob;
 	}
 
-	// Main knob settings shared by both filters (control rate)
-	void UpdateShared(bool lpg)
+	// Down held: Main picks the routing and X / Y set the CV levels, each
+	// once it has been turned. A tap that turns nothing toggles the routing.
+	void UpdateHold(bool held)
 	{
+		if (held && !holding)
+		{
+			holding = true;
+			for (int k = 0; k < 3; k++)
+			{
+				holdKnob[k] = KnobVal(Knob(k));
+				holdTaken[k] = false;
+			}
+			// Everything the knobs normally set must be picked up again
+			resLive = morphLive = false;
+			cutLive[0] = cutLive[1] = false;
+		}
+		else if (!held && holding)
+		{
+			holding = false;
+			if (!holdTaken[0] && !holdTaken[1] && !holdTaken[2])
+			{
+				series = !series;
+				routeShow = ROUTE_SHOW;
+			}
+			else if (holdTaken[0]) routeShow = ROUTE_SHOW;
+		}
+		if (!holding) return;
+
+		for (int k = 0; k < 3; k++)
+		{
+			int32_t kv = KnobVal(Knob(k));
+			if (!holdTaken[k] && std::abs(kv - holdKnob[k]) > TAKEOVER) holdTaken[k] = true;
+			if (!holdTaken[k]) continue;
+			if (k == Main)
+			{
+				if (kv > 2048 + ROUTE_HYST) series = true;
+				else if (kv < 2048 - ROUTE_HYST) series = false;
+			}
+			else cvLevel[k - 1] = (kv * 4097) >> 12;   // 0..4096
+		}
+	}
+
+	// Main knob settings shared by both filters (control rate)
+	void UpdateShared(bool lpg, bool held)
+	{
+		UpdateHold(held);
 		int32_t knob = KnobVal(Main);
 		if (!started)
 		{
@@ -285,7 +350,8 @@ public:
 			(lpg ? morphLive : resLive) = true;
 			lpgMixQ15 = lpg ? 32768 : 0;  // no fade at power-on
 		}
-		if (lpg) { Follow(knob, morph, morphLive); resLive = false; }
+		if (holding) {}
+		else if (lpg) { Follow(knob, morph, morphLive); resLive = false; }
 		else { Follow(knob, res, resLive); morphLive = false; }
 
 		// Integer maths here: this runs inside the audio interrupt
@@ -313,8 +379,10 @@ public:
 		else ping[i] = int32_t(((int64_t)ping[i] * pingDecayQ16[i]) >> 16);
 
 		// Target cutoff in steps: knob + CV (~1V/oct) + ping
-		int32_t knob = (KnobVal(i ? Y : X) * maxStep[i]) >> 12;
+		if (!holding) Follow(KnobVal(i ? Y : X), cutKnob[i], cutLive[i]);
+		int32_t knob = (cutKnob[i] * maxStep[i]) >> 12;
 		int32_t cv = (CVIn(i) * 288) >> 10;   // ~341 counts/V -> 96 steps/V
+		cv = (cv * cvLevel[i]) >> 12;
 		int32_t pingFilter = PING_OCTAVES * STEPS_PER_OCT;
 		int32_t pingAmt = pingFilter + (((maxStep[i] - pingFilter) * lpgMixQ15) >> 15);
 		int32_t target = knob + cv + ((ping[i] * pingAmt) >> 16);
@@ -363,15 +431,10 @@ public:
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
-		// Down is momentary and springs back to Middle, so it is a tap to
-		// change routing; while held the card stays in LPG mode.
+		// Down is momentary and springs back to Middle: a tap changes the
+		// routing, and holding it gives the knobs a second layer (UpdateHold).
+		// While it is held the card stays in LPG mode.
 		Switch sw = SwitchVal();
-		if (sw == Down && lastSwitch != Down)
-		{
-			series = !series;
-			routeShow = ROUTE_SHOW;
-		}
-		lastSwitch = sw;
 		bool lpg = sw != Up;
 
 		for (int i = 0; i < 2; i++)
@@ -385,7 +448,7 @@ public:
 		}
 
 		if (--ctrl <= 0) ctrl = CTRL_DECIM;
-		if (ctrl == PHASE_SHARED) UpdateShared(lpg);
+		if (ctrl == PHASE_SHARED) UpdateShared(lpg, sw == Down);
 		else if (ctrl == PHASE_CUTOFF[0]) UpdateCutoff(0);
 		else if (ctrl == PHASE_DAMP[0]) UpdateDamping(0);
 		else if (ctrl == PHASE_COEFFS[0]) UpdateCoeffs(0);
@@ -430,7 +493,20 @@ public:
 		AudioOut1(series ? outs[1] : outs[0]);
 		AudioOut2(outs[1]);
 
-		if (routeShow > 0)
+		if (holding)
+		{
+			if (ctrl == PHASE_LEDS)
+			{
+				LedBrightness(0, 4095);
+				LedBrightness(1, 4095);
+				for (int i = 0; i < 2; i++)
+				{
+					LedBrightness(2 + i, cvLevel[i] > 4095 ? 4095 : cvLevel[i]);
+					LedBrightness(4 + i, series ? 4095 : 0);
+				}
+			}
+		}
+		else if (routeShow > 0)
 		{
 			routeShow--;
 			if (ctrl == PHASE_LEDS)

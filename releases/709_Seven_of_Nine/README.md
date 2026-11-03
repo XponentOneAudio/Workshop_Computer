@@ -20,7 +20,7 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > the hardware. It is not affiliated with or endorsed by Malekko, and it does not
 > reproduce that module's circuit or panel exactly.
 >
-> Status: **0.3.4 beta**. The firmware builds and the DSP has been tested in the
+> Status: **0.4 beta**. The firmware builds and the DSP has been tested in the
 > host simulator (`sim/`). 0.3 cleans up the digital distortion reported on
 > hardware in 0.2 (see "How it works"). 0.3.1 fixes 0.3 freezing at power-on
 > (its control maths overran the 48kHz sample deadline). 0.3.2 restores the
@@ -29,6 +29,7 @@ As on the hardware, with resonance **off** each Borg is a **low-pass gate**
 > audio interrupt still overran on some samples, which upsets the knob
 > multiplexer. Every sample now has about 30% headroom.
 > 0.3.4 fades between filter and LPG mode over ~50 ms when the switch moves.
+> 0.4 adds the hold-Down knob layer: routing on Main, CV levels on X / Y.
 > Prebuilt firmware: [`build/seven_of_nine.uf2`](build/seven_of_nine.uf2).
 
 ## Panel / I/O
@@ -39,13 +40,15 @@ Left column of jacks = **Borg I**, right column = **Borg II**.
 | --- | --- |
 | **Audio In 1 / 2** | **Parallel:** filter inputs, with **Audio In 2 normalled to Audio In 1** so a single source feeds both filters. **Series:** both inputs are mixed into Borg I. |
 | **Audio Out 1 / 2** | **Parallel:** Borg I / Borg II. **Series:** both outputs carry the end of the chain (Borg I → Borg II). |
-| **CV In 1 / 2** | Cutoff CV, roughly 1 V/oct (uncalibrated). In LPG mode a positive CV also opens the gate. |
+| **CV In 1 / 2** | Cutoff CV, roughly 1 V/oct at 100% level (uncalibrated). The level of each is set by holding Down and turning X / Y. In LPG mode a positive CV also opens the gate. |
 | **Pulse In 1 / 2** | **Ping.** Fires a decaying envelope: Borg I decays slowly (~350 ms) and Borg II quickly (~120 ms). In filter mode it sweeps the cutoff up about 4 octaves. In LPG mode it strikes the gate fully open. If no audio is patched, a ping also injects a short noise burst, so the filters can be played as drums. |
 | **CV Out 1 / 2** | Each filter's slewed cutoff control as 0 to +6 V. This includes Borg I's lazy response, so it doubles as a smoothed envelope. |
 | **Knob X / Knob Y** | Cutoff for Borg I (25 Hz to 9 kHz) and Borg II (25 Hz to 16 kHz). In LPG mode this also sets how far each gate rests open. |
 | **Main knob** | Switch **Up**: resonance for both filters. Switch **Middle**: **LP → notch → HP** for both filters (fully anticlockwise = low-pass, noon = notch, fully clockwise = high-pass). |
-| **Switch** | **Up = filter, resonance on** (12 dB). **Middle = low-pass gate**, resonance off. **Down (momentary) = tap to toggle parallel / series.** |
-| **LEDs** | Top row: output level. Middle row: cutoff. Bottom row: ping envelope. For one second after a routing change, **all six LEDs = series** and **top pair only = parallel**. |
+| **Switch** | **Up = filter, resonance on** (12 dB). **Middle = low-pass gate**, resonance off. **Down (momentary) = tap to toggle parallel / series**, or hold it for the second knob layer (below). |
+| **Hold Down + Main** | Routing: turn left of noon for **parallel**, right of noon for **series**. |
+| **Hold Down + X / Y** | Level of CV In 1 / CV In 2, from 0% (fully anticlockwise) to 100% (fully clockwise, the default). |
+| **LEDs** | Top row: output level. Middle row: cutoff. Bottom row: ping envelope. For one second after a routing change, **all six LEDs = series** and **top pair only = parallel**. While Down is held: top pair on, middle row = CV In 1 / 2 level, bottom pair on = series. |
 
 The Main knob keeps both settings. When you move the switch, the setting for
 the new position stays where you left it, and the knob takes over again once
@@ -61,6 +64,16 @@ low-pass gate), so the sound does change, but it fades across over about
 Tapping Down leaves the switch in Middle (LPG mode). To go back to the
 resonant filter, flick it Up again.
 
+### Hold Down: second knob layer
+
+While Down is held, the knobs set the routing (Main) and the CV levels (X and
+Y) instead of their usual jobs. Each knob only takes over once you actually
+turn it, so holding Down and turning just Y changes only CV In 2's level. If
+you let go without turning anything, it counts as a tap and toggles the
+routing. The cutoff and Main settings stay where they were while Down is held,
+and pick up again (as above) once each knob comes back to its old position.
+The CV levels are not saved, and reset to 100% at power-on.
+
 ### LPG mode tips
 
 Turn X / Y fully anticlockwise to close the gates, then open them with pings
@@ -69,8 +82,8 @@ Turning it towards high-pass gives thinner, clickier strikes.
 
 ### Differences from the hardware
 
-- The hardware has a CV attenuator on one CV input. Here both CV inputs are
-  fixed at about 1 V/oct.
+- The hardware has a CV attenuator on one CV input. Here both CV inputs have
+  a level (hold Down and turn X / Y), from 0 to 100% of about 1 V/oct.
 - The hardware's resonance and LP/HP controls belong to each Borg. Here one
   Main knob sets them for both.
 - The hardware gives a mix of both filters when only one output is patched in

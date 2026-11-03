@@ -24,6 +24,8 @@ struct SimProbe
 	static int res(const DualBorg &c) { return c.res; }
 	static int morph(const DualBorg &c) { return c.morph; }
 	static bool series(const DualBorg &c) { return c.series; }
+	static int cvLevel(const DualBorg &c, int i) { return c.cvLevel[i]; }
+	static int cutKnob(const DualBorg &c, int i) { return c.cutKnob[i]; }
 };
 
 static void writeWav(const std::string &path, const std::vector<int16_t> &samples)
@@ -230,6 +232,74 @@ static void renderDrums(const std::string &dir)
 	finalize(dir, "out_drums.wav", "no input, pings -> resonant filter drums", raw);
 }
 
+// 7) Hold-Down shift layer: Main picks the routing, X / Y set the CV levels,
+//    a plain tap still toggles, and nothing jumps on release.
+static double selfOscHz(DualBorg &card, double cvVolts, std::vector<int32_t> &raw)
+{
+	card.simCVIn[1] = volts(cvVolts);
+	long crossings = 0, measured = 0;
+	int32_t prev = 0;
+	for (long n = 0; n < SR / 2; n++)
+	{
+		run(card, raw);
+		int32_t y = card.simAudioOut[1];
+		if (n > SR / 4) { measured++; if (prev < 0 && y >= 0) crossings++; }
+		prev = y;
+	}
+	return crossings * (double)SR / measured;
+}
+
+static void renderShift(const std::string &dir)
+{
+	DualBorg card;
+	card.simSwitch = CC::Up;
+	card.simConnected[CC::CV2] = true;
+	card.simKnob[CC::Main] = 4095;
+	card.simKnob[CC::X] = card.simKnob[CC::Y] = 1800;
+	std::vector<int32_t> raw;
+	auto hold = [&](CC::Knob k, int32_t to) {
+		card.simSwitch = CC::Down;
+		int32_t from = card.simKnob[k];
+		for (long n = 0; n < SR / 4; n++)    // turn the knob over 250ms
+		{
+			card.simKnob[k] = from + (int32_t)((to - from) * n / (SR / 4));
+			run(card, raw);
+		}
+		card.simKnob[k] = to;
+		for (long n = 0; n < 480; n++) run(card, raw);
+		card.simSwitch = CC::Middle;
+		for (long n = 0; n < 480; n++) run(card, raw);
+		card.simSwitch = CC::Up;
+		for (long n = 0; n < SR / 10; n++) run(card, raw);
+	};
+
+	double full = selfOscHz(card, 2, raw) / selfOscHz(card, 0, raw);
+	hold(CC::Y, 2048);                    // CV In 2 level -> ~50%
+	double half = selfOscHz(card, 2, raw) / selfOscHz(card, 0, raw);
+	printf("  shift: CV2 level %d/4096, 2V tracks x%.2f (was x%.2f at 100%%), Y cutoff still %d (knob now %d)\n",
+	       SimProbe::cvLevel(card, 1), half, full, SimProbe::cutKnob(card, 1), card.simKnob[CC::Y]);
+
+	card.simKnob[CC::Y] = 1800;           // back to the old position: picks up again
+	for (long n = 0; n < SR / 10; n++) run(card, raw);
+	card.simKnob[CC::Y] = 2400;
+	for (long n = 0; n < SR / 10; n++) run(card, raw);
+	printf("  shift: after release, Y picks the cutoff up again: %d (want 2400)\n", SimProbe::cutKnob(card, 1));
+
+	hold(CC::Main, 3800);
+	bool s1 = SimProbe::series(card);
+	int resAfter = SimProbe::res(card);
+	hold(CC::Main, 300);
+	bool s2 = SimProbe::series(card);
+	card.simSwitch = CC::Down;            // plain tap
+	for (long n = 0; n < 2400; n++) run(card, raw);
+	card.simSwitch = CC::Middle;
+	for (long n = 0; n < 480; n++) run(card, raw);
+	bool s3 = SimProbe::series(card);
+	printf("  shift: Main right -> %s, left -> %s, tap -> %s (want series, parallel, series); res kept %d (want 4095)\n",
+	       s1 ? "series" : "parallel", s2 ? "series" : "parallel", s3 ? "series" : "parallel", resAfter);
+	finalize(dir, "out_shift.wav", "hold-Down layer: CV level, routing, tap", raw);
+}
+
 int main(int argc, char **argv)
 {
 	std::string dir = argc > 1 ? argv[1] : ".";
@@ -239,5 +309,6 @@ int main(int argc, char **argv)
 	renderMorph(dir);
 	renderSeries(dir);
 	renderDrums(dir);
+	renderShift(dir);
 	return 0;
 }

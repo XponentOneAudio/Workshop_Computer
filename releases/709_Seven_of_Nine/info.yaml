@@ -9,7 +9,7 @@ summary: |
   In parallel, Audio In 2 is normalled to Audio In 1, so one source can feed both characters at once.
 Language: "C++ (Pico SDK + ComputerCard)"
 Creator: "Martyn Quickenden"
-Version: "0.3.4"
+Version: "0.4"
 Status: "Beta"
 License: MIT
 date-created: 2026-10-30
@@ -23,8 +23,8 @@ panel:
   inputs:
     - { id: AudioIn1, name: Borg I In, type: audio, description: "Input to Borg I. In parallel it also feeds Borg II when Audio In 2 is unpatched." }
     - { id: AudioIn2, name: Borg II In, type: audio, description: "Parallel: input to Borg II (normalled to Audio In 1). Series: mixed into Borg I." }
-    - { id: CVIn1, name: Borg I Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In LPG mode a positive CV also opens the gate." }
-    - { id: CVIn2, name: Borg II Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct. In LPG mode a positive CV also opens the gate." }
+    - { id: CVIn1, name: Borg I Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct at 100% level (hold Down + X sets the level). In LPG mode a positive CV also opens the gate." }
+    - { id: CVIn2, name: Borg II Cutoff CV, type: cv, description: "Cutoff CV, roughly 1V/oct at 100% level (hold Down + Y sets the level). In LPG mode a positive CV also opens the gate." }
     - { id: PulseIn1, name: Borg I Ping, type: pulse, description: "Slow (~350 ms) ping envelope: sweeps the cutoff up, or strikes the gate in LPG mode. With no audio patched it also injects a noise burst." }
     - { id: PulseIn2, name: Borg II Ping, type: pulse, description: "Fast (~120 ms) ping envelope: sweeps the cutoff up, or strikes the gate in LPG mode. With no audio patched it also injects a noise burst." }
   outputs:
@@ -37,7 +37,7 @@ controls:
   switch:
     up:     { name: Filter, description: "12 dB filters with resonance on. Borg II can self-oscillate. Main = resonance." }
     middle: { name: Low-pass gate, description: "Resonance off: filter and VCA together, for percussive sounds. Main = LP -> notch -> HP." }
-    down:   { name: Series / Parallel, description: "Momentary: tap to toggle series and parallel routing. The LEDs show the new routing for 1 s (all six = series, top pair = parallel)." }
+    down:   { name: Shift / Series-Parallel, description: "Momentary. Tap to toggle series and parallel routing; the LEDs show the new routing for 1 s (all six = series, top pair = parallel). Hold it to use the knobs' second layer: Main = routing, X / Y = CV In 1 / 2 level." }
   knobs:
     - main: { name: Resonance, description: "Resonance for both filters. Borg I stays below self-oscillation." }
       x:    { name: Borg I Cutoff, description: "25 Hz to 9 kHz." }
@@ -46,6 +46,10 @@ controls:
       main: { name: LP / Notch / HP, description: "Morphs both filters from low-pass (anticlockwise) through notch (noon) to high-pass (clockwise)." }
       x:    { name: Borg I Cutoff, description: "Also sets how far the gate rests open." }
       y:    { name: Borg II Cutoff, description: "Also sets how far the gate rests open." }
+    - when: { z: down }
+      main: { name: Routing, description: "While Down is held: left of noon = parallel, right of noon = series. Takes over once turned." }
+      x:    { name: CV In 1 Level, description: "While Down is held: 0 to 100% (default). Takes over once turned." }
+      y:    { name: CV In 2 Level, description: "While Down is held: 0 to 100% (default). Takes over once turned." }
   leds:
     - display: list
       items:
