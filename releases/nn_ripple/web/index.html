@@ -70,8 +70,10 @@
   .card.folded > :not(h2) { display: none; }
   .card > h2 .fold2 { margin-left: auto; width: auto; padding: 0 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
   .card > h2 .fold2 + .fold { margin-left: 0; }
-  .card.compact .ledrow, .card.compact .faders, .card.compact #page-hint { display: none; }
-  .card.compact .tabs { margin-bottom: 0; }
+  .card.compact .ledrow, .card.compact #page-hint,
+  .card.compact .fader .slot, .card.compact .fader .val, .card.compact .fader .desc { display: none; }
+  .card.compact .fader { padding: 0; }
+  .card.compact .fader .name { min-height: 0; }
   .card.folded > h2 { margin-bottom: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
   canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
@@ -1417,7 +1419,7 @@ function buildCompact() {
   const show = (c) => {
     card.classList.toggle('compact', c);
     b.textContent = c ? 'Show faders' : 'Hide faders';
-    b.title = c ? 'Show the faders again' : 'Hide the faders, keeping the page tabs';
+    b.title = c ? 'Show the faders again' : 'Hide the faders, keeping the page tabs and fader names';
     b.setAttribute('aria-expanded', String(!c));
   };
   show(!!store.get('ripple.compact.v1', false));
