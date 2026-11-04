@@ -68,6 +68,10 @@
     color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   .card > h2 .fold:hover { color: var(--ink); border-color: var(--accent); }
   .card.folded > :not(h2) { display: none; }
+  .card > h2 .fold2 { margin-left: auto; width: auto; padding: 0 8px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  .card > h2 .fold2 + .fold { margin-left: 0; }
+  .card.compact .ledrow, .card.compact .faders, .card.compact #page-hint { display: none; }
+  .card.compact .tabs { margin-bottom: 0; }
   .card.folded > h2 { margin-bottom: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
   canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
@@ -177,6 +181,14 @@
       <div class="caption">The signal flow, live. Each source&rsquo;s light shows how much of the last 50&nbsp;ms it spent high; its bar is its level. The register&rsquo;s cells are its bits, the newest on the left.</div>
     </section>
 
+    <section class="card" id="faders-card">
+      <h2>Faders<button class="fold fold2" id="btn-compact" type="button"></button></h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="ledrow" id="ledrow" title="The 8mu's LEDs on this page, as the card lights them"></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="page-hint"></div>
+    </section>
+
     <section class="card">
       <h2>Logic analyser</h2>
       <canvas id="lanes" aria-label="The last two seconds of every source, sampled once a millisecond"></canvas>
@@ -197,13 +209,6 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2>Faders</h2>
-      <div class="tabs" id="tabs"></div>
-      <div class="ledrow" id="ledrow" title="The 8mu's LEDs on this page, as the card lights them"></div>
-      <div class="faders" id="faders"></div>
-      <div class="caption" id="page-hint"></div>
-    </section>
   </div>
 
   <aside style="display:grid; gap:16px; align-content:start; min-width:0">
@@ -1386,7 +1391,7 @@ function buildCollapsers() {
   const folded = new Set(store.get('ripple.folded.v1', []) || []);
   document.querySelectorAll('section.card').forEach((card) => {
     const h = card.querySelector(':scope > h2'); if (!h) return;
-    const name = h.textContent.trim();
+    const name = h.firstChild.textContent.trim();
     const b = document.createElement('button'); b.className = 'fold'; b.type = 'button';
     const show = (f) => {
       card.classList.toggle('folded', f);
@@ -1405,6 +1410,25 @@ function buildCollapsers() {
   });
 }
 
+// The Faders card's second level: hide just the faders, keeping the page
+// tabs (and which 8mu is on which page) in view
+function buildCompact() {
+  const card = $('faders-card'), b = $('btn-compact');
+  const show = (c) => {
+    card.classList.toggle('compact', c);
+    b.textContent = c ? 'Show faders' : 'Hide faders';
+    b.title = c ? 'Show the faders again' : 'Hide the faders, keeping the page tabs';
+    b.setAttribute('aria-expanded', String(!c));
+  };
+  show(!!store.get('ripple.compact.v1', false));
+  b.addEventListener('click', () => {
+    const c = !card.classList.contains('compact');
+    show(c);
+    store.set('ripple.compact.v1', c);
+    requestRender();
+  });
+}
+
 // ============================================================================
 // Start
 // ============================================================================
@@ -1412,7 +1436,7 @@ function init() {
   const last = cleanPreset(Object.assign({ name: 'last' }, store.get('ripple.last.v1', null) || {}));
   if (last) { state.values = last.v; state.freeze = last.freeze; }
   loadPresets();
-  buildFaders(); buildCollapsers();
+  buildFaders(); buildCollapsers(); buildCompact();
   $('btn-connect').addEventListener('click', connect);
   $('btn-rescan').addEventListener('click', connect);
   $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its faders.'); });
