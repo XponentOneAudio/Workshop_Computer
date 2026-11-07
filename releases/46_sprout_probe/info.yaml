@@ -1,0 +1,92 @@
+draft: true
+Name: Sprout Probe
+short-description: Plant conductance test bench for biodata sonification
+summary: |
+  Sends a quiet tone through a plant and measures how much returns, using lock-in detection.
+  Patch Audio Out 1 through the plant (via electrodes) and the Workshop System amplifier into
+  Audio In 1. Outputs the measured level, a zoomable change signal, phase, and MIDI Sprout style
+  triggers, for setting up a future plant biodata card.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1"
+Status: WIP
+License: MIT
+date-created: 2026-11-07
+
+tags:
+  - utility
+  - sensor
+  - biodata
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Plant Return
+      description: Returned tone from the amplifier output (or straight from electrode B)
+      type: audio
+  outputs:
+    - id: AudioOut1
+      name: Excitation Tone
+      description: Sine tone to electrode A on the plant
+      type: audio
+    - id: AudioOut2
+      name: Phase
+      description: Phase of the returned tone, -pi..+pi as about -6V..+6V
+      type: cv
+    - id: CVOut1
+      name: Level
+      description: Returned tone level, 0V to about +6V
+      type: cv
+    - id: CVOut2
+      name: Change
+      description: Level minus slow baseline, scaled by Y zoom, centred on 0V
+      type: cv
+    - id: PulseOut1
+      name: Detector Trigger
+      description: 10 ms trigger when the MIDI Sprout style change detector fires
+      type: pulse
+    - id: PulseOut2
+      name: Clip
+      description: High while the input is clipping
+      type: pulse
+
+controls:
+  knobs:
+    - main:
+        name: Tone Level
+        description: Excitation tone output level
+      x:
+        name: Tone Frequency
+        description: 250 Hz, 500 Hz, 1 kHz, 2 kHz or 4 kHz
+      y:
+        name: Zoom
+        description: Gain of the change signal on CV Out 2, 1x to 128x
+  switch:
+    up:
+      name: Normal
+    middle:
+      name: Normal
+    down:
+      name: Re-zero
+      description: Hold to snap the baseline to the current level
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Level High
+          description: Top of the level meter
+        - id: LED2
+          name: Level Mid
+          description: Middle of the level meter (aim to have this partly lit)
+        - id: LED4
+          name: Level Low
+          description: Bottom of the level meter
+        - id: LED1
+          name: Clip
+          description: Input clipping, reduce tone level or amplifier gain
+        - id: LED3
+          name: Change
+          description: Brightness shows the size of the change signal
+        - id: LED5
+          name: Trigger
+          description: Flashes when the detector fires
