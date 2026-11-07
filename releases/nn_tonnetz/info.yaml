@@ -1,0 +1,144 @@
+draft: false
+Name: Tonnetz
+short-description: Four voices walk a Tonnetz one at a time, steered by CV or a Wii Nunchuk
+Language: C++ (Pico SDK + ComputerCard)
+Creator: Martyn Quickenden
+Version: "0.1.0"
+Status: Beta
+License: MIT
+date-created: 2026-11-07
+date-updated: 2026-11-07
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h (c) Chris Johnson
+#   EightMU.h (c) 2026 Chris Johnson; usb_midi_host (c) 2023 rppicomidi
+
+uf2:
+  - path: UF2/tonnetz.uf2
+    name: Tonnetz 0.1.0
+
+tags:
+  - sequencer
+  - chords
+  - quantiser
+  - oscillator
+  - midi-host
+
+summary: |
+  Four voices sit on a Tonnetz, the lattice of pitches in which every note's six neighbours are a
+  fifth, a major third and a minor third above and below it. Each pulse on Pulse In 1 moves the next
+  voice, in turn, one place across the lattice in the chosen direction. Once every voice has moved,
+  the whole chord has slid one place along the lattice; the half-moved chords in between are the
+  passing harmonies. The chord starts as a major seventh on the root.<br><br>
+
+  CV In 1 and 2 (plus knobs X and Y, and a Wii Nunchuk's joystick) form a direction, quantised to
+  the six neighbours: right/left is a fifth up/down, up-right/down-left a major third up/down, and
+  up-left/down-right a minor third down/up. The LED in that position lights. Voices take the shorter
+  way to each new note and fold by an octave if they wander more than eight semitones from home, so
+  the voicing stays close.<br><br>
+
+  Voices 1 and 2 go out as calibrated 1V/oct pitch CV on CV Out 1 and 2 for external oscillators,
+  and as sines on Audio Out 1 and 2. Voice 3 is a square on Pulse Out 1, and Pulse Out 2 is a square
+  sub-oscillator an octave below the lowest sounding voice. Pulse In 2 toggles a fourth sine voice,
+  mixed into both audio outs; while it is off, stepping cycles through voices 1-3 only.<br><br>
+
+  A Wii Nunchuk connected through the Pico Nunchuk adapter (which presents it to the Computer as an
+  8mu) steers with its joystick: Z steps the next voice in the joystick's direction, C steps it the
+  opposite way.
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: Direction X
+      type: cv
+      description: Horizontal part of the direction of travel, added to knob X and the Nunchuk joystick
+    - id: CVIn2
+      name: Direction Y
+      type: cv
+      description: Vertical part of the direction of travel, added to knob Y and the Nunchuk joystick
+    - id: PulseIn1
+      name: Step
+      type: pulse
+      description: Each rising edge moves the next voice one place across the lattice
+    - id: PulseIn2
+      name: Voice 4
+      type: pulse
+      description: Each rising edge turns the fourth sine voice on or off
+  outputs:
+    - id: AudioOut1
+      name: Sine 1
+      type: audio
+      description: Voice 1 sine, plus the fourth voice's sine when it is on
+    - id: AudioOut2
+      name: Sine 2
+      type: audio
+      description: Voice 2 sine, plus the fourth voice's sine when it is on
+    - id: CVOut1
+      name: Pitch 1
+      type: cv
+      description: Voice 1 pitch, calibrated 1V/oct, 0V = middle C
+    - id: CVOut2
+      name: Pitch 2
+      type: cv
+      description: Voice 2 pitch, calibrated 1V/oct, 0V = middle C
+    - id: PulseOut1
+      name: Square 3
+      type: pulse
+      description: Voice 3 as a square wave
+    - id: PulseOut2
+      name: Sub
+      type: pulse
+      description: Square wave one octave below the lowest sounding voice
+
+controls:
+  knobs:
+    - main:
+        name: Root
+        description: Root note, C2 to C4 in semitones
+      x:
+        name: Direction X
+        description: Horizontal part of the direction of travel, centre is neutral
+      y:
+        name: Direction Y
+        description: Vertical part of the direction of travel, centre is neutral
+  switch:
+    up:
+      name: Glide
+      description: Voices glide to each new note over about 60ms (sines, squares and pitch CVs)
+    middle:
+      name: Step
+      description: Voices jump straight to each new note
+    down:
+      name: Reset
+      description: Momentary. Returns the chord to a major seventh on the root and restarts the voice order
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: -m3
+          description: Direction up-left, a minor third down. Blinks off on each step while selected
+        - id: LED1
+          name: +M3
+          description: Direction up-right, a major third up
+        - id: LED2
+          name: -P5
+          description: Direction left, a fifth down
+        - id: LED3
+          name: +P5
+          description: Direction right, a fifth up
+        - id: LED4
+          name: -M3
+          description: Direction down-left, a major third down
+        - id: LED5
+          name: +m3
+          description: Direction down-right, a minor third up. All unselected LEDs glow dimly while voice 4 is on
+
+host:
+  usb:
+    - name: Wii Nunchuk (via Pico Nunchuk adapter)
+      role: controller
+      description: >
+        Optional, plugged into the Computer's USB socket through a Raspberry Pi Pico running the
+        Nunchuk adapter firmware, which presents it as an 8mu. Joystick steers the direction of
+        travel, Z steps the next voice that way and C steps it the opposite way. Needs a Rev 1.1 or
+        later Computer.
