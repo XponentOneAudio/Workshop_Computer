@@ -1,0 +1,126 @@
+draft: true
+Name: Sprout
+short-description: Plant biodata sonification, after the MIDI Sprout
+summary: |
+  Plays notes from tiny changes in a plant's electrical resistance, measured by sending a tone
+  through the plant and the Workshop System amplifier. Outputs pitch CV and gate, a built-in sine
+  voice, a smoothed change signal, and USB MIDI notes and CC 80. Hold the switch down at power-on
+  to calibrate.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.2"
+Status: WIP
+License: MIT
+date-created: 2026-11-07
+date-updated: 2026-11-08
+
+tags:
+  - generative
+  - sensor
+  - biodata
+  - midi-device
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Plant Return
+      description: Returned tone from the amplifier output (or straight from electrode B)
+      type: audio
+    - id: CVIn1
+      name: Sensitivity CV
+      description: Added to the Main knob
+      type: cv
+    - id: CVIn2
+      name: Transpose
+      description: About 1 V/oct, quantised to semitones, +/-2 octaves
+      type: cv
+  outputs:
+    - id: AudioOut1
+      name: Excitation Tone
+      description: Sine tone to electrode A on the plant
+      type: audio
+    - id: AudioOut2
+      name: Voice
+      description: Built-in sine voice with decaying envelope
+      type: audio
+    - id: CVOut1
+      name: Pitch
+      description: Note pitch, 1 V/oct (calibrated)
+      type: cv
+    - id: CVOut2
+      name: Change
+      description: Smoothed plant change signal, centred on 0V
+      type: cv
+    - id: PulseOut1
+      name: Gate
+      description: High for the note length
+      type: pulse
+    - id: PulseOut2
+      name: Trigger
+      description: 10 ms trigger at each note start
+      type: pulse
+    - id: CVOut1
+      name: Level
+      description: Returned tone level
+      type: cv
+      when: { z: down }
+    - id: AudioOut2
+      name: Phase
+      description: Phase of the returned tone (calibration mode)
+      type: cv
+      when: { z: down }
+
+controls:
+  knobs:
+    - main:
+        name: Sensitivity
+        description: CCW only big events play notes, CW a busy stream of notes
+      x:
+        name: Scale
+        description: Chromatic, major, minor, dorian, major pentatonic, minor pentatonic, whole tone
+      y:
+        name: Range
+        description: 1 to 5 octaves upwards from C2
+    - when: { z: down }
+      main:
+        name: Tone Level
+        description: Calibration mode (hold switch down at power-on)
+      x:
+        name: Tone Frequency
+        description: Calibration mode - 250 Hz, 500 Hz, 1 kHz, 2 kHz, 4 kHz
+      y:
+        name: Zoom
+        description: Calibration mode - gain of the change signal
+  switch:
+    up:
+      name: Long Notes
+      description: About 0.15-2.7 s, like the MIDI Sprout
+    middle:
+      name: Short Notes
+      description: About 40-300 ms
+    tap:
+      name: Re-zero
+      description: Re-zero the change signal
+    down:
+      name: Calibrate
+      description: Hold at power-on to enter calibration; in calibration, hold 2 s to save and play
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Gate
+        - id: LED1
+          name: Clip
+          description: Input clipping
+        - id: LED2
+          name: Change Down
+          description: Change signal below baseline
+        - id: LED3
+          name: Change Up
+          description: Change signal above baseline
+        - id: LED4
+          name: Plant OK
+          description: On when the plant signal is good, blinking when lost
+        - id: LED5
+          name: USB MIDI
+          description: On when connected to a computer as a MIDI device
