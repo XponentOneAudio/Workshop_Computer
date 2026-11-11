@@ -51,11 +51,15 @@ static void WriteHeader(long numSamples)
 	fputs("data", wav); Write32(dataBytes);
 }
 
-// The same output stage as main.cpp, with the volume knob at half way,
-// then scaled from the hardware's 12 bits up to the WAV file's 16.
+// Much the same output stage as main.cpp, with the volume knob at half way,
+// then scaled from the hardware's 12 bits up to the WAV file's 16.  (The
+// card also uses "noise shaping" to get more out of its 12 bits; a WAV
+// file has bits to spare, so this simply keeps four more of them.)
 static int Output(int32_t v)
 {
-	v = ((v >> 8) * 2048) >> 11;
+	const int32_t fine = v >> 4;      // 16ths of a hardware step
+	v = v >> 8;
+	if (v <= 1024 && v >= -1024) return fine;
 	const int32_t knee = 1024, room = 2047 - knee;
 	const bool negative = v < 0;
 	if (negative) v = -v;

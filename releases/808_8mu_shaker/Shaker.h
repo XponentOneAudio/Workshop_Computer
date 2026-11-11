@@ -407,8 +407,28 @@ public:
 				const int64_t rotatedY = int64_t(modeSinQ30[m]) * mode.x
 				                       + int64_t(modeCosQ30[m]) * mode.y;
 
-				mode.x = Clamp(in + ShiftTowardsZero(rotatedX, 30), -maxModeLevel, maxModeLevel);
-				mode.y = Clamp(ShiftTowardsZero(rotatedY, 30), -maxModeLevel, maxModeLevel);
+				//
+				// One refinement.  Rounding towards zero is like a tiny
+				// amount of friction, and while the ring is still strong
+				// that friction bends the wave slightly out of shape, which
+				// is heard as a faint roughness.  So while the arrow is
+				// long we round to the NEAREST whole number instead, which
+				// is as likely to round up as down and does no harm; only
+				// once the arrow is nearly gone do we switch to rounding
+				// towards zero, to bring it to a clean stop.
+				int32_t newX, newY;
+				if (Abs(mode.x) + Abs(mode.y) > settleLevel)
+				{
+					newX = RoundingShift(rotatedX, 30);
+					newY = RoundingShift(rotatedY, 30);
+				}
+				else
+				{
+					newX = ShiftTowardsZero(rotatedX, 30);
+					newY = ShiftTowardsZero(rotatedY, 30);
+				}
+				mode.x = Clamp(in + newX, -maxModeLevel, maxModeLevel);
+				mode.y = Clamp(newY, -maxModeLevel, maxModeLevel);
 
 				// The x coordinate is the sound.  Mix the three resonators
 				// together, each at its own level.
@@ -647,6 +667,15 @@ private:
 		return v >= 0 ? int32_t(v >> bits) : -int32_t((-v) >> bits);
 	}
 
+	// Divide a 64-bit number by 2^bits, rounding to the NEAREST whole number.
+	// Adding half of the divisor first turns "round down" into "round to
+	// nearest", in the same way that adding 0.5 before chopping off the
+	// decimals does.
+	static int32_t RoundingShift(int64_t v, int bits)
+	{
+		return int32_t((v + (int64_t(1) << (bits - 1))) >> bits);
+	}
+
 	// Make sure a setting is a legal table index.
 	static int Index(int v) { return int(Clamp(v, 0, 127)); }
 
@@ -699,6 +728,8 @@ private:
 	static constexpr int32_t settledEnergy = 300;      // below this, grains stop
 	static constexpr int32_t maxClickLevel = 1 << 20;
 	static constexpr int32_t maxModeLevel = 1 << 29;
+	// Below this the resonators round towards zero, to come to rest.
+	static constexpr int32_t settleLevel = 1 << 14;
 
 	// Tilt smaller than this is ignored: about 3 degrees.
 	static constexpr int32_t restThreshold = 110;

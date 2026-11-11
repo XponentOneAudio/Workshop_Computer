@@ -198,8 +198,8 @@ public:
 		// Fully clockwise is deliberately a bit too loud, so that quiet
 		// settings (very few grains, gentle shaking) can still be turned up.
 		const int32_t volume = KnobVal(Knob::Main);
-		left = SoftClip(((left >> 8) * volume) >> 11);
-		right = SoftClip(((right >> 8) * volume) >> 11);
+		left = ToOutput(left, volume, roundingErrorLeft);
+		right = ToOutput(right, volume, roundingErrorRight);
 
 		AudioOut1(left);
 		AudioOut2(right);
@@ -301,6 +301,46 @@ private:
 		return v < lo ? lo : (v > hi ? hi : v);
 	}
 
+	// Turn the model's output into a number the hardware can play.
+	//
+	// The audio outputs have only 4096 steps (12 bits).  That is plenty for
+	// a loud sound, but the tail of a long ring is very quiet - only two or
+	// three steps tall - and a smooth wave drawn with three steps is a
+	// staircase, which sounds rough and buzzy.
+	//
+	// The cure is called NOISE SHAPING.  Each time we round to a whole step
+	// we remember how much we were wrong by, and add that error on to the
+	// next sample before rounding it.  Over a few samples the errors cancel
+	// out, so the AVERAGE output follows the true value far more finely than
+	// one step.  The error does not vanish; it is turned into a very high
+	// pitched hiss, where it is hard to hear, instead of a buzz in the
+	// middle of the sound.
+	//
+	// `error` is a reference to the caller's variable (the &), so that what
+	// we store in it is still there on the next call.  Left and right each
+	// need their own.
+	static int32_t ToOutput(int32_t sample, int32_t volume, int32_t &error)
+	{
+		// Apply the volume, keeping 8 extra bits: `fine` is in 256ths of an
+		// output step.  64-bit, as both numbers can be large.
+		int32_t fine = int32_t((int64_t(sample) * volume) >> 11);
+
+		// Loud peaks go through the soft clipper.  Fine detail does not
+		// matter up there, so it works in whole steps.
+		if (fine > (1024 << 8) || fine < -(1024 << 8))
+		{
+			fine = SoftClip(fine >> 8) * 256;
+		}
+
+		// Round down to a whole step, having added the error left over from
+		// last time, and keep the new leftover for next time.
+		const int32_t total = fine + error;
+		const int32_t out = total >> 8;
+		error = total - out * 256;
+
+		return Limit(out, -2048, 2047);
+	}
+
 	// The audio outputs can only go from -2048 to 2047.  Simply chopping off
 	// anything bigger ("hard clipping") sounds harsh.  This lets the signal
 	// through untouched up to half scale, and above that squeezes it ever
@@ -335,6 +375,9 @@ private:
 
 	int32_t grainPulseTimer = 0;
 	int32_t wallPulseTimer = 0;
+
+	int32_t roundingErrorLeft = 0;    // see ToOutput()
+	int32_t roundingErrorRight = 0;
 
 	int32_t meterLeft = 0;
 	int32_t meterRight = 0;
