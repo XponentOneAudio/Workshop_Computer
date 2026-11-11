@@ -114,15 +114,16 @@ public:
 		const float fs = float(sampleRate);
 
 		// --- Pitch table -----------------------------------------------------
-		// A resonator's frequency is set by the number 2*cos(angle), where
-		// angle is how far round a circle the wave moves in one sample.
-		// Entry 0 is the lowest pitch; every pitchStepsPerOctave entries the
-		// frequency doubles.
+		// A resonator's frequency is set by an angle: how far round a circle
+		// the wave moves in one sample.  The resonator needs the cosine and
+		// sine of that angle, so both are stored.  Entry 0 is the lowest
+		// pitch; every pitchStepsPerOctave entries the frequency doubles.
 		for (int i = 0; i < pitchTableSize; i++)
 		{
 			float freq = lowestFreq * powf(2.0f, float(i) / float(pitchStepsPerOctave));
 			float angle = 2.0f * pi * freq / fs;
-			twoCosQ29[i] = int32_t(2.0f * cosf(angle) * q29);
+			cosQ30[i] = int32_t(cosf(angle) * q30);
+			sinQ30[i] = int32_t(sinf(angle) * q30);
 		}
 
 		for (int i = 0; i < 128; i++)
@@ -137,10 +138,9 @@ public:
 			float ringSeconds = Sweep(0.0004f, 0.3f, t);
 			float r = expf(-1.0f / (ringSeconds * fs));
 			shellRQ30[i] = int32_t(r * q30);
-			shellRSquaredQ29[i] = int32_t(r * r * q29);
 			// A long-ringing resonator builds up a much bigger signal than a
-			// short one.  This gain cancels that out, so turning the Material
-			// fader changes the tone and not the volume.
+			// short one.  This gain, applied to the shell's output, cancels
+			// that out.
 			shellGainQ16[i] = int32_t(sqrtf(1.0f - r * r) * 65536.0f);
 
 			// --- Grains: how often a collision happens ------------------------
@@ -323,7 +323,7 @@ public:
 		};
 
 		// The external audio input, scaled up to match the clicks.
-		const int32_t external = audioIn * 64;
+		const int32_t external = audioIn * 16;
 
 		int32_t out[2];
 		for (int ch = 0; ch < 2; ch++)   // ch 0 = left, ch 1 = right
@@ -348,38 +348,69 @@ public:
 
 			// --- Layer 3: the shell -----------------------------------------
 			//
-			// Scale the input to suit how long the shell rings (see Init).
-			// 64-bit multiply: excitation can be around a million, and the
-			// gain around twenty thousand.
-			const int32_t in = int32_t((int64_t(excitation) * shellGain) >> 14);
+			// The input is deliberately made a BIG number (up to about
+			// twenty million): see "why big numbers" below.
+			const int32_t in = excitation * 16;
 
 			int32_t shellOut = 0;
 			for (int m = 0; m < numModes; m++)
 			{
-				// A TWO-POLE RESONATOR.  Each new output is built from the
-				// previous two outputs:
+				// A RESONATOR, built as a spinning, shrinking arrow.
 				//
-				//     y = in + a1 * y1 - r*r * y2
+				// Picture an arrow drawn from the centre of a sheet of
+				// paper, with its tip at the point (x, y).  Every sample we
+				// do two things to it:
 				//
-				// where y1 is the output one sample ago and y2 two samples
-				// ago.  With a1 = 2*r*cos(angle), this recipe traces out a
-				// sine wave that shrinks by a factor r every sample: a ring
-				// that dies away.  Every click that arrives sets it ringing
-				// again.  The multiplies are 64-bit because both numbers
-				// are large (Q29 coefficients times a 28-bit signal).
+				//   - ROTATE it by a small angle.  Watch only the x
+				//     coordinate of a rotating arrow and you see it swing
+				//     smoothly back and forth: a sine wave.  A bigger angle
+				//     per sample means a faster swing - a higher pitch.
+				//   - SHRINK it slightly, by the factor r.  So the wave
+				//     dies away, quickly for a gourd, slowly for metal.
+				//
+				// The standard formula for rotating a point by an angle is
+				//
+				//     new x = x * cos(angle) - y * sin(angle)
+				//     new y = x * sin(angle) + y * cos(angle)
+				//
+				// and modeCos / modeSin already have the shrink factor r
+				// multiplied in.  Each click that arrives gives the arrow
+				// a push (it is added to x), which sets it swinging again.
+				//
+				// WHY THIS SHAPE, AND WHY BIG NUMBERS.  Integer maths has
+				// to round, and rounding is the enemy of a resonator: in
+				// most designs the tiny rounding errors get fed back round
+				// the loop and keep it buzzing quietly for ever, long after
+				// it should have faded to silence.  Here every result is
+				// rounded TOWARDS ZERO (see ShiftTowardsZero), so each step
+				// can only ever make the arrow shorter than it should be,
+				// never longer.  It is therefore certain to shrink all the
+				// way to nothing.  The price is that the last, faintest
+				// part of the ring is cut a little short - and keeping the
+				// signal in the millions pushes that point down to where it
+				// is hard to hear (about 40 dB below the start of the ring,
+				// for the longest-ringing metal).
 				Mode &mode = modes[ch][m];
-				int64_t feedback = int64_t(modeA1Q29[m]) * mode.y1
-				                 - int64_t(shellRSquared) * mode.y2;
-				int32_t y = Clamp(in + int32_t(feedback >> 29), -maxModeLevel, maxModeLevel);
+				const int64_t rotatedX = int64_t(modeCosQ30[m]) * mode.x
+				                       - int64_t(modeSinQ30[m]) * mode.y;
+				const int64_t rotatedY = int64_t(modeSinQ30[m]) * mode.x
+				                       + int64_t(modeCosQ30[m]) * mode.y;
 
-				// Taking (y - y2) rather than y itself makes the resonator
-				// equally loud whatever pitch it is tuned to.  Without it,
-				// low-pitched shells would be far louder than high ones.
-				shellOut += ((y - mode.y2) >> 8) * modeLevelQ8[m];
+				mode.x = Clamp(in + ShiftTowardsZero(rotatedX, 30), -maxModeLevel, maxModeLevel);
+				mode.y = Clamp(ShiftTowardsZero(rotatedY, 30), -maxModeLevel, maxModeLevel);
 
-				mode.y2 = mode.y1;
-				mode.y1 = y;
+				// The x coordinate is the sound.  Mix the three resonators
+				// together, each at its own level.
+				shellOut += (mode.x >> 9) * modeLevelQ8[m];
 			}
+
+			// A long-ringing shell builds up a far bigger signal than a dead
+			// one.  shellGain (see Init) scales it back, so that the Material
+			// fader changes the tone and not the volume.  It is done here at
+			// the output, not at the input, so that the resonators themselves
+			// work with the biggest numbers exactly when they ring longest.
+			// 64-bit multiply: both numbers can be in the tens of millions.
+			shellOut = int32_t((int64_t(shellOut) * shellGain) >> 16);
 
 			// A dead material lets some of the raw click through directly,
 			// like the paper-thin wall of a gourd.  A metal shell does not.
@@ -526,7 +557,6 @@ private:
 		// A choked shell behaves like the deadest material there is.
 		const int material = choke ? 0 : Index(params.material);
 		shellR = shellRQ30[material];
-		shellRSquared = shellRSquaredQ29[material];
 		shellGain = shellGainQ16[material];
 
 		// The lowest resonance: a big shell is low, a small one high.
@@ -548,8 +578,11 @@ private:
 	void UpdateMode(int m)
 	{
 		int32_t i = Clamp(basePitch + modePitchOffset[m] + scatterOffset[m], 0, pitchTableSize - 1);
-		// a1 = r * 2cos(angle).   Q30 times Q29, shifted back down to Q29.
-		modeA1Q29[m] = int32_t((int64_t(shellR) * twoCosQ29[i]) >> 30);
+		// Multiply the shrink factor r into the cosine and sine, once, here,
+		// so the audio loop doesn't have to.  Q30 times Q30 is Q60; shifting
+		// down by 30 gives Q30 again.
+		modeCosQ30[m] = ShiftTowardsZero(int64_t(shellR) * cosQ30[i], 30);
+		modeSinQ30[m] = ShiftTowardsZero(int64_t(shellR) * sinQ30[i], 30);
 	}
 
 	//------------------------------------------------------------------------
@@ -563,6 +596,17 @@ private:
 	}
 
 	static int32_t Abs(int32_t v) { return v < 0 ? -v : v; }
+
+	// Divide a 64-bit number by 2^bits, rounding TOWARDS ZERO.
+	//
+	// A plain ">>" on a negative number rounds DOWN, away from zero: -5 >> 1
+	// is -3, not -2.  For the resonators it matters that positive and
+	// negative numbers are treated alike and both end up closer to zero, so
+	// negative numbers are flipped positive, shifted, and flipped back.
+	static int32_t ShiftTowardsZero(int64_t v, int bits)
+	{
+		return v >= 0 ? int32_t(v >> bits) : -int32_t((-v) >> bits);
+	}
 
 	// Make sure a setting is a legal table index.
 	static int Index(int v) { return int(Clamp(v, 0, 127)); }
@@ -599,7 +643,6 @@ private:
 	//------------------------------------------------------------------------
 
 	static constexpr float pi = 3.14159265f;
-	static constexpr float q29 = 536870912.0f;    // 2 to the power 29
 	static constexpr float q30 = 1073741824.0f;   // 2 to the power 30
 
 	// Pitch table: 416 steps of 1/64th of an octave, from 200 Hz to 18 kHz.
@@ -615,7 +658,7 @@ private:
 
 	static constexpr int32_t maxEnergy = 131072;       // 2.0 in Q16
 	static constexpr int32_t maxClickLevel = 1 << 20;
-	static constexpr int32_t maxModeLevel = 1 << 27;
+	static constexpr int32_t maxModeLevel = 1 << 29;
 
 	// Tilt smaller than this is ignored: about 3 degrees.
 	static constexpr int32_t restThreshold = 110;
@@ -626,9 +669,9 @@ private:
 	// Lookup tables, filled in by Init()
 	//------------------------------------------------------------------------
 
-	int32_t twoCosQ29[pitchTableSize];
+	int32_t cosQ30[pitchTableSize];
+	int32_t sinQ30[pitchTableSize];
 	int32_t shellRQ30[128];
-	int32_t shellRSquaredQ29[128];
 	int32_t shellGainQ16[128];
 	uint32_t grainProbQ24[128];
 	int32_t grainGainQ8[128];
@@ -677,15 +720,15 @@ private:
 	// Layer 3: the shell
 	struct Mode
 	{
-		int32_t y1 = 0;   // output one sample ago
-		int32_t y2 = 0;   // output two samples ago
+		int32_t x = 0;   // the tip of the spinning arrow: x is the sound,
+		int32_t y = 0;   // y is its hidden partner a quarter-turn behind
 	};
 	Mode modes[2][numModes];   // [left or right][which resonance]
-	int32_t modeA1Q29[numModes] = {0, 0, 0};
+	int32_t modeCosQ30[numModes] = {0, 0, 0};   // r * cos(angle)
+	int32_t modeSinQ30[numModes] = {0, 0, 0};   // r * sin(angle)
 	int32_t modeLevelQ8[numModes] = {256, 0, 0};
 	int32_t directLevelQ8 = 0;
 	int32_t shellR = 0;
-	int32_t shellRSquared = 0;
 	int32_t shellGain = 0;
 	int32_t basePitch = 0;
 };
