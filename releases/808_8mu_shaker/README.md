@@ -6,7 +6,7 @@
 
 The code is written to be read by someone learning C++, with comments explaining both the model and the language as it goes. Start with `Shaker.h`.
 
-> **Status: untested on hardware.** The firmware builds, and the model has been run and measured on a desktop computer, but nobody has yet shaken a real 8mu at it. The feel of the motion response in particular will probably want adjusting. See [Tuning it](#tuning-it).
+> **Status: early.** The card runs on hardware and has had a first round of fixes from a recording, but it has had very little playing. The feel of the motion response in particular will probably want adjusting. See [Tuning it](#tuning-it).
 
 ## Controls
 
@@ -48,7 +48,7 @@ The code is written to be read by someone learning C++, with comments explaining
 |---|---|
 | Main | Volume. Fully clockwise is deliberately too loud, to bring up quiet settings |
 | X | Tune: shifts the Size up or down by about two octaves. Middle is no change |
-| Y | Stereo width, from mono to wide |
+| Y | Stereo width, from true mono (both outputs identical) to wide |
 | Switch Up | Roll, the same as holding button 3 |
 | Switch Middle | Normal |
 | Switch Down | Momentary: one hard shake |
@@ -67,6 +67,8 @@ The code is written to be read by someone learning C++, with comments explaining
 | CV Out 2 | Where the grains are, left to right, about -6V to +6V |
 | Pulse Out 1 | A short pulse for every grain collision: random triggers, as dense as Grains |
 | Pulse Out 2 | A pulse each time the grains hit a wall: the rhythm you are shaking |
+
+The three analogue inputs are only read when a cable is plugged in, so an empty jack adds no noise.
 
 **Panel LEDs**
 

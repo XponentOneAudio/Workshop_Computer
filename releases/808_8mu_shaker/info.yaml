@@ -41,7 +41,7 @@ summary: |
   shakes and retunes it, and an external sound can be fed through the shell.
   The source is written to be read by someone learning C++.<br><br>
 
-  Not yet tested on hardware. Needs a Rev 1.1 or later Computer.
+  Early work in progress. Needs a Rev 1.1 or later Computer.
 
 panel:
   inputs:

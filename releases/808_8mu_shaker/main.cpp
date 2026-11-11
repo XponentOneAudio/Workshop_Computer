@@ -152,9 +152,11 @@ public:
 		int32_t sustain = 0;
 		if (mu.Button(2) || sw == Switch::Up) sustain = rollLevel;
 
-		// CVIn2() is -2048 to 2047.  Small readings are ignored, because an
-		// input with nothing plugged in does not read exactly zero.
-		const int32_t shakeCV = CVIn2();
+		// CVIn2() is -2048 to 2047.  An input with nothing plugged into it
+		// does not read zero - it picks up noise - so every input is only
+		// used when Connected() says there really is a cable in the jack.
+		// Small readings are ignored as well, for the same reason.
+		const int32_t shakeCV = Connected(Input::CV2) ? CVIn2() : 0;
 		if (shakeCV > 100 && shakeCV * 32 > sustain) sustain = shakeCV * 32;
 		shaker.SetSustain(sustain);
 
@@ -172,7 +174,7 @@ public:
 		// CV In 1 also shifts the pitch, higher voltage = higher = "smaller".
 		// It is roughly one octave per volt but not accurately so: this is a
 		// shaker, not an oscillator.
-		tune += (CVIn1() * 3) >> 4;
+		if (Connected(Input::CV1)) tune += (CVIn1() * 3) >> 4;
 		shaker.SetTune(tune);
 
 		// Y knob: stereo width, 0 to 255.
@@ -181,8 +183,15 @@ public:
 		//--------------------------------------------------------------------
 		// 5. Run the model and send its output to the audio jacks
 		//--------------------------------------------------------------------
+		//
+		// Audio In 1 is fed into the shell.  This matters most of all for
+		// the "is it connected?" check: a metal shell rings for a long time
+		// and is very easily set off, and the faint noise of an empty input
+		// is enough to keep it humming quietly for ever.
+		const int32_t shellInput = Connected(Input::Audio1) ? AudioIn1() : 0;
+
 		int32_t left, right;
-		shaker.Process(AudioIn1(), left, right);
+		shaker.Process(shellInput, left, right);
 
 		// Main knob: volume.  The model's output is much bigger than the
 		// -2048 to 2047 the hardware accepts, so it is scaled down here.
@@ -345,6 +354,12 @@ int main()
 	// stack - the small scratch area functions use for their temporary
 	// variables - because the shaker's lookup tables make it fairly large.
 	static ShakerCard card;
+
+	// Ask ComputerCard to work out which input jacks have cables in them,
+	// which is what makes Connected() work.  (It does this by sending a
+	// recognisable pattern down the path that an EMPTY jack is wired to,
+	// and looking for that pattern arriving at each input.)
+	card.EnableNormalisationProbe();
 
 	// Run() starts the audio and never returns: from here on, everything
 	// happens inside ProcessSample().

@@ -323,10 +323,15 @@ public:
 		// reads them as a signed number, -32768..32767; halving that keeps
 		// the low-pass filter's multiplication within 32 bits.
 		const uint32_t noiseBits = Random();
-		const int32_t noise[2] = {
+		int32_t noise[2] = {
 			int16_t(noiseBits & 0xFFFF) >> 1,
 			int16_t(noiseBits >> 16) >> 1
 		};
+		// Two different noises make each click sound different in each ear,
+		// which is what gives the sound its width.  As the Width control is
+		// turned down, the right-hand noise is moved towards being a copy of
+		// the left, until at zero both channels are identical: true mono.
+		noise[1] = noise[0] + (((noise[1] - noise[0]) * width) >> 8);
 
 		// The external audio input, scaled up to match the clicks.
 		const int32_t external = audioIn * 16;
@@ -584,6 +589,14 @@ private:
 		const int material = choke ? 0 : Index(params.material);
 		shellR = shellRQ30[material];
 		shellGain = shellGainQ16[material];
+
+		// With Scatter at zero, put the three resonances back exactly on
+		// their proper pitches.  Without this they would stay wherever the
+		// last random retuning happened to leave them.
+		if (params.scatter <= 0)
+		{
+			for (int m = 0; m < numModes; m++) scatterOffset[m] = 0;
+		}
 
 		// The lowest resonance: a big shell is low, a small one high.
 		// Size 0..127 covers 0..296 table steps, a little over 4.5 octaves.
