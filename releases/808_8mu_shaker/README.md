@@ -85,7 +85,7 @@ Fader positions from 0 (bottom) to 10 (top).
 | Sound | Size | Material | Grains | Hardness | Decay | Travel | Scatter |
 |---|---|---|---|---|---|---|---|
 | Maraca | 5 | 2 | 6 | 7 | 3 | 3 | 0 |
-| Sleigh bells | 2 | 9 | 3 | 9 | 6 | 3 | 5 |
+| Sleigh bells | 2 | 9 | 3 | 9 | 5 | 3 | 5 |
 | Box of sand | 9 | 0 | 10 | 1 | 3 | 3 | 0 |
 | Rainstick (tilt slowly) | 4 | 4 | 5 | 7 | 7 | 8 | 2 |
 | One pea in a tin | 4 | 8 | 1 | 10 | 5 | 3 | 0 |
@@ -101,8 +101,8 @@ The card still works as a percussion voice. It keeps its default maraca settings
 The model has three layers, each feeding the next. `Shaker.h` explains them at length.
 
 1. **The mass of grains.** A thousand times a second, all the grains together are treated as one lump sliding in a box. The accelerometer says which way is downhill; the lump accelerates, slides with some friction, and thumps into a wall. Wall impacts and fast sliding create *rattle energy*, which then fades at a rate set by Decay. Sensitivity scales the acceleration and Travel is the length of the box.
-2. **The individual grains.** 48,000 times a second a dice is rolled. With a probability set by Grains, a collision happens and makes a tiny click of noise, as loud as the current rattle energy. Hardness sets how short and bright each click is. This is Perry Cook's PhISM method (Physically Informed Stochastic Event Modelling).
-3. **The shell.** The clicks excite three resonators, filters that each ring at one frequency. Size sets their pitch and Material how long they ring. Scatter retunes one of them at random on every collision, so the clicks seem to come from many separate objects.
+2. **The individual grains.** 48,000 times a second a dice is rolled. With a probability set by Grains, a collision happens and makes a tiny click of noise, as loud as the current rattle energy. As the energy dies away the collisions become rarer as well as quieter, until the grains settle and stop. Hardness sets how short and bright each click is. This is based on Perry Cook's PhISM method (Physically Informed Stochastic Event Modelling).
+3. **The shell.** The clicks excite three resonators, each a ring at one frequency. Size sets their pitch and Material how long they ring. Scatter retunes one of them at random on every collision, so the clicks seem to come from many separate objects. The resonators are built so that integer rounding can only ever shorten a ring, never sustain it, which guarantees they fall fully silent.
 
 Grains are panned towards wherever the lump currently is, so a slow tilt moves the sound across the stereo field.
 

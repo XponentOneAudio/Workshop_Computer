@@ -28,7 +28,8 @@
 //      exactly when, so we roll a dice every sample: with a small probability
 //      a "collision" happens and makes a tiny click of noise.  More grains =
 //      higher probability.  More energy = louder clicks.  The energy fades
-//      away by itself, so the rattling dies down after each shake.
+//      away by itself, and as it does the collisions get rarer as well as
+//      quieter, until the grains settle and stop.
 //      (This idea is Perry Cook's "PhISM" - Physically Informed Stochastic
 //      Event Modelling.  "Stochastic" just means "using randomness".)
 //
@@ -81,7 +82,7 @@ struct ShakerParams
 	int material = 30;    // 0 = dead (gourd, card) ... 127 = ringing (metal)
 	int grains = 75;      // 0 = a few beads ... 127 = about a thousand
 	int hardness = 90;    // 0 = soft and dull (sand) ... 127 = hard (steel shot)
-	int decay = 45;       // 0 = rattle stops at once ... 127 = keeps going for seconds
+	int decay = 32;       // 0 = rattle stops at once ... 127 = keeps going for seconds
 	int sensitivity = 64; // 0 = needs a hard shake ... 127 = slightest movement
 	int travel = 35;      // 0 = grains packed tight ... 127 = long tube (rainstick)
 	int scatter = 0;      // 0 = one shell ... 127 = many differently-tuned objects
@@ -274,9 +275,14 @@ public:
 		//
 		// Roll the dice.  Random() gives a 32-bit random number; we keep its
 		// top 24 bits and ask "is it below the probability?".
+		//
+		// A wall impact or a trigger always makes one collision straight
+		// away (pendingHit), so that even a shaker with a single bead in it
+		// clicks exactly when it is struck, not at some random moment after.
 		grainHit = false;
-		if ((Random() >> 8) < grainProb && energyQ16 > 0)
+		if (pendingHit || ((Random() >> 8) < grainProb && energyQ16 > 0))
 		{
+			pendingHit = false;
 			grainHit = true;
 			const uint32_t dice = Random();
 
@@ -432,7 +438,6 @@ private:
 		// C++ is not caught for you - it silently reads rubbish.
 		const int32_t sens = sensitivityQ8[Index(params.sensitivity)];
 		const int32_t boxHalf = travelLength[Index(params.travel)];
-		grainProb = grainProbQ24[Index(params.grains)];
 		grainGain = (grainGainQ8[Index(params.grains)]
 		           * hardnessGainQ8[Index(params.hardness)]) >> 8;
 		clickDecay = clickDecayQ12[Index(params.hardness)];
@@ -480,8 +485,9 @@ private:
 				{
 					// THUMP.  The harder the impact, the more the grains
 					// are thrown about.
-					AddEnergy(impactSpeed >> 1);
+					AddEnergy(impactSpeed);
 					wallHit = true;
+					pendingHit = true;
 
 					// A pile of grains does not bounce like a ball; it
 					// rebounds at a quarter of the speed, which gives a
@@ -502,10 +508,13 @@ private:
 			if (Abs(velocity[axis]) > fastest) fastest = Abs(velocity[axis]);
 		}
 
-		// Grains that are SLIDING also rattle against each other and the
-		// shell, without needing to hit anything.  With a long Travel this
-		// is the whole sound: the steady trickle of a rainstick.
-		int32_t stir = fastest >> 1;
+		// Grains that are SLIDING along the shell also rattle, without
+		// needing to hit a wall.  How much depends on Travel.  In a short
+		// shaker the grains are thrown across in one go and make almost no
+		// sound until they land, which is what gives a maraca its crisp
+		// "chk".  In a long tube they tumble the whole way down, and that
+		// steady trickle is the entire sound of a rainstick.
+		int32_t stir = (fastest >> 7) * Index(params.travel);
 
 		// Spinning the shaker swirls the grains round the inside.
 		int32_t swirl = (DeadZone(Abs(twistIn), restThreshold) * sens) >> 5;
@@ -524,6 +533,7 @@ private:
 		{
 			AddEnergy(pendingTrigger);
 			pendingTrigger = 0;
+			pendingHit = true;
 		}
 
 		// --- Let the rattle die away ----------------------------------------
@@ -534,7 +544,23 @@ private:
 		// 64-bit multiply, because energy (up to 2^17) times loss (up to 2^14)
 		// could just overflow 32 bits.
 		energyQ16 -= int32_t((int64_t(energyQ16) * loss) >> 16) + 1;
-		if (energyQ16 < 0) energyQ16 = 0;
+
+		// Real grains do not rattle ever more quietly for ever: once they
+		// are barely moving, friction stops them dead.  Below about half a
+		// percent of a full shake, the grains have settled.
+		if (energyQ16 < settledEnergy) energyQ16 = 0;
+
+		// --- How often do grains collide right now? -------------------------
+		//
+		// The Grains fader gives the collision rate when the grains are well
+		// stirred up (a quarter of a full shake, or more).  Below that, as
+		// the rattle dies down, fewer grains are still on the move, so
+		// collisions get RARER as well as quieter.  This is what makes the
+		// sound settle like a real shaker, rather than fading like a volume
+		// knob being turned down.  (Both numbers are shifted down by 4 bits
+		// first so that the multiplication fits in 32 bits.)
+		const uint32_t moving = uint32_t(energyQ16 > 16384 ? 65536 : energyQ16 * 4);
+		grainProb = ((grainProbQ24[Index(params.grains)] >> 4) * (moving >> 4)) >> 8;
 
 		// Report the side-to-side position as -2047..2047.  Both numbers are
 		// scaled down first so the multiplication stays within 32 bits.
@@ -657,6 +683,7 @@ private:
 	static constexpr int32_t modePitchOffset[numModes] = {0, 42, 81};
 
 	static constexpr int32_t maxEnergy = 131072;       // 2.0 in Q16
+	static constexpr int32_t settledEnergy = 300;      // below this, grains stop
 	static constexpr int32_t maxClickLevel = 1 << 20;
 	static constexpr int32_t maxModeLevel = 1 << 29;
 
@@ -714,6 +741,7 @@ private:
 	int32_t clickLevel[2] = {0, 0};
 	int32_t noiseLP[2] = {0, 0};
 	bool grainHit = false;
+	bool pendingHit = false;
 	int scatterTurn = 0;
 	int32_t scatterOffset[numModes] = {0, 0, 0};
 

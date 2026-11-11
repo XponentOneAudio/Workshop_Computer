@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 	shaker.params.material = 115;
 	shaker.params.grains = 40;
 	shaker.params.hardness = 120;
-	shaker.params.decay = 75;
+	shaker.params.decay = 60;
 	shaker.params.scatter = 60;
 	Play(ShakeIt, 2.0f);
 
