@@ -1,0 +1,166 @@
+draft: true
+Name: 8mu Shaker
+short-description: "A physically modelled shaker, played by shaking a Music Thing 8mu: maracas, sleigh bells and rainsticks from eight faders"
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: WIP
+License: MIT
+Editor: none
+date-created: 2026-11-11
+date-updated: 2026-11-11
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h
+#     (c) Chris Johnson
+#   EightMU.h, which carries the rppicomidi usb_midi_host driver
+#     (c) 2026 Chris Johnson; usb_midi_host (c) 2023 rppicomidi
+# Their copyright headers are intact in those files.
+
+uf2:
+  - path: UF2/8mu_shaker.uf2
+    name: 8mu Shaker 0.1.0
+
+tags:
+  - 8mu
+  - midi-host
+  - percussion
+  - physical-modelling
+  - accelerometer
+  - synthesizer
+
+summary: |
+  Pick up a Music Thing 8mu and shake it. Inside the card is a simulated shell
+  with a simulated handful of grains in it; the 8mu's accelerometer throws the
+  grains around, and the eight faders decide what the shaker is: Size,
+  Material, Grains, Hardness, Decay, Sensitivity, Travel and Scatter. One set
+  of faders is a maraca, another a strap of sleigh bells, another a rainstick
+  played by tipping the controller slowly from side to side.<br><br>
+
+  It also works as a percussion voice without the 8mu: pulses trigger it, CV
+  shakes and retunes it, and an external sound can be fed through the shell.
+  The source is written to be read by someone learning C++.<br><br>
+
+  Not yet tested on hardware. Needs a Rev 1.1 or later Computer.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Shell in
+      type: audio
+      description: >
+        An external sound fed into the shell's resonators, so the shell can be
+        used as a resonator for other material.
+    - id: CVIn1
+      name: Size
+      type: cv
+      description: >
+        Shifts the pitch of the shell. Higher voltage is smaller and higher,
+        roughly an octave per volt, uncalibrated.
+    - id: CVIn2
+      name: Shake
+      type: cv
+      description: >
+        A positive voltage keeps the grains rattling, harder as it rises.
+    - id: PulseIn1
+      name: Hard shake
+      type: pulse
+      description: Triggers a hard shake, an accent.
+    - id: PulseIn2
+      name: Soft shake
+      type: pulse
+      description: Triggers a soft shake, a ghost note.
+  outputs:
+    - id: AudioOut1
+      name: Left
+      type: audio
+      description: The shaker, left channel.
+    - id: AudioOut2
+      name: Right
+      type: audio
+      description: The shaker, right channel.
+    - id: CVOut1
+      name: Energy
+      type: cv
+      description: >
+        How hard the shaker is rattling, from 0V upwards. An envelope follower
+        for your hand.
+    - id: CVOut2
+      name: Position
+      type: cv
+      description: >
+        Where the grains are, left to right, about -6V to +6V. Tilt the 8mu
+        slowly for a hand-played voltage.
+    - id: PulseOut1
+      name: Grains
+      type: pulse
+      description: >
+        A short pulse for every grain collision. Random triggers, as dense as
+        the Grains fader.
+    - id: PulseOut2
+      name: Wall hit
+      type: pulse
+      description: >
+        A pulse each time the grains hit a wall, once per stroke of a shake.
+
+controls:
+  switch:
+    up:
+      name: Roll
+      description: The grains keep rattling, the same as holding 8mu button 3.
+    middle:
+      name: Normal
+      description: The shaker sounds only when shaken or triggered.
+    down:
+      name: Shake
+      description: Momentary. One hard shake each time it is pressed.
+  knobs:
+    - main:
+        name: Volume
+        description: >
+          Output level. Fully clockwise is deliberately too loud, so that
+          quiet settings can be brought up.
+      x:
+        name: Tune
+        description: >
+          Shifts the Size up or down by about two octaves. The middle of the
+          knob is no change.
+      y:
+        name: Width
+        description: Stereo width, from mono to wide.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: 8mu
+          description: Lit while an 8mu is connected.
+        - id: LED1
+          name: Grains
+          description: Flickers with grain collisions.
+        - id: LED2
+          name: Left
+          description: Brightness follows the left output.
+        - id: LED3
+          name: Right
+          description: Brightness follows the right output.
+        - id: LED4
+          name: Energy
+          description: Brightness follows how hard the shaker is rattling.
+        - id: LED5
+          name: Wall hit
+          description: Flashes when the grains hit a wall.
+
+host:
+  usb:
+    - name: Music Thing 8mu
+      role: midi
+      description: >
+        Plugged into the Computer's front USB-C socket. The Computer acts as
+        USB host, which needs a Rev 1.1 or later board. Faders 1-8 are Size,
+        Material, Grains, Hardness, Decay, Sensitivity, Travel and Scatter;
+        buttons 1-4 are soft shake, hard shake, roll and choke; the
+        accelerometer moves the grains.
+  notes: |
+    On connecting, the card resets the 8mu to its default fader and button
+    assignments, and it drives the 8mu's eight LEDs as a bar graph of rattle
+    energy.
