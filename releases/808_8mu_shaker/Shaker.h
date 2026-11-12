@@ -466,7 +466,22 @@ private:
 		grainGain = (grainGainQ8[Index(params.grains)]
 		           * hardnessGainQ8[Index(params.hardness)]) >> 8;
 		clickDecay = clickDecayQ12[Index(params.hardness)];
-		brightness = brightnessQ15[Index(params.hardness)];
+
+		// A HARD SHAKE IS BRIGHTER, not just louder.  Grains thrown about
+		// violently hit each other faster, and a faster impact is a sharper,
+		// more trebly click - the same reason a drum hit hard sounds
+		// brighter than one tapped.  So the rattle energy shifts the tone
+		// control up or down from where the Hardness fader has put it:
+		//
+		//     energy 0    (settling)      16 steps duller
+		//     energy 0.5  (a gentle shake) no change
+		//     energy 1.0  (a firm shake)   16 steps brighter
+		//     energy 2.0  (the maximum)    48 steps brighter
+		//
+		// (energyQ16 >> 11 turns 0..131072 into 0..64.)  As the rattle dies
+		// away the energy falls, so each shake also gets duller as it fades.
+		const int brightnessShift = int(energyQ16 >> 11) - 16;
+		brightness = brightnessQ15[Index(params.hardness + brightnessShift)];
 
 		// --- Move the lump of grains ----------------------------------------
 		//
