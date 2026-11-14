@@ -85,7 +85,8 @@ struct ShakerParams
 	int decay = 32;       // 0 = rattle stops at once ... 127 = keeps going for seconds
 	int sensitivity = 64; // 0 = needs a hard shake ... 127 = slightest movement
 	int travel = 35;      // 0 = grains packed tight ... 127 = long tube (rainstick)
-	int scatter = 0;      // 0 = one shell ... 127 = many differently-tuned objects
+	int scatter = 0;      // 0 = fixed pitch ... 40 = hard hits bend the pitch up
+	                      // ... 127 = also many differently-tuned objects
 };
 
 
@@ -309,10 +310,10 @@ public:
 			// pitch, taking turns.  Each collision then seems to come from a
 			// slightly different object - one bell among many on a sleigh
 			// bell strap, one jingle on a tambourine.
-			if (params.scatter > 0)
+			if (scatterRandom > 0)
 			{
 				int32_t randomStep = int32_t((dice >> 8) & 0xFF) - 128;   // -128..127
-				scatterOffset[scatterTurn] = (randomStep * params.scatter) >> 8;
+				scatterOffset[scatterTurn] = (randomStep * scatterRandom) >> 8;
 				UpdateMode(scatterTurn);
 				scatterTurn = (scatterTurn + 1) % numModes;
 			}
@@ -648,10 +649,32 @@ private:
 		shellR = shellRQ30[material];
 		shellGain = shellGainQ16[material];
 
-		// With Scatter at zero, put the three resonances back exactly on
+		// THE SCATTER FADER DOES TWO THINGS, one after the other.
+		//
+		// First part of its travel (0 to 40): PITCH BEND.  A hard hit
+		// pushes the pitch of the whole shell up a little, and it sinks
+		// back as the rattle dies away - the "peeow" that a drum skin or a
+		// thin metal sheet makes when struck hard, because a hard blow
+		// stretches it tight for a moment.  It follows the rattle energy,
+		// so the harder the shake, the higher it starts.  At most this is
+		// about a semitone for a firm shake and two for the hardest.
+		//
+		// Rest of its travel (40 to 127): the bend stays at full, and
+		// RANDOM retuning is added on top (see Process), from none up to
+		// about an octave either way.
+		const int scatter = Index(params.scatter);
+		const int32_t bendAmount = scatter < bendRange ? scatter : bendRange;   // 0..40
+		scatterRandom = scatter > bendRange ? ((scatter - bendRange) * 127) / (127 - bendRange) : 0;
+
+		// The bend is measured in SIXTEENTHS of a pitch-table step (Q4), so
+		// that it can glide smoothly; whole steps would be heard as a tiny
+		// staircase on a long ringing note.
+		pitchBendQ4 = ((energyQ16 >> 8) * bendAmount * 2) >> 8;
+
+		// With no random scatter, put the three resonances back exactly on
 		// their proper pitches.  Without this they would stay wherever the
 		// last random retuning happened to leave them.
-		if (params.scatter <= 0)
+		if (scatterRandom <= 0)
 		{
 			for (int m = 0; m < numModes; m++) scatterOffset[m] = 0;
 		}
@@ -674,12 +697,26 @@ private:
 	// Set the pitch of one resonator.
 	void UpdateMode(int m)
 	{
-		int32_t i = Clamp(basePitch + modePitchOffset[m] + scatterOffset[m], 0, pitchTableSize - 1);
+		// The pitch in sixteenths of a table step: whole steps from Size,
+		// Tune and Scatter, plus the fine pitch bend.
+		int32_t pitchQ4 = (basePitch + modePitchOffset[m] + scatterOffset[m]) * 16 + pitchBendQ4;
+		pitchQ4 = Clamp(pitchQ4, 0, (pitchTableSize - 2) * 16);
+
+		// Split that into a whole table position and the fraction left over
+		// (0..15), then read the table "between the lines": take the entry
+		// below, and move that fraction of the way towards the entry above.
+		// This is LINEAR INTERPOLATION, and it turns a table of 416 fixed
+		// pitches into a smooth continuous range.
+		const int32_t i = pitchQ4 >> 4;
+		const int32_t fraction = pitchQ4 & 15;
+		const int32_t cosine = cosQ30[i] + (((cosQ30[i + 1] - cosQ30[i]) * fraction) >> 4);
+		const int32_t sine = sinQ30[i] + (((sinQ30[i + 1] - sinQ30[i]) * fraction) >> 4);
+
 		// Multiply the shrink factor r into the cosine and sine, once, here,
 		// so the audio loop doesn't have to.  Q30 times Q30 is Q60; shifting
 		// down by 30 gives Q30 again.
-		modeCosQ30[m] = ShiftTowardsZero(int64_t(shellR) * cosQ30[i], 30);
-		modeSinQ30[m] = ShiftTowardsZero(int64_t(shellR) * sinQ30[i], 30);
+		modeCosQ30[m] = ShiftTowardsZero(int64_t(shellR) * cosine, 30);
+		modeSinQ30[m] = ShiftTowardsZero(int64_t(shellR) * sine, 30);
 	}
 
 	//------------------------------------------------------------------------
@@ -763,6 +800,9 @@ private:
 	static constexpr int32_t modePitchOffset[numModes] = {0, 42, 81};
 
 	static constexpr int32_t maxEnergy = 131072;       // 2.0 in Q16
+	// How much of the Scatter fader's travel is pitch bend, before the
+	// random retuning starts.
+	static constexpr int bendRange = 40;
 	static constexpr int32_t settledEnergy = 300;      // below this, grains stop
 	static constexpr int32_t maxClickLevel = 1 << 20;
 	static constexpr int32_t maxModeLevel = 1 << 29;
@@ -825,6 +865,8 @@ private:
 	bool grainHit = false;
 	bool pendingHit = false;
 	int scatterTurn = 0;
+	int32_t scatterRandom = 0;   // random part of the Scatter fader, 0..127
+	int32_t pitchBendQ4 = 0;     // pitch-bend part, in 16ths of a table step
 	int32_t scatterOffset[numModes] = {0, 0, 0};
 
 	// Layer 3: the shell

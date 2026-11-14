@@ -16,7 +16,8 @@
 //   fader 5  DECAY        how long the rattle carries on after a shake
 //   fader 6  SENSITIVITY  how hard you have to shake
 //   fader 7  TRAVEL       packed tight  ...  a long tube (rainstick)
-//   fader 8  SCATTER      one shell  ...  many separate bells or jingles
+//   fader 8  SCATTER      fixed pitch  ...  hard hits bend the pitch up  ...
+//                         and beyond that, many separate bells or jingles
 //
 //   button 1   soft shake          button 3   hold to roll (keep rattling)
 //   button 2   hard shake          button 4   hold to choke (grip the shell)
