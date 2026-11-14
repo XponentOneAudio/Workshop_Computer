@@ -489,6 +489,7 @@ private:
 		// front-to-back.  Each axis is its own little one-dimensional world
 		// with a wall at +boxHalf and another at -boxHalf.
 		int32_t fastest = 0;
+		int32_t pressing = 0;   // how hard the grains are being held against a wall
 		for (int axis = 0; axis < 2; axis++)
 		{
 			// The 8mu only reports 128 different tilt values, so its readings
@@ -500,7 +501,8 @@ private:
 			// Ignore very small tilts.  No table is perfectly level, and
 			// without this "dead zone" the grains would creep to one side
 			// and hiss forever.  Then apply the sensitivity control.
-			int32_t accel = (DeadZone(motionSmooth[axis] >> 8, restThreshold) * sens) >> 8;
+			const int32_t push = DeadZone(motionSmooth[axis] >> 8, restThreshold);
+			int32_t accel = (push * sens) >> 8;
 
 			// NEWTON'S LAWS, one millisecond at a time:
 			//   acceleration changes velocity...
@@ -539,6 +541,12 @@ private:
 					velocity[axis] = 0;   // come to rest against the wall
 				}
 				restingOnWall[axis] = true;
+
+				// Is the shaker still pushing the grains INTO this wall?
+				// (`push` is positive towards the far wall, negative towards
+				// the near one.)  If so, note how hard: see "pinned" below.
+				const int32_t intoWall = hitFarWall ? push : -push;
+				if (intoWall > pressing) pressing = intoWall;
 			}
 			else
 			{
@@ -580,7 +588,22 @@ private:
 		//
 		// Lose a fixed fraction of the energy every tick.  A fist round the
 		// shaker (choke) loses a quarter of it per millisecond instead.
-		const int32_t loss = choke ? 16384 : energyLossQ16[Index(params.decay)];
+		//
+		// PINNED GRAINS CANNOT RATTLE.  The Decay fader describes grains that
+		// are free to bounce about, which is what happens after a single
+		// flick: they hit the wall and then nothing holds them there.  But
+		// if the shaker keeps driving into them - as it does in the middle
+		// of a firm back-and-forth shake, when the wall has come to meet the
+		// grains and carries on pushing - they are squashed against that wall
+		// and the rattle is smothered almost at once.  That is what gives a
+		// driven shake its tight "chk", where a flick gives a loose "chhhh".
+		//
+		// So the harder the grains are pressed against a wall, the faster
+		// the energy is lost.  A full 1 g of pressing loses about 3% per
+		// millisecond, on top of the normal loss: gone in roughly 30 ms.
+		// Holding the shaker tilted pins the grains too, but far more gently.
+		int32_t loss = energyLossQ16[Index(params.decay)] + pressing;
+		if (choke || loss > 16384) loss = 16384;
 		// 64-bit multiply, because energy (up to 2^17) times loss (up to 2^14)
 		// could just overflow 32 bits.
 		energyQ16 -= int32_t((int64_t(energyQ16) * loss) >> 16) + 1;

@@ -18,7 +18,7 @@ The code is written to be read by someone learning C++, with comments explaining
 | 2 | Material | dead: gourd, wood, card | ringing: metal |
 | 3 | Grains | a few beads | about a thousand |
 | 4 | Hardness | soft and dull: sand | hard and bright: steel shot |
-| 5 | Decay | rattle stops at once | rattle carries on for seconds |
+| 5 | Decay | rattle stops at once | rattle carries on for seconds, when the grains are left free |
 | 6 | Sensitivity | needs a hard shake | the slightest movement |
 | 7 | Travel | grains packed tight | a long tube: rainstick |
 | 8 | Scatter | one shell | many differently tuned bells or jingles |
@@ -102,7 +102,7 @@ The card still works as a percussion voice. It keeps its default maraca settings
 
 The model has three layers, each feeding the next. `Shaker.h` explains them at length.
 
-1. **The mass of grains.** A thousand times a second, all the grains together are treated as one lump sliding in a box. The accelerometer says which way is downhill; the lump accelerates, slides with some friction, and thumps into a wall. Wall impacts and fast sliding create *rattle energy*, which then fades at a rate set by Decay. Sensitivity scales the acceleration and Travel is the length of the box.
+1. **The mass of grains.** A thousand times a second, all the grains together are treated as one lump sliding in a box. The accelerometer says which way is downhill; the lump accelerates, slides with some friction, and thumps into a wall. Wall impacts and fast sliding create *rattle energy*, which then fades at a rate set by Decay. Grains that are still being pushed into a wall are pinned and cannot rattle, so the energy fades much faster while that lasts: a firm back-and-forth shake gives a tight "chk", while a single flick leaves the grains loose and gives the full Decay tail. Sensitivity scales the acceleration and Travel is the length of the box.
 2. **The individual grains.** 48,000 times a second a dice is rolled. With a probability set by Grains, a collision happens and makes a tiny click of noise, as loud as the current rattle energy. As the energy dies away the collisions become rarer as well as quieter, until the grains settle and stop. Hardness sets how short and bright each click is, and a harder shake makes the clicks brighter still, so each shake starts bright and dulls as it fades. This is based on Perry Cook's PhISM method (Physically Informed Stochastic Event Modelling).
 3. **The shell.** The clicks excite three resonators, each a ring at one frequency. Size sets their pitch and Material how long they ring. Scatter retunes one of them at random on every collision, so the clicks seem to come from many separate objects. The resonators are built so that integer rounding can only ever shorten a ring, never sustain it, which guarantees they fall fully silent.
 
