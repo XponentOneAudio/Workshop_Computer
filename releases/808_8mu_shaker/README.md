@@ -46,7 +46,7 @@ The code is written to be read by someone learning C++, with comments explaining
 
 | Control | Job |
 |---|---|
-| Main | Volume. Fully clockwise is deliberately too loud, to bring up quiet settings |
+| Main | Left half: volume, reaching normal level at the middle. Right half: adds parallel compression, which evens out hard and soft hits and brings up the tails |
 | X | Tune: shifts the Size up or down by about two octaves. Middle is no change |
 | Y | Stereo width, from true mono (both outputs identical) to wide |
 | Switch Up | Roll, the same as holding button 3 |
@@ -156,6 +156,7 @@ Drag `build/8mu_shaker.uf2` onto the Pico in bootloader mode, or use the binary 
 |---|---|
 | `Shaker.h` | The physical model. Plain C++, no hardware code |
 | `main.cpp` | Connects the model to the 8mu, the knobs, the jacks and the LEDs |
+| `Compressor.h` | The parallel compressor on the Main knob. Plain C++, no hardware code |
 | `test/render_wav.cpp` | Runs the model on a desktop computer and writes a WAV file |
 | `ComputerCard.h` | Chris Johnson's hardware library for the Workshop Computer |
 | `EightMU.h` | Chris Johnson's 8mu library, including the USB MIDI host driver |

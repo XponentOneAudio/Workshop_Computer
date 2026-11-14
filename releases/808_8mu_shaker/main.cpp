@@ -45,6 +45,7 @@
 #include "ComputerCard.h"
 #include "EightMU.h"
 #include "Shaker.h"
+#include "Compressor.h"
 #include "hardware/clocks.h"
 
 #include <stdint.h>
@@ -193,11 +194,27 @@ public:
 		int32_t left, right;
 		shaker.Process(shellInput, left, right);
 
-		// Main knob: volume.  The model's output is much bigger than the
-		// -2048 to 2047 the hardware accepts, so it is scaled down here.
-		// Fully clockwise is deliberately a bit too loud, so that quiet
-		// settings (very few grains, gentle shaking) can still be turned up.
-		const int32_t volume = KnobVal(Knob::Main);
+		// Main knob: one knob, two jobs, split at the middle.
+		//
+		//   Left half:   VOLUME, from silent up to normal level at the middle.
+		//   Right half:  volume stays at normal, and the knob instead adds
+		//                more and more PARALLEL COMPRESSION (Compressor.h),
+		//                which evens out hard and soft hits and brings up
+		//                the tails.
+		//
+		// KnobVal() is 0 to 4095, so the middle is about 2048.
+		const int32_t mainKnob = KnobVal(Knob::Main);
+		int32_t volume = mainKnob;         // left half: 0..2048
+		int32_t compression = 0;
+		if (mainKnob > 2048)
+		{
+			volume = 2048;                              // normal level
+			compression = (mainKnob - 2048) * 2;        // right half: 0..4094
+		}
+		compressor.Process(left, right, compression);
+
+		// The model's output is much bigger than the -2048 to 2047 the
+		// hardware accepts; ToOutput scales it down and applies the volume.
 		left = ToOutput(left, volume, roundingErrorLeft);
 		right = ToOutput(right, volume, roundingErrorRight);
 
@@ -367,6 +384,7 @@ private:
 	// These are "member variables": they belong to the card object and keep
 	// their values between one call of ProcessSample() and the next.
 	Shaker shaker;   // the physical model (Shaker.h)
+	Compressor compressor;   // output dynamics (Compressor.h)
 	EightMU mu;      // the connection to the 8mu controller (EightMU.h)
 
 	bool lastSoftButton = false;

@@ -116,10 +116,11 @@ controls:
       description: Momentary. One hard shake each time it is pressed.
   knobs:
     - main:
-        name: Volume
+        name: Volume / Compression
         description: >
-          Output level. Fully clockwise is deliberately too loud, so that
-          quiet settings can be brought up.
+          Left half is volume, reaching normal level at the middle. Right half
+          adds parallel compression, which evens out hard and soft hits and
+          brings up the tails.
       x:
         name: Tune
         description: >
