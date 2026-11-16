@@ -1,0 +1,93 @@
+Name: Zeds Dead
+short-description: Stereo morphing Z-plane multimode filter that glides between LP, BP, HP, notch, twin-peak and vowel shapes.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: TBC
+Version: 0.1
+Status: Prototype
+draft: true
+date-created: 2026-11-16
+date-updated: 2026-11-16
+
+tags:
+  - filter
+  - effect
+  - stereo
+  - morphing
+  - vowel
+
+summary: |
+  Stereo 6-pole filter whose poles and zeros glide smoothly between filter shapes ("Z-plane" morphing).
+  Main sets cutoff, X morphs between the five shapes of the current bank, Y sets resonance.
+  Switch up selects the Classic bank (LP, BP, HP, notch, twin peaks); middle selects the Vowel bank (A, E, I, O, U).
+  Pressing the switch down cycles stereo spread modes.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Left Input
+      description: Left audio input; also feeds the right channel when Audio In 2 is unpatched
+    - id: AudioIn2
+      name: Right Input
+      description: Right audio input
+    - id: CVIn1
+      name: Cutoff CV
+      description: Approximately 1V/oct cutoff modulation, added to Main knob
+    - id: CVIn2
+      name: Morph CV
+      description: Morph modulation added to X knob; ±5V sweeps the whole bank
+  outputs:
+    - id: AudioOut1
+      name: Left Output
+      description: Filtered left channel
+    - id: AudioOut2
+      name: Right Output
+      description: Filtered right channel
+
+controls:
+  knobs:
+    - when: { z: up }
+      main:
+        name: Cutoff
+        description: 20 Hz to 18 kHz, exponential
+      x:
+        name: Morph (Classic)
+        description: Lowpass → Bandpass → Highpass → Triple notch → Twin peaks
+      y:
+        name: Resonance
+        description: Sharpness of the resonant poles
+    - when: { z: middle }
+      main:
+        name: Formant Shift
+        description: Scales all formants; around 800 Hz gives natural vowels
+      x:
+        name: Morph (Vowels)
+        description: A → E → I → O → U
+      y:
+        name: Resonance
+        description: Sharpness of the formants
+    - when: { z: down, gesture: momentary }
+      main:
+        name: Stereo Spread Mode
+        description: Each press cycles linked / cutoff spread / morph spread / both
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Left Level
+          description: Left output level
+        - id: LED1
+          name: Right Level
+          description: Right output level
+        - id: LED2
+          name: Morph Position A
+          description: Morph position dot (or spread mode 0 after a switch press)
+        - id: LED3
+          name: Morph Position B
+          description: Morph position dot (or spread mode 1 after a switch press)
+        - id: LED4
+          name: Morph Position C
+          description: Morph position dot (or spread mode 2 after a switch press)
+        - id: LED5
+          name: Morph Position D
+          description: Morph position dot (or spread mode 3 after a switch press)
