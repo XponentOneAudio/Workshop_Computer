@@ -18,8 +18,8 @@ Zeds Dead is a stereo multimode filter for the Music Thing Modular Workshop Syst
 | **Switch DOWN** (momentary) | Cycles the stereo spread mode: *linked* / *cutoff spread* / *morph spread* / *both* |
 | **Audio In 1 / 2** | Left / right input. If only In 1 is patched, it feeds both sides. |
 | **Audio Out 1 / 2** | Left / right output |
-| **CV In 1** | Cutoff, roughly 1 V/oct (uncalibrated), added to Main |
-| **CV In 2** | Morph, added to X. ±5 V covers the whole bank. |
+| **CV In 1** | Cutoff, 1 V/oct, added to Main. Uses the calibration stored on the module (see below). |
+| **CV In 2** | Morph, added to X. 5 V covers the whole bank. Also calibrated. |
 | **LEDs 0, 1** (top row) | Left / right output level |
 | **LEDs 2 to 5** | A dot of light showing the morph position. For about 1 s after a DOWN press they show the spread mode instead. |
 
@@ -235,6 +235,18 @@ The left and right channels are separate cascades, each with its own coefficient
 
 ---
 
+## CV calibration
+
+Every Workshop Computer has a small EEPROM chip holding calibration data. The factory writes it, and you can redo it with the calibration mode of the Simple MIDI card (`releases/00_Simple_MIDI`). For each CV input it stores two numbers: the raw reading at 0 V (`adcOffset`), and how many millivolts one ADC step is worth (`mvPerAdcQ16`, in Q16 fixed point). ComputerCard loads them at power-up.
+
+This card uses `CVIn1Millivolts()` and `CVIn2Millivolts()`, which apply
+
+```
+millivolts = (raw − adcOffset) × mvPerAdcQ16 / 65536
+```
+
+so that 1 V into CV In 1 really moves the cutoff by one octave. These two functions aren't in the stock ComputerCard library. They're a small local addition copied from Simple MIDI and marked at the top of `ComputerCard.h`, so re-add them if you update the library. An unplugged CV input is treated as exactly 0 V, because calibrating a raw reading of 0 would otherwise give a small offset voltage. If the EEPROM holds no valid data, ComputerCard falls back to an ideal ±6 V range.
+
 ## Testing on a PC
 
 `tools/host_test.cpp` uses the exact same `zplane.h` code as the card:
@@ -255,7 +267,7 @@ It also writes the plots in `docs/`. They're a good way to learn: edit a frame i
 ## Known limitations and ideas
 
 * **Not yet tested on hardware.** The CPU load on core 0 is estimated, not measured. If audio glitches, reduce `kSections` to 2 or lower the coefficient-smoothing work.
-* The CV inputs are uncalibrated, so cutoff tracking is only *roughly* 1 V/oct.
+* CV tracking relies on the calibration stored in the module's EEPROM (see "CV calibration" above). A module that has never been calibrated falls back to an ideal ±6 V scaling, which is only roughly 1 V/oct. The Workshop Computer's CV inputs are also less precise than its audio inputs: one ADC step is about 3 mV, or about 3.5 cents.
 * At very low cutoffs (below about 40 Hz), float precision in the coefficient design makes the pole frequency slightly inaccurate (around 1 to 2 %). A state-variable or "coupled form" runner would fix this.
 * The pulse inputs and CV outputs are unused. Ideas: pulse to step between banks, or CV out of the morph position or an envelope follower.
 * More banks would be easy: just add `Frame` tables. Some to try: phaser-like notch combs, "telephone" band-limits, or user frames edited over USB.

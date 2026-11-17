@@ -3,6 +3,10 @@ ComputerCard  - by Chris Johnson
 
 version 0.4.0   -  14 June 2026
 
+Local changes for nn_Zeds_dead (re-apply when updating ComputerCard):
+- Added CVInMillivolts(), CVIn1Millivolts(), CVIn2Millivolts()
+  (copied from releases/00_Simple_MIDI)
+
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
 System Computer.
@@ -398,15 +402,20 @@ protected:
 		return SignedADCToMillivolts((i ? adcInR : adcInL), i);
 	}
 
-	/*
-	  Where are the CVInMillivolts functions?
-	  
-	  There is calibration data for CV inputs as well as audio inputs, 
-      but the audio inputs on the Workshop Computer are more precise than
-	  the CV inputs, so are preferred for accurate voltage input. If your
-	  card really needs calibrated CV in, the code is analogous to the 
-	  audio in functions above.
-	 */
+	// Local addition (nn_Zeds_dead), same as releases/00_Simple_MIDI:
+	// calibrated CV inputs, using the CV-input calibration stored in the
+	// module's EEPROM (inputCalCoeffs[2] and [3], loaded at power-up).
+	/// Return calibrated CV In in millivolts (i=0 or 1).
+	int32_t __not_in_flash_func(CVInMillivolts)(int i)
+	{
+		return SignedADCToMillivolts(cv[i], 2 + i);
+	}
+
+	/// Return calibrated CV In 1 in millivolts.
+	int32_t __not_in_flash_func(CVIn1Millivolts)() { return CVInMillivolts(0); }
+
+	/// Return calibrated CV In 2 in millivolts.
+	int32_t __not_in_flash_func(CVIn2Millivolts)() { return CVInMillivolts(1); }
 
 	void Abort();
 

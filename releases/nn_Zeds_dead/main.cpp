@@ -13,8 +13,9 @@
 //    Audio In 1 / 2  : left / right input. If only In 1 is patched, it feeds
 //                      both channels (mono in → stereo out).
 //    Audio Out 1 / 2 : left / right filtered output.
-//    CV In 1         : cutoff, roughly 1 V/octave, added to the Main knob.
-//    CV In 2         : morph, added to knob X (±5 V sweeps the whole bank).
+//    CV In 1         : cutoff, 1 V/octave (uses the module's EEPROM
+//                      calibration), added to the Main knob.
+//    CV In 2         : morph, added to knob X (5 V sweeps the whole bank).
 //    Main knob       : cutoff frequency, 20 Hz … 18 kHz (exponential).
 //    Knob X          : MORPH — moves through the 5 shapes of the current bank.
 //    Knob Y          : resonance.
@@ -196,13 +197,34 @@ private:
 		while (true)
 		{
 			// ---- Read controls -----------------------------------------------
-			// KnobVal: 0..4095.  CVIn: about −2048..2047 for −6 V..+6 V, so
-			// one volt is ~341 steps. (Uncalibrated: "roughly" 1 V/oct.)
+			// KnobVal: 0..4095.
 			const float knobMain = float(KnobVal(Knob::Main)) / 4095.0f;
 			const float knobX    = float(KnobVal(Knob::X)) / 4095.0f;
 			const float knobY    = float(KnobVal(Knob::Y)) / 4095.0f;
-			const float cv1Volts = float(CVIn1()) / 341.0f;
-			const float cv2      = float(CVIn2()) / 1706.0f;   // ±5 V → ±1.2 (a bit over full range)
+
+			// CV inputs, in CALIBRATED millivolts.
+			//
+			// Each Workshop Computer is calibrated at the factory (or with the
+			// calibration mode of the Simple MIDI card), and the results are
+			// stored in a small EEPROM chip on the module. For each CV input
+			// that's two numbers:
+			//   adcOffset   – the raw ADC reading when 0 V is applied
+			//   mvPerAdcQ16 – millivolts per ADC step (Q16 fixed point)
+			// ComputerCard reads them at power-up, and CVInMillivolts() applies
+			//   mV = (raw − adcOffset) × mvPerAdcQ16 / 65536
+			// Without valid EEPROM data it falls back to an ideal ±6 V range,
+			// i.e. the same "roughly right" scaling as the raw CVIn().
+			//
+			// When nothing is plugged in, ComputerCard sets the raw reading to
+			// 0, but the calibrated value of a raw 0 is (−adcOffset × scale),
+			// a small non-zero voltage. So we treat "unplugged" as exactly 0 V
+			// ourselves; otherwise the cutoff would be slightly detuned with
+			// no cable patched.
+			const float cv1Volts = Connected(Input::CV1) ? float(CVIn1Millivolts()) * 0.001f : 0.0f;
+			const float cv2Volts = Connected(Input::CV2) ? float(CVIn2Millivolts()) * 0.001f : 0.0f;
+
+			// Morph CV: 5 V sweeps one whole bank (knob X's full range is 1.0).
+			const float cv2 = cv2Volts * 0.2f;
 
 			// Cutoff is handled in OCTAVES above 20 Hz, so CV can simply be added.
 			const float cutoffOct = knobMain * kKnobOctaves + cv1Volts;

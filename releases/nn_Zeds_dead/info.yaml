@@ -31,10 +31,10 @@ panel:
       description: Right audio input
     - id: CVIn1
       name: Cutoff CV
-      description: Approximately 1V/oct cutoff modulation, added to Main knob
+      description: 1V/oct cutoff modulation (uses EEPROM calibration), added to Main knob
     - id: CVIn2
       name: Morph CV
-      description: Morph modulation added to X knob; ±5V sweeps the whole bank
+      description: Morph modulation added to X knob; 5V sweeps the whole bank
   outputs:
     - id: AudioOut1
       name: Left Output
