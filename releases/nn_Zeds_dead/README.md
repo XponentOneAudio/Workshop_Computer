@@ -30,17 +30,17 @@ Patch ideas: put a slow LFO into CV 2 and sweep through the vowels. Turn on "mor
 
 ## The web editor
 
-![The web editor, connected to a (simulated) card](docs/editor.png)
+![The web editor, connected to a simulated card (its CPU figures are mock values)](docs/editor.png)
 
-`web/index.html` is a single self-contained page. Open it in **Chrome or Edge**: talking to the card needs WebMIDI with SysEx, which those browsers support. Designing works offline in any browser.
+`web/index.html` is a single self-contained page, styled to match the CVSeq and WaveSeq editors: the same colours (including dark mode), cards that fold down to their headings, readout tiles, a presets list and an Inputs & Outputs table. Open it in **Chrome or Edge**: talking to the card needs WebMIDI with SysEx, which those browsers support. Designing works offline in any browser.
 
 * **Z-plane.** Drag the poles (×) and zeros (○) of each pole/zero pair. Their mirror images below the axis follow automatically. Zeros snap onto the unit circle for a perfect notch. Zoom in around DC for low-frequency work.
 * **Pairs table.** Pick how many pole/zero pairs (1 to 8) this design uses. Type exact values: pole frequency and Q, how much the Resonance knob affects each pole, and the zero type (none, lowpass, highpass, bandpass, notch/pair, or two free real zeros).
 * **Frequency response.** The response at a preview cutoff and resonance, which stand in for the Main and Y knobs. Each pair's own contribution is drawn faintly.
 * **Audition on card.** The card plays the design you're editing, live, while you drag.
-* **Bank.** Six slots per bank. Drag the "design" chip onto a slot (or press *Store*) to put the design there. Drag one slot onto another to swap them. Set how many slots knob X morphs through. The morph preview shows exactly what the card does between slots, and it can follow the card's real knob X.
+* **Bank.** The six slots are laid out left to right like steps on the CVSeq timeline: each is tinted in its own colour, the slot being edited has a dashed orange outline, and the slots in use are framed in orange. Click a slot to edit it. Drag the "Drag onto a slot" chip onto a slot (or press *Store in slot*) to put the design there, and drag one slot onto another to swap them. Set how many slots knob X morphs through. A black line marks the morph position, and the morph preview shows exactly what the card does between slots. It can also follow the card's real knobs.
 * **Card panel.** Shows the **audio core load** (average and peak, measured on the card), the coefficient update rate, how many pairs are running, the knob and CV values, output levels and calibration status. It also has buttons to read, send and save both banks to the card's flash, plus factory and revert.
-* **Library.** Name and keep designs in the browser, and export or import banks as `.json` files.
+* **Presets.** The twelve factory shapes are built in, and you can save your own (kept in the browser), each with a thumbnail of its response. Export and Import move both banks and your presets as one `.json` file.
 
 Everything is stored *relative to the cutoff*, so a design you draw at 2 kHz slides up and down with the Main knob and CV 1, keeping its shape and Q.
 
