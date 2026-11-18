@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zeds Dead Editor</title>
+<meta name="description" content="Design pole/zero filter shapes for the Zeds Dead morphing Z-plane filter card on the Music Thing Modular Workshop System Computer, audition them live and save them to the card.">
+<!--
+  ===========================================================================
+   Zeds Dead — web editor
+  ===========================================================================
+   Open this file in Chrome or Edge (WebMIDI with SysEx is needed to talk to
+   the card; everything else works in any browser, offline too).
+
+   How it is organised:
+     1. "ZP" — the filter maths. A line-for-line JavaScript copy of zplane.h
+        and bank.h from the firmware, so what you see here is what the card
+        does. tools/check_web.js checks it against the C++ byte for byte.
+     2. "Card" — talking to the Workshop Computer over USB-MIDI SysEx (the
+        message list is documented at the top of main.cpp).
+     3. The editor UI: z-plane, response plot, section table, bank of slots.
+  ===========================================================================
+-->
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --panel2: #23272f; --line: #343a45;
+    --text: #e6e8ec; --muted: #9aa3b2; --accent: #ffb547; --accent2: #5cc8ff;
+    --good: #5fd38d; --warn: #ffb547; --bad: #ff6b6b;
+    --pole: #ff6b6b; --zero: #5cc8ff;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  .grow { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .full { grid-column: 1 / -1; }
+  button, select, input { font: inherit; color: var(--text); }
+  button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent2); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #3a2f17; border-color: var(--accent); color: var(--accent); }
+  button.on { background: #173a2a; border-color: var(--good); color: var(--good); }
+  select, input[type=number], input[type=text] { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  input[type=number] { width: 78px; }
+  input[type=range] { accent-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  canvas { display: block; width: 100%; touch-action: none; }
+  #zplane { aspect-ratio: 1 / 1; max-width: 560px; margin: 0 auto; cursor: crosshair; border-radius: 8px; background: #101216; }
+  #resp { aspect-ratio: 2.2 / 1; border-radius: 8px; background: #101216; }
+  #morphPlot { aspect-ratio: 3 / 1; border-radius: 8px; background: #101216; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .status-dot.ok { background: var(--good); }
+  .meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .meter { background: var(--panel2); border-radius: 8px; padding: 8px; }
+  .meter .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .meter .value { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: #0e1013; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .bar > div { height: 100%; width: 0; background: var(--good); transition: width .2s; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  tr.sel td { background: #262b34; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .table-wrap { overflow-x: auto; }
+  .slots { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 960px) { .slots { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 520px) { .slots { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .slot { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px; min-width: 0; }
+  .slot.unused { opacity: .45; }
+  .slot.dropover { border-color: var(--accent); box-shadow: 0 0 0 2px #ffb54755; }
+  .slot.editing { border-color: var(--accent2); }
+  .slot canvas { aspect-ratio: 1.6 / 1; border-radius: 4px; background: #101216; }
+  .slot .name { width: 100%; margin: 4px 0; font-size: 12px; padding: 2px 4px; }
+  .slot .btns { display: flex; gap: 4px; }
+  .slot .btns button { flex: 1; padding: 3px 4px; font-size: 12px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px dashed var(--accent); border-radius: 18px; color: var(--accent); cursor: grab; user-select: none; }
+  .tabs button { border-radius: 6px 6px 0 0; }
+  .tabs button.active { background: #3a2f17; border-color: var(--accent); color: var(--accent); }
+  #log { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); max-height: 90px; overflow: auto; white-space: pre-wrap; }
+  .warn { color: var(--warn); }
+  .lib-item { display: flex; gap: 6px; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .lib-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Zeds Dead <span>Z-plane editor</span></h1>
+  <div class="grow"></div>
+  <div><span id="connDot" class="status-dot"></span><span id="connText">Not connected</span></div>
+  <button id="connectBtn" class="primary">Connect to card</button>
+</header>
+
+<main>
+
+  <!-- ============================ Z-plane =============================== -->
+  <section class="panel">
+    <h2>Z-plane: drag the poles (×) and zeros (○)</h2>
+    <canvas id="zplane"></canvas>
+    <div class="row small muted">
+      Mirror images (below the axis) move automatically. Zeros snap onto the unit circle when close.
+      Zoom:
+      <select id="zoom"><option value="1">Whole circle</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+    </div>
+  </section>
+
+  <!-- ============================ Response ============================== -->
+  <section class="panel">
+    <h2>Frequency response</h2>
+    <canvas id="resp"></canvas>
+    <div class="row">
+      <label>Cutoff <input id="cutoff" type="range" min="0" max="1000" value="500"></label>
+      <span id="cutoffVal" class="small"></span>
+      <label>Resonance <input id="res" type="range" min="0" max="1000" value="0"></label>
+      <span id="resVal" class="small"></span>
+    </div>
+    <div class="row small muted">These two stand in for the Main and Y knobs while you design. The z-plane shows the poles at these settings.</div>
+    <div class="row">
+      <button id="auditionBtn" disabled title="Play this design on the card while you edit">Audition on card</button>
+      <span class="chip" id="designChip" draggable="true" title="Drag onto a slot below">⇣ Drag this design into a slot</span>
+    </div>
+  </section>
+
+  <!-- ============================ Sections ============================== -->
+  <section class="panel">
+    <h2>Pole / zero pairs</h2>
+    <div class="row">
+      <label>Name <input id="designName" type="text" value="My filter" maxlength="24"></label>
+      <label>Pairs <input id="numSections" type="number" min="1" max="8" value="3" style="width:60px"></label>
+      <span id="cpuEstimate" class="small"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="secTable">
+        <thead><tr><th></th><th>Pole Hz</th><th>Q</th><th title="How much the Resonance knob sharpens this pole">Res</th><th>Zeros</th><th>Zero values</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details class="small" style="margin-top:8px">
+      <summary>What do these numbers mean?</summary>
+      <p><b>Pole Hz</b> and <b>Q</b> are the natural frequency and quality factor of the resonance, as on an analogue filter, at the current preview cutoff (Q is shown with the Resonance knob at zero). A heavily damped pole (low Q) rings a little below its natural frequency, so on the z-plane it sits at a lower angle than its Hz value suggests. On the card everything is <i>relative to the cutoff</i>, so the whole shape slides up and down with the Main knob and CV 1. The Q stays the same as it moves.</p>
+      <p><b>Res</b> (0–1) sets how much the Resonance knob sharpens this pole. A 6-pole lowpass usually lets only its last pair "sing".</p>
+      <p><b>Zeros</b>: <i>Lowpass</i>, <i>Highpass</i> and <i>Bandpass</i> put real zeros at Nyquist (z = −1), at DC (z = +1), or one at each. These stay put when the cutoff moves. <i>Notch / pair</i> is a mirror pair that moves with the cutoff; radius 1 gives a perfect notch. <i>Real</i> lets you place two zeros anywhere on the axis. <i>None</i> gives a pure resonance.</p>
+    </details>
+  </section>
+
+  <!-- ============================ Card status =========================== -->
+  <section class="panel">
+    <h2>Card</h2>
+    <div class="meters">
+      <div class="meter"><div class="label">Audio core load</div><div class="value" id="mCpu">–</div><div class="bar"><div id="mCpuBar"></div></div><div class="small muted" id="mCpuPeak">peak –</div></div>
+      <div class="meter"><div class="label">Coefficient updates</div><div class="value" id="mRate">–</div><div class="small muted">per second (core 1)</div></div>
+      <div class="meter"><div class="label">Pairs running</div><div class="value" id="mSecs">–</div><div class="small muted" id="mBank">bank –</div></div>
+      <div class="meter"><div class="label">Cutoff / Res</div><div class="value" id="mCutoff">–</div><div class="small muted" id="mRes">res –</div></div>
+      <div class="meter"><div class="label">Morph</div><div class="value" id="mMorph">–</div><div class="small muted" id="mSpread">spread –</div></div>
+      <div class="meter"><div class="label">Output L / R</div><div class="bar"><div id="mLvlL"></div></div><div class="bar"><div id="mLvlR"></div></div><div class="small muted" id="mCal">CV calibration –</div></div>
+    </div>
+    <div class="row small muted" id="fwInfo">Connect the card by USB, then press <b>Connect to card</b> (Chrome or Edge).</div>
+    <div class="row">
+      <button id="readBtn" disabled>Read banks from card</button>
+      <button id="sendBtn" disabled>Send banks to card</button>
+      <button id="saveBtn" class="primary" disabled>Save to card flash</button>
+      <label class="small"><input type="checkbox" id="liveSync" checked> Live-send slot changes</label>
+    </div>
+    <div class="row">
+      <button id="factoryBtn" disabled title="Load the factory presets for this bank into the card (not saved until you press Save)">Card: factory bank</button>
+      <button id="revertBtn" disabled title="Reload the banks the card last saved to flash">Card: revert to saved</button>
+    </div>
+    <div id="log"></div>
+  </section>
+
+  <!-- ============================ Bank ================================== -->
+  <section class="panel full">
+    <h2>Bank: the slots that knob X morphs through</h2>
+    <div class="row">
+      <span class="tabs"><button data-bank="0" class="active">Bank A (switch up)</button><button data-bank="1">Bank B (switch middle)</button></span>
+      <label>Slots in use <input id="numSlots" type="number" min="1" max="6" value="6" style="width:60px"></label>
+      <span id="bankCpu" class="small"></span>
+      <div class="grow"></div>
+      <button id="factoryLocalBtn" title="Replace this bank in the editor with the factory presets">Factory presets</button>
+    </div>
+    <div class="slots" id="slots"></div>
+    <div class="row" style="margin-top:12px">
+      <label>Morph preview <input id="morph" type="range" min="0" max="1000" value="0" style="width:260px"></label>
+      <span id="morphVal" class="small"></span>
+      <label class="small"><input type="checkbox" id="followCard"> Follow the card's knob X</label>
+    </div>
+    <canvas id="morphPlot"></canvas>
+  </section>
+
+  <!-- ============================ Library =============================== -->
+  <section class="panel full">
+    <h2>Library and files</h2>
+    <div class="row">
+      <button id="libSaveBtn">Save design to library</button>
+      <button id="exportBankBtn">Export bank (.json)</button>
+      <button id="exportAllBtn">Export both banks (.json)</button>
+      <label><button id="importBtn">Import .json…</button><input type="file" id="importFile" accept=".json,application/json" hidden></label>
+    </div>
+    <div class="small muted">The library is stored in this browser. Export to a file to keep designs safe or to share them.</div>
+    <div id="library"></div>
+  </section>
+
+</main>
+
+<script>
+// ===== BEGIN ZPLANE CORE =====
+// A line-for-line JavaScript copy of zplane.h and bank.h. Comments are short
+// here; the long explanations live in the C++ files and README.md.
+// tools/check_web.js runs this block in Node and compares it with the C++.
+const ZP = (() => {
+  const f = Math.fround;                   // round to 32-bit float, like C++ "float"
+  const kSampleRate = 48000;
+  const kMaxSections = 8, kNumSlots = 6, kNumBanks = 2;
+  const kMaxFreqFraction = 0.45, kMinFreqHz = 10;
+  const kMaxPoleRadius = 0.9995, kResonanceGain = 15;
+  const kZeroPair = 0, kZeroReal = 1;
+
+  // Frequency (Hz) → angle on the unit circle, clamped like the firmware.
+  function hzToAngle(hz) {
+    if (hz < kMinFreqHz) hz = kMinFreqHz;
+    const maxHz = kMaxFreqFraction * kSampleRate;
+    if (hz > maxHz) hz = maxHz;
+    return 2 * Math.PI * hz / kSampleRate;
+  }
+
+  // Pole pair for the current cutoff & resonance: θ = ratio·θc, r = e^(−θ·d).
+  function placePole(s, cutoffHz, res) {
+    const theta = hzToAngle(cutoffHz * s.poleRatio);
+    const d = s.poleDamp / (1 + kResonanceGain * s.resWeight * res * res);
+    let r = Math.exp(-theta * d);
+    if (r > kMaxPoleRadius) r = kMaxPoleRadius;
+    return { r, theta };
+  }
+
+  // Numerator [n0, n1, n2] for the section's zeros.
+  function placeZeros(s, cutoffHz) {
+    if (s.zeroMode === kZeroPair) {
+      const th = hzToAngle(cutoffHz * s.zeroA);
+      const r = Math.exp(-th * s.zeroB);
+      return [1, -2 * r * Math.cos(th), r * r];
+    }
+    return [1, -(s.zeroA + s.zeroB), s.zeroA * s.zeroB];
+  }
+
+  function probe(w) {
+    const c1 = Math.cos(w), s1 = Math.sin(w);
+    return { c1, s1, c2: 2 * c1 * c1 - 1, s2: 2 * s1 * c1 };
+  }
+  function polyMagSq(c0, c1, c2, p) {
+    const re = c0 + c1 * p.c1 + c2 * p.c2;
+    const im = -(c1 * p.s1 + c2 * p.s2);
+    return re * re + im * im;
+  }
+  function magSq(q, p) {
+    const num = polyMagSq(q.b0, q.b1, q.b2, p);
+    const den = polyMagSq(1, q.a1, q.a2, p);
+    return num / (den > 1e-30 ? den : 1e-30);
+  }
+
+  // The heart of it: the filter a fraction t of the way from slot A to slot B.
+  function designBetween(A, B, t, cutoffHz, res, numRun) {
+    numRun = Math.max(0, Math.min(kMaxSections, numRun));
+    const out = { numSections: numRun, sec: [], poleTheta: [], poles: [], makeup: 1 };
+    for (let s = 0; s < numRun; s++) {
+      const hasA = s < A.numSections, hasB = s < B.numSections;
+      if (!hasA && !hasB) {
+        out.sec.push({ b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 }); out.poleTheta.push(-1); out.poles.push(null);
+        continue;
+      }
+      const pa = hasA ? placePole(A.sec[s], cutoffHz, res) : { r: 0, theta: 0 };
+      const pb = hasB ? placePole(B.sec[s], cutoffHz, res) : { r: 0, theta: 0 };
+      if (!hasA) pa.theta = pb.theta;
+      if (!hasB) pb.theta = pa.theta;
+      const r = pa.r + (pb.r - pa.r) * t;                       // radius: linear  → always stable
+      const theta = pa.theta * Math.pow(pb.theta / pa.theta, t); // angle: geometric → log-frequency
+      const q = { a1: -2 * r * Math.cos(theta), a2: r * r };
+      const na = hasA ? placeZeros(A.sec[s], cutoffHz) : [1, 0, 0];
+      const nb = hasB ? placeZeros(B.sec[s], cutoffHz) : [1, 0, 0];
+      q.b0 = na[0] + (nb[0] - na[0]) * t;                        // zeros: blend coefficients
+      q.b1 = na[1] + (nb[1] - na[1]) * t;
+      q.b2 = na[2] + (nb[2] - na[2]) * t;
+      // Normalise the section so its loudest point (DC, Nyquist or pole) is 1.
+      let peak = magSq(q, probe(0));
+      const mNyq = magSq(q, probe(Math.PI)); if (mNyq > peak) peak = mNyq;
+      const mPol = magSq(q, probe(theta));   if (mPol > peak) peak = mPol;
+      const g = 1 / Math.sqrt(peak > 1e-12 ? peak : 1e-12);
+      q.b0 *= g; q.b1 *= g; q.b2 *= g;
+      out.sec.push(q); out.poleTheta.push(theta); out.poles.push({ r, theta });
+    }
+    // Makeup gain: constant peak, plus up to +12 dB for "peaky" resonant shapes.
+    let totalPeak = 0, body = 0;
+    for (let k = -2; k < numRun; k++) {
+      let w;
+      if (k === -2) w = 0; else if (k === -1) w = Math.PI;
+      else if (out.poleTheta[k] < 0) continue; else w = out.poleTheta[k];
+      const p = probe(w);
+      let mag = 1;
+      for (let s = 0; s < numRun; s++) mag *= magSq(out.sec[s], p);
+      if (mag > totalPeak) totalPeak = mag;
+      if (k < 0 && mag > body) body = mag;
+    }
+    totalPeak = Math.sqrt(totalPeak); body = Math.sqrt(body);
+    const safePeak = totalPeak > 1e-4 ? totalPeak : 1e-4;
+    let peakiness = 1 - body / safePeak; if (peakiness < 0) peakiness = 0;
+    let makeup = (1 + 3 * res * peakiness) / safePeak;
+    if (makeup > 200) makeup = 200;
+    out.makeup = makeup;
+    return out;
+  }
+
+  function sectionsNeeded(bank) {
+    let n = 0;
+    for (let i = 0; i < bank.numSlots && i < kNumSlots; i++) n = Math.max(n, bank.slots[i].numSections);
+    return n;
+  }
+
+  function designMorph(bank, cutoffHz, morph, res) {
+    const n = Math.max(1, Math.min(kNumSlots, bank.numSlots));
+    let m = Math.max(0, Math.min(n - 1, morph));
+    let i = Math.floor(m); if (i > n - 2) i = n - 2; if (i < 0) i = 0;
+    const j = n > 1 ? i + 1 : i, t = n > 1 ? m - i : 0;
+    return designBetween(bank.slots[i], bank.slots[j], t, cutoffHz, res, sectionsNeeded(bank));
+  }
+
+  function responseDb(d, hz) {
+    const p = probe(2 * Math.PI * hz / kSampleRate);
+    let m = d.makeup * d.makeup;
+    for (let s = 0; s < d.numSections; s++) m *= magSq(d.sec[s], p);
+    return 10 * Math.log10(m + 1e-20);
+  }
+
+  // ---- Presets (bank.h). Math.fround everywhere C++ uses float, so the
+  // numbers come out bit-for-bit identical to the firmware's.
+  function poleQ(ratio, q, resWeight) {
+    ratio = f(ratio); q = f(q);
+    const k = f(Math.sqrt(f(1 - f(1 / f(f(4 * q) * q)))));
+    return { poleRatio: f(ratio * k), poleDamp: f(1 / f(f(2 * q) * k)), resWeight: f(resWeight),
+             zeroMode: kZeroReal, zeroA: 0, zeroB: 0 };
+  }
+  const lowZeros  = s => Object.assign(s, { zeroMode: kZeroReal, zeroA: -1, zeroB: -1 });
+  const highZeros = s => Object.assign(s, { zeroMode: kZeroReal, zeroA: 1, zeroB: 1 });
+  const bandZeros = s => Object.assign(s, { zeroMode: kZeroReal, zeroA: 1, zeroB: -1 });
+  const notchAt   = (s, ratio) => Object.assign(s, { zeroMode: kZeroPair, zeroA: f(ratio), zeroB: 0 });
+  const defaultSection = () => poleQ(1, 0.707, 0);
+
+  function makeSlot(name, secs) {
+    const sec = [];
+    for (let i = 0; i < kMaxSections; i++) sec.push(i < secs.length ? secs[i] : defaultSection());
+    return { name, numSections: secs.length, sec };
+  }
+  const kVowelRef = 800;
+  const vowel = (name, f1, f2, f3) => makeSlot(name, [
+    poleQ(f(f1 / kVowelRef), 4, 0.25), poleQ(f(f2 / kVowelRef), 6, 0.25), poleQ(f(f3 / kVowelRef), 8, 0.25)]);
+
+  function factoryBank(b) {
+    if (b === 0) return { numSlots: kNumSlots, slots: [
+      makeSlot("Lowpass 6-pole", [lowZeros(poleQ(1, 0.518, 0)), lowZeros(poleQ(1, 0.707, 0)), lowZeros(poleQ(1, 1.932, 0.8))]),
+      makeSlot("Bandpass", [bandZeros(poleQ(0.8, 0.9, 0)), bandZeros(poleQ(1.25, 0.9, 0)), bandZeros(poleQ(1, 1.5, 1))]),
+      makeSlot("Highpass 6-pole", [highZeros(poleQ(1, 0.518, 0)), highZeros(poleQ(1, 0.707, 0)), highZeros(poleQ(1, 1.932, 0.8))]),
+      makeSlot("Triple notch", [notchAt(poleQ(0.7, 3, 0), 0.7), notchAt(poleQ(1, 1.5, 0.55), 1), notchAt(poleQ(1.4, 3, 0), 1.4)]),
+      makeSlot("Twin peaks", [poleQ(0.5, 4, 0.3), notchAt(poleQ(1, 2, 0.2), 1), highZeros(poleQ(2, 4, 0.3))]),
+      makeSlot("Quad notch", [notchAt(poleQ(0.5, 1.2, 0.3), 0.5), notchAt(poleQ(0.8, 1.2, 0.3), 0.8),
+                              notchAt(poleQ(1.3, 1.2, 0.3), 1.3), notchAt(poleQ(2, 1.2, 0.3), 2)]),
+    ] };
+    return { numSlots: kNumSlots, slots: [
+      vowel("A (father)", 730, 1090, 2440), vowel("E (bed)", 530, 1840, 2480), vowel("I (beet)", 270, 2290, 3010),
+      vowel("O (bought)", 570, 840, 2410), vowel("U (boot)", 300, 870, 2240), vowel("ER (bird)", 490, 1350, 1690),
+    ] };
+  }
+
+  // ---- Data hygiene, mirroring sanitize() in zplane.h.
+  function clampf(x, lo, hi, fallback) {
+    if (!(x === x) || typeof x !== "number") return fallback;
+    return x < lo ? lo : (x > hi ? hi : x);
+  }
+  function sanitizeSlot(s) {
+    s.numSections = Math.max(0, Math.min(kMaxSections, s.numSections | 0));
+    while (s.sec.length < kMaxSections) s.sec.push(defaultSection());
+    s.sec.length = kMaxSections;
+    for (const d of s.sec) {
+      d.poleRatio = clampf(d.poleRatio, 0.001, 1000, 1);
+      d.poleDamp = clampf(d.poleDamp, 0.0001, 20, 0.7);
+      d.resWeight = clampf(d.resWeight, 0, 1, 0);
+      d.zeroMode = d.zeroMode === kZeroPair ? kZeroPair : kZeroReal;
+      if (d.zeroMode === kZeroPair) { d.zeroA = clampf(d.zeroA, 0.001, 1000, 1); d.zeroB = clampf(d.zeroB, 0, 50, 0); }
+      else { d.zeroA = clampf(d.zeroA, -1, 1, 0); d.zeroB = clampf(d.zeroB, -1, 1, 0); }
+    }
+    return s;
+  }
+
+  // ---- SysEx encoding (bank.h): each float as 5 × 7-bit pieces of its bits.
+  const kFloatBytes = 5, kSectionBytes = 5 * kFloatBytes + 1, kSlotBytes = 1 + kMaxSections * kSectionBytes;
+  const dv = new DataView(new ArrayBuffer(4));
+  function putFloat(x, out) {
+    dv.setFloat32(0, x, true);
+    const u = dv.getUint32(0, true);
+    for (let i = 0; i < kFloatBytes; i++) out.push(Math.floor(u / Math.pow(2, 7 * i)) & 0x7F);
+  }
+  function getFloat(bytes, at) {
+    let u = 0;
+    for (let i = 0; i < kFloatBytes; i++) u += (bytes[at + i] & 0x7F) * Math.pow(2, 7 * i);
+    dv.setUint32(0, u >>> 0, true);
+    return dv.getFloat32(0, true);
+  }
+  function encodeSlot(s) {
+    const out = [s.numSections & 0x7F];
+    for (let i = 0; i < kMaxSections; i++) {
+      const d = s.sec[i];
+      putFloat(d.poleRatio, out); putFloat(d.poleDamp, out); putFloat(d.resWeight, out);
+      putFloat(d.zeroA, out); putFloat(d.zeroB, out);
+      out.push(d.zeroMode & 0x7F);
+    }
+    return out;
+  }
+  function decodeSlot(bytes, at, name) {
+    const s = { name: name || "", numSections: bytes[at], sec: [] };
+    let p = at + 1;
+    for (let i = 0; i < kMaxSections; i++) {
+      const d = {};
+      d.poleRatio = getFloat(bytes, p); p += kFloatBytes;
+      d.poleDamp = getFloat(bytes, p); p += kFloatBytes;
+      d.resWeight = getFloat(bytes, p); p += kFloatBytes;
+      d.zeroA = getFloat(bytes, p); p += kFloatBytes;
+      d.zeroB = getFloat(bytes, p); p += kFloatBytes;
+      d.zeroMode = bytes[p++];
+      s.sec.push(d);
+    }
+    return sanitizeSlot(s);
+  }
+
+  return { kSampleRate, kMaxSections, kNumSlots, kNumBanks, kMaxFreqFraction, kMinFreqHz, kMaxPoleRadius,
+           kResonanceGain, kZeroPair, kZeroReal, kSlotBytes,
+           hzToAngle, placePole, placeZeros, designBetween, designMorph, sectionsNeeded, responseDb,
+           poleQ, defaultSection, factoryBank, sanitizeSlot, encodeSlot, decodeSlot };
+})();
+// ===== END ZPLANE CORE =====
+</script>
+
+<script>
+"use strict";
+// ===========================================================================
+//  Small helpers
+// ===========================================================================
+const $ = id => document.getElementById(id);
+const clone = o => JSON.parse(JSON.stringify(o));
+const COLORS = ["#ff6b6b", "#ffb547", "#f5e663", "#5fd38d", "#5cc8ff", "#8f8cff", "#e07bff", "#ff8fb1"];
+const store = {   // localStorage can throw (private mode etc.) — never let that break the page
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+function log(msg) {
+  const el = $("log");
+  el.textContent += (el.textContent ? "\n" : "") + new Date().toLocaleTimeString() + "  " + msg;
+  el.scrollTop = el.scrollHeight;
+}
+const fmtHz = hz => hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 1 : 2) + " kHz" : hz.toFixed(0) + " Hz";
+
+// ===========================================================================
+//  State
+// ===========================================================================
+const state = {
+  banks: [ZP.factoryBank(0), ZP.factoryBank(1)],
+  bank: 0,                       // which bank tab is shown
+  editor: null,                  // the design being edited (a slot object)
+  editingSlot: -1,               // which slot of the shown bank it came from (-1 = none)
+  selected: 0,                   // selected section
+  cutoff: 2000, res: 0,          // preview "knobs"
+  morph: 0, zoom: 1,
+};
+const saved = store.get("zedsdead.state", null);
+if (saved && saved.banks && saved.banks.length === 2) {
+  try {
+    state.banks = saved.banks.map(b => ({ numSlots: Math.max(1, Math.min(6, b.numSlots | 0)),
+                                          slots: b.slots.map(s => ZP.sanitizeSlot(s)) }));
+    if (saved.editor) state.editor = ZP.sanitizeSlot(saved.editor);
+    state.bank = saved.bank === 1 ? 1 : 0;
+    state.editingSlot = saved.editingSlot | 0;
+  } catch { state.banks = [ZP.factoryBank(0), ZP.factoryBank(1)]; }
+}
+if (!state.editor) { state.editor = clone(state.banks[0].slots[0]); state.editingSlot = 0; }
+function persist() { store.set("zedsdead.state", { banks: state.banks, editor: state.editor, bank: state.bank, editingSlot: state.editingSlot }); }
+
+// ===========================================================================
+//  Card: USB-MIDI SysEx (see the protocol table at the top of main.cpp)
+// ===========================================================================
+const Card = {
+  midi: null, input: null, output: null, connected: false, info: null, status: {}, waiters: [],
+  MSG: { HELLO: 1, GET_SLOT: 2, SET_SLOT: 3, SET_NUMSLOTS: 4, PREVIEW: 5, SAVE: 6, STATUS: 7, FACTORY: 8, REVERT: 9 },
+
+  async connect() {
+    if (!navigator.requestMIDIAccess) { log("This browser has no WebMIDI. Please use Chrome or Edge."); return; }
+    try { this.midi = await navigator.requestMIDIAccess({ sysex: true }); }
+    catch (e) { log("MIDI access refused: " + e.message); return; }
+    this.midi.onstatechange = () => this.bind();
+    this.bind();
+  },
+
+  bind() {
+    const find = ports => [...ports.values()].find(p => p.name && p.name.includes("MTMComputer") && p.state === "connected");
+    const input = find(this.midi.inputs), output = find(this.midi.outputs);
+    if (input && output) {
+      if (this.input === input && this.output === output && this.connected) return;
+      this.input = input; this.output = output;
+      input.onmidimessage = e => this.receive(e.data);
+      this.hello();
+    } else if (this.connected || !input) {
+      if (this.connected) log("Card disconnected.");
+      this.connected = false; this.info = null; this.input = this.output = null;
+      UI.cardChanged();
+      if (!input) log("Waiting for a Workshop Computer (MTMComputer) on USB…");
+    }
+  },
+
+  async hello() {
+    const r = await this.request([this.MSG.HELLO], m => m[0] === 0x41, 1000);
+    if (!r) { log("A Workshop Computer is connected, but it is not running Zeds Dead (no reply)."); return; }
+    this.info = { version: `${r[1]}.${r[2]}.${r[3]}`, maxSections: r[4], numSlots: r[5], numBanks: r[6],
+                  clockMHz: r[7] | (r[8] << 7), cyclesPerSample: r[9] | (r[10] << 7), calibrated: !!r[11], flashLoaded: !!r[12] };
+    this.connected = true;
+    log(`Connected: Zeds Dead firmware ${this.info.version}, ${this.info.clockMHz} MHz, banks ${this.info.flashLoaded ? "from flash" : "factory (nothing saved yet)"}.`);
+    UI.cardChanged();
+  },
+
+  send(bytes) {
+    if (!this.output) return;
+    for (const b of bytes) if (!(b >= 0 && b <= 127)) throw new Error("SysEx data byte out of range: " + b);
+    this.output.send([0xF0, 0x7D, ...bytes, 0xF7]);
+  },
+
+  // Send a message and wait for the reply that `match` recognises.
+  request(bytes, match, timeoutMs = 600) {
+    return new Promise(resolve => {
+      const w = { match, resolve, timer: setTimeout(() => { this.waiters = this.waiters.filter(x => x !== w); resolve(null); }, timeoutMs) };
+      this.waiters.push(w);
+      try { this.send(bytes); } catch (e) { log(e.message); }
+    });
+  },
+
+  receive(data) {
+    if (data.length < 4 || data[0] !== 0xF0 || data[1] !== 0x7D || data[data.length - 1] !== 0xF7) return;
+    const m = Array.from(data.slice(2, data.length - 1));
+    if (m[0] === 0x47) {           // status, part 1: CPU
+      Object.assign(this.status, { cpu: (m[1] | (m[2] << 7)) / 10, cpuPeak: (m[3] | (m[4] << 7)) / 10,
+                                   rate: m[5] | (m[6] << 7), running: m[7] });
+    } else if (m[0] === 0x67) {    // status, part 2: knobs
+      Object.assign(this.status, { bank: m[1], morph: (m[2] | (m[3] << 7)) / 1000, cutoff: (m[4] | (m[5] << 7)) * 2,
+                                   res: m[6] / 127, spread: m[7], preview: !!m[8], lvlL: m[9], lvlR: m[10],
+                                   numSlots: m[11], calibrated: !!m[12] });
+      UI.statusChanged();
+    }
+    const i = this.waiters.findIndex(w => w.match(m));
+    if (i >= 0) { const w = this.waiters.splice(i, 1)[0]; clearTimeout(w.timer); w.resolve(m); }
+  },
+
+  async readBank(b) {
+    const bank = { numSlots: 6, slots: [] };
+    for (let s = 0; s < ZP.kNumSlots; s++) {
+      const r = await this.request([this.MSG.GET_SLOT, b, s], m => m[0] === 0x42 && m[1] === b && m[2] === s);
+      if (!r) return null;
+      bank.numSlots = r[3];
+      bank.slots.push(ZP.decodeSlot(r, 4, state.banks[b].slots[s].name || `Slot ${s + 1}`));
+    }
+    return bank;
+  },
+  async sendSlot(b, s, slot) {
+    return !!(await this.request([this.MSG.SET_SLOT, b, s, ...ZP.encodeSlot(slot)], m => m[0] === 0x43 && m[1] === b && m[2] === s));
+  },
+  async sendNumSlots(b, n) {
+    return !!(await this.request([this.MSG.SET_NUMSLOTS, b, n], m => m[0] === 0x44 && m[1] === b));
+  },
+  async sendBank(b) {
+    for (let s = 0; s < ZP.kNumSlots; s++) if (!(await this.sendSlot(b, s, state.banks[b].slots[s]))) return false;
+    return this.sendNumSlots(b, state.banks[b].numSlots);
+  },
+  preview(slot) { if (this.connected) this.send(slot ? [this.MSG.PREVIEW, 1, ...ZP.encodeSlot(slot)] : [this.MSG.PREVIEW, 0]); },
+  pollStatus() { if (this.connected) this.send([this.MSG.STATUS]); },
+};
+
+// ===========================================================================
+//  Geometry: converting between stored values and z-plane positions
+// ===========================================================================
+// Everything is stored relative to the cutoff; the z-plane shows positions at
+// the preview cutoff & resonance, so moving a handle converts back.
+const Geo = {
+  thetaC: () => ZP.hzToAngle(state.cutoff),
+  maxTheta: () => ZP.hzToAngle(1e9),        // 0.45 × 2π
+  minTheta: () => ZP.hzToAngle(0),          // 10 Hz
+  resFactor: s => 1 + ZP.kResonanceGain * s.resWeight * state.res * state.res,
+  pole(s) { return ZP.placePole(s, state.cutoff, state.res); },
+  setPole(s, r, theta) {
+    theta = Math.max(Geo.minTheta(), Math.min(Geo.maxTheta(), theta));
+    r = Math.max(0.0005, Math.min(ZP.kMaxPoleRadius, r));
+    s.poleRatio = theta / Geo.thetaC();
+    s.poleDamp = Math.max(0.0001, -Math.log(r) / theta * Geo.resFactor(s));
+  },
+  zeroPair(s) { const th = ZP.hzToAngle(state.cutoff * s.zeroA); return { r: Math.exp(-th * s.zeroB), theta: th }; },
+  setZeroPair(s, r, theta) {
+    theta = Math.max(Geo.minTheta(), Math.min(Geo.maxTheta(), theta));
+    r = Math.max(0.001, Math.min(1, r));
+    s.zeroA = theta / Geo.thetaC();
+    s.zeroB = -Math.log(r) / theta;
+  },
+};
+// Musician-friendly numbers for a pole. A pole at angle θ with damping d
+// (r = e^(−θd)) is the sampled version of an analogue pole s = −σ ± jω with
+// σ = θd and ω = θ (per sample). The analogue resonance then has
+//   natural frequency  ω0 = √(σ² + ω²) = θ·√(1 + d²)
+//   quality factor      Q = ω0 / (2σ)   = √(1 + d²) / (2d)
+// and going back:  d = 1/√(4Q² − 1),  θ = ω0 / √(1 + d²).  (Q > 0.5 always.)
+// These use the stored damping, i.e. the Q with the Resonance knob at zero.
+const qOf = s => Math.sqrt(1 + s.poleDamp * s.poleDamp) / (2 * s.poleDamp);
+const naturalHz = s => { const p = ZP.placePole(s, state.cutoff, 0); return p.theta * Math.sqrt(1 + s.poleDamp * s.poleDamp) * ZP.kSampleRate / (2 * Math.PI); };
+function setNatural(s, hz, q) {
+  q = Math.max(0.501, q);
+  s.poleDamp = 1 / Math.sqrt(4 * q * q - 1);
+  let theta = (2 * Math.PI * hz / ZP.kSampleRate) / Math.sqrt(1 + s.poleDamp * s.poleDamp);
+  theta = Math.max(Geo.minTheta(), Math.min(Geo.maxTheta(), theta));
+  s.poleRatio = theta / Geo.thetaC();
+}
+const zeroKind = s => {
+  if (s.zeroMode === ZP.kZeroPair) return "pair";
+  const a = s.zeroA, b = s.zeroB;
+  if (a === -1 && b === -1) return "low";
+  if (a === 1 && b === 1) return "high";
+  if ((a === 1 && b === -1) || (a === -1 && b === 1)) return "band";
+  if (a === 0 && b === 0) return "none";
+  return "real";
+};
+
+// ===========================================================================
+//  Canvas helpers
+// ===========================================================================
+function setupCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, rect = cv.getBoundingClientRect();
+  const w = Math.max(10, Math.round(rect.width * dpr)), h = Math.max(10, Math.round(rect.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: rect.width, h: rect.height };
+}
+
+// Frequency-response axes shared by the plots.
+function drawResponseAxes(ctx, w, h, opts) {
+  const { fLo, fHi, dbLo, dbHi, L, B, labels } = opts;
+  ctx.font = "11px system-ui, sans-serif"; ctx.lineWidth = 1;
+  const X = hz => L + (w - L - 6) * Math.log(hz / fLo) / Math.log(fHi / fLo);
+  const Y = db => 6 + (h - 6 - B) * (dbHi - Math.max(dbLo, Math.min(dbHi, db))) / (dbHi - dbLo);
+  for (const hz of [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) {
+    if (hz < fLo || hz > fHi) continue;
+    ctx.strokeStyle = "#262b34"; ctx.beginPath(); ctx.moveTo(X(hz), 6); ctx.lineTo(X(hz), h - B); ctx.stroke();
+    if (labels) { ctx.fillStyle = "#7d8696"; ctx.textAlign = "center"; ctx.fillText(hz >= 1000 ? hz / 1000 + "k" : hz, X(hz), h - B + 13); }
+  }
+  for (let db = Math.ceil(dbLo / 12) * 12; db <= dbHi; db += 12) {
+    ctx.strokeStyle = db === 0 ? "#3a414e" : "#262b34"; ctx.beginPath(); ctx.moveTo(L, Y(db)); ctx.lineTo(w - 6, Y(db)); ctx.stroke();
+    if (labels) { ctx.fillStyle = "#7d8696"; ctx.textAlign = "right"; ctx.fillText((db > 0 ? "+" : "") + db, L - 4, Y(db) + 4); }
+  }
+  return { X, Y };
+}
+function drawCurve(ctx, X, Y, design, fLo, fHi, color, width, alpha = 1) {
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.globalAlpha = alpha; ctx.beginPath();
+  for (let hz = fLo, first = true; hz <= fHi * 1.0001; hz *= 1.02, first = false) {
+    const x = X(hz), y = Y(ZP.responseDb(design, hz));
+    first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+// ===========================================================================
+//  The z-plane view
+// ===========================================================================
+const ZView = {
+  drag: null, hover: null,
+  // World rectangle shown for each zoom level (zooming in around z = 1, where
+  // low and mid frequencies live).
+  rect() {
+    const k = state.zoom;
+    if (k === 1) return { x0: -1.15, x1: 1.15, y0: -1.15, y1: 1.15 };
+    const size = 2.3 / k, x1 = 1 + 0.15 / k;
+    return { x0: x1 - size, x1, y0: -0.2 * size, y1: 0.8 * size };
+  },
+  toScreen(x, y, w, h) { const r = this.rect(); return [(x - r.x0) / (r.x1 - r.x0) * w, (r.y1 - y) / (r.y1 - r.y0) * h]; },
+  toWorld(px, py, w, h) { const r = this.rect(); return [r.x0 + px / w * (r.x1 - r.x0), r.y1 - py / h * (r.y1 - r.y0)]; },
+
+  // Every draggable handle: {kind, sec, idx, x, y}
+  handles() {
+    const ed = state.editor, list = [];
+    for (let s = 0; s < ed.numSections; s++) {
+      const d = ed.sec[s], p = Geo.pole(d);
+      list.push({ kind: "pole", sec: s, x: p.r * Math.cos(p.theta), y: p.r * Math.sin(p.theta) });
+      if (d.zeroMode === ZP.kZeroPair) {
+        const z = Geo.zeroPair(d);
+        list.push({ kind: "zpair", sec: s, x: z.r * Math.cos(z.theta), y: z.r * Math.sin(z.theta) });
+      } else {
+        list.push({ kind: "zreal", sec: s, idx: 0, x: d.zeroA, y: 0 });
+        list.push({ kind: "zreal", sec: s, idx: 1, x: d.zeroB, y: 0 });
+      }
+    }
+    return list;
+  },
+
+  draw() {
+    const cv = $("zplane"), { ctx, w, h } = setupCanvas(cv);
+    ctx.clearRect(0, 0, w, h);
+    const S = (x, y) => this.toScreen(x, y, w, h);
+    const [ox, oy] = S(0, 0), [ux] = S(1, 0), R = ux - ox;
+
+    // Frequency spokes, labelled in Hz at the preview cutoff's sample rate.
+    ctx.font = "11px system-ui, sans-serif"; ctx.lineWidth = 1;
+    let lastLabel = null;
+    for (const hz of [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20]) {
+      const th = 2 * Math.PI * hz / ZP.kSampleRate;
+      const [ex, ey] = S(Math.cos(th) * 1.08, Math.sin(th) * 1.08);
+      ctx.strokeStyle = "#232831"; ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ex, ey); ctx.stroke();
+      // Skip labels that would crowd into the previous one (near DC).
+      if (lastLabel && Math.hypot(ex - lastLabel[0], ey - lastLabel[1]) < 34) continue;
+      ctx.fillStyle = "#6c7585"; ctx.textAlign = "center"; ctx.fillText(fmtHz(hz), ex, ey - 2);
+      lastLabel = [ex, ey];
+    }
+    // Radius rings and the unit circle.
+    for (const r of [0.25, 0.5, 0.75, 0.9]) { ctx.strokeStyle = "#20252d"; ctx.beginPath(); ctx.arc(ox, oy, r * R, 0, 2 * Math.PI); ctx.stroke(); }
+    ctx.strokeStyle = "#5a6372"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(ox, oy, R, 0, 2 * Math.PI); ctx.stroke();
+    ctx.strokeStyle = "#3a414e"; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(...S(-1.2, 0)); ctx.lineTo(...S(1.2, 0)); ctx.moveTo(...S(0, -1.2)); ctx.lineTo(...S(0, 1.2)); ctx.stroke();
+    // The cutoff angle.
+    const tc = Geo.thetaC();
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = "#ffb54788";
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(...S(Math.cos(tc) * 1.15, Math.sin(tc) * 1.15)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#ffb547"; ctx.textAlign = "right"; ctx.fillText("cutoff", ...S(Math.cos(tc) * 0.7, Math.sin(tc) * 0.7 + 0.03));
+    ctx.fillStyle = "#6c7585"; ctx.fillText("DC", ...S(1.03, -0.06)); ctx.textAlign = "right"; ctx.fillText("Nyquist", ...S(-1.03, -0.06));
+
+    // Poles and zeros (mirror images faint).
+    const hs = this.handles();
+    for (const hd of hs) {
+      const col = COLORS[hd.sec % COLORS.length], sel = hd.sec === state.selected;
+      for (const mirror of [true, false]) {
+        if (mirror && hd.kind === "zreal") continue;
+        const [px, py] = S(hd.x, mirror ? -hd.y : hd.y);
+        ctx.globalAlpha = mirror ? 0.3 : 1; ctx.strokeStyle = col; ctx.lineWidth = sel && !mirror ? 3 : 2;
+        const sz = sel && !mirror ? 8 : 6;
+        ctx.beginPath();
+        if (hd.kind === "pole") { ctx.moveTo(px - sz, py - sz); ctx.lineTo(px + sz, py + sz); ctx.moveTo(px + sz, py - sz); ctx.lineTo(px - sz, py + sz); }
+        else ctx.arc(px, py, sz, 0, 2 * Math.PI);
+        ctx.stroke();
+        if (this.hover === hd && !mirror) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(px, py, sz + 5, 0, 2 * Math.PI); ctx.stroke(); }
+      }
+      ctx.globalAlpha = 1;
+    }
+    // Readout for the handle being dragged.
+    const hd = this.drag && this.drag.handle;
+    if (hd) {
+      const r = Math.hypot(hd.x, hd.y), th = Math.atan2(hd.y, hd.x);
+      ctx.fillStyle = "#e6e8ec"; ctx.textAlign = "left"; ctx.font = "12px system-ui, sans-serif";
+      const txt = hd.kind === "zreal" ? `zero at ${hd.x.toFixed(3)}` : `${fmtHz(th * ZP.kSampleRate / (2 * Math.PI))}, radius ${r.toFixed(4)}`;
+      ctx.fillText(txt, 8, h - 10);
+    }
+  },
+
+  pick(px, py, w, h) {
+    let best = null, bestD = 14;
+    for (const hd of this.handles()) {
+      for (const sgn of hd.kind === "zreal" ? [1] : [1, -1]) {
+        const [sx, sy] = this.toScreen(hd.x, sgn * hd.y, w, h);
+        const d = Math.hypot(sx - px, sy - py);
+        if (d < bestD) { bestD = d; best = hd; }
+      }
+    }
+    return best;
+  },
+
+  moveTo(hd, x, y) {
+    const d = state.editor.sec[hd.sec];
+    if (hd.kind === "zreal") {
+      x = Math.max(-1, Math.min(1, x));
+      if (Math.abs(x - 1) < 0.02) x = 1; if (Math.abs(x + 1) < 0.02) x = -1; if (Math.abs(x) < 0.02) x = 0;
+      if (hd.idx === 0) d.zeroA = x; else d.zeroB = x;
+      hd.x = x; return;
+    }
+    y = Math.abs(y);                               // either half: we edit the upper one
+    let r = Math.hypot(x, y), th = Math.atan2(y, x);
+    if (hd.kind === "pole") { Geo.setPole(d, r, th); const p = Geo.pole(d); hd.x = p.r * Math.cos(p.theta); hd.y = p.r * Math.sin(p.theta); }
+    else {
+      if (Math.abs(r - 1) < 0.015 || r > 1) r = 1;   // snap onto the unit circle: a perfect notch
+      Geo.setZeroPair(d, r, th); const z = Geo.zeroPair(d); hd.x = z.r * Math.cos(z.theta); hd.y = z.r * Math.sin(z.theta);
+    }
+  },
+
+  init() {
+    const cv = $("zplane");
+    const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top, r.width, r.height]; };
+    cv.addEventListener("pointerdown", e => {
+      const [px, py, w, h] = pos(e), hd = this.pick(px, py, w, h);
+      if (!hd) return;
+      state.selected = hd.sec;
+      this.drag = { handle: hd };
+      cv.setPointerCapture(e.pointerId);
+      UI.refreshTable(true); UI.render();
+    });
+    cv.addEventListener("pointermove", e => {
+      const [px, py, w, h] = pos(e);
+      if (this.drag) {
+        const [x, y] = this.toWorld(px, py, w, h);
+        this.moveTo(this.drag.handle, x, y);
+        UI.editorChanged();
+      } else {
+        const hv = this.pick(px, py, w, h);
+        if (hv !== this.hover && (!hv || !this.hover || hv.kind !== this.hover.kind || hv.sec !== this.hover.sec || hv.idx !== this.hover.idx)) { this.hover = hv; UI.render(); }
+        cv.style.cursor = hv ? "grab" : "crosshair";
+      }
+    });
+    const end = () => { if (this.drag) { this.drag = null; UI.editorChanged(true); } };
+    cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
+  },
+};
+
+// ===========================================================================
+//  The rest of the UI
+// ===========================================================================
+const UI = {
+  pending: false,
+  render() {
+    if (this.pending) return;
+    this.pending = true;
+    requestAnimationFrame(() => { this.pending = false; this.draw(); });
+  },
+  draw() {
+    ZView.draw();
+    this.drawResponse();
+    this.drawSlots();
+    this.drawMorph();
+    this.updateCpuEstimates();
+  },
+
+  // ---- Response of the design being edited
+  drawResponse() {
+    const { ctx, w, h } = setupCanvas($("resp"));
+    ctx.clearRect(0, 0, w, h);
+    const opts = { fLo: 20, fHi: 20000, dbLo: -60, dbHi: 24, L: 34, B: 18, labels: true };
+    const { X, Y } = drawResponseAxes(ctx, w, h, opts);
+    const ed = state.editor;
+    // Faint: each section on its own (unnormalised shape, normalised peak) for intuition.
+    for (let s = 0; s < ed.numSections; s++) {
+      const one = { numSections: 1, sec: [ed.sec[s]], name: "" };
+      const d = ZP.designBetween(one, one, 0, state.cutoff, state.res, 1);
+      d.makeup = 1;
+      drawCurve(ctx, X, Y, d, 20, 20000, COLORS[s % COLORS.length], 1, s === state.selected ? 0.7 : 0.25);
+    }
+    const d = ZP.designBetween(ed, ed, 0, state.cutoff, state.res, ed.numSections);
+    drawCurve(ctx, X, Y, d, 20, 20000, "#ffffff", 2.5);
+    ctx.strokeStyle = "#ffb54788"; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(X(state.cutoff), 6); ctx.lineTo(X(state.cutoff), h - 18); ctx.stroke(); ctx.setLineDash([]);
+  },
+
+  // ---- Slots of the current bank
+  buildSlots() {
+    const wrap = $("slots"); wrap.innerHTML = "";
+    for (let i = 0; i < ZP.kNumSlots; i++) {
+      const el = document.createElement("div");
+      el.className = "slot"; el.draggable = true; el.dataset.slot = i;
+      el.innerHTML = `<div class="small muted">Slot ${i + 1}</div><canvas></canvas>
+        <input class="name" type="text" maxlength="24">
+        <div class="btns"><button data-act="edit" title="Load into the editor">Edit</button><button data-act="store" title="Put the editor's design here">Store</button></div>`;
+      el.querySelector(".name").addEventListener("input", e => { state.banks[state.bank].slots[i].name = e.target.value; persist(); });
+      el.querySelector('[data-act="edit"]').onclick = () => this.editSlot(i);
+      el.querySelector('[data-act="store"]').onclick = () => this.storeSlot(i);
+      // Drag-and-drop: the editor's chip stores into the slot; a slot dropped on
+      // another slot swaps them.
+      el.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", "slot:" + i); });
+      el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("dropover"); });
+      el.addEventListener("dragleave", () => el.classList.remove("dropover"));
+      el.addEventListener("drop", e => {
+        e.preventDefault(); el.classList.remove("dropover");
+        const data = e.dataTransfer.getData("text/plain");
+        if (data === "design") this.storeSlot(i);
+        else if (data.startsWith("slot:")) this.swapSlots(+data.slice(5), i);
+      });
+      wrap.appendChild(el);
+    }
+  },
+  drawSlots() {
+    const bank = state.banks[state.bank];
+    document.querySelectorAll(".slot").forEach((el, i) => {
+      const slot = bank.slots[i];
+      el.classList.toggle("unused", i >= bank.numSlots);
+      el.classList.toggle("editing", i === state.editingSlot);
+      const name = el.querySelector(".name");
+      if (document.activeElement !== name) name.value = slot.name || "";
+      const { ctx, w, h } = setupCanvas(el.querySelector("canvas"));
+      ctx.clearRect(0, 0, w, h);
+      const opts = { fLo: 20, fHi: 20000, dbLo: -48, dbHi: 18, L: 2, B: 2, labels: false };
+      const { X, Y } = drawResponseAxes(ctx, w, h, opts);
+      const d = ZP.designBetween(slot, slot, 0, state.cutoff, state.res, slot.numSections);
+      drawCurve(ctx, X, Y, d, 20, 20000, "hsl(" + (210 - 40 * i) + ",80%,62%)", 1.8);
+      ctx.fillStyle = "#7d8696"; ctx.font = "10px system-ui, sans-serif"; ctx.textAlign = "right";
+      ctx.fillText(slot.numSections + " pair" + (slot.numSections === 1 ? "" : "s"), w - 4, 11);
+    });
+  },
+
+  // ---- Morph preview across the bank
+  drawMorph() {
+    const { ctx, w, h } = setupCanvas($("morphPlot"));
+    ctx.clearRect(0, 0, w, h);
+    const bank = state.banks[state.bank];
+    const opts = { fLo: 20, fHi: 20000, dbLo: -60, dbHi: 18, L: 34, B: 18, labels: true };
+    const { X, Y } = drawResponseAxes(ctx, w, h, opts);
+    for (let i = 0; i < bank.numSlots; i++) {
+      const d = ZP.designMorph(bank, state.cutoff, i, state.res);
+      drawCurve(ctx, X, Y, d, 20, 20000, "hsl(" + (210 - 40 * i) + ",80%,62%)", 1, 0.35);
+    }
+    const d = ZP.designMorph(bank, state.cutoff, state.morph, state.res);
+    drawCurve(ctx, X, Y, d, 20, 20000, "#ffffff", 2.5);
+    $("morphVal").textContent = `slot ${(state.morph + 1).toFixed(2)} of ${bank.numSlots}`;
+  },
+
+  // ---- CPU estimates. Rough model from the firmware's cycle budget: about
+  // 1000 cycles of fixed work plus ~500 per pole/zero pair (both channels),
+  // out of 4000 cycles per sample at 192 MHz. The card's own meter is the
+  // real answer; this just warns before you send something too heavy.
+  estimate(n) {
+    const per = (Card.info && Card.info.cyclesPerSample) || 4000;
+    return Math.round(100 * (1000 + 500 * n) / per);
+  },
+  updateCpuEstimates() {
+    const n = state.editor.numSections, e = this.estimate(n);
+    $("cpuEstimate").innerHTML = `≈${e}% audio load (estimate)` + (e > 90 ? ' <span class="warn">— may be too heavy</span>' : "");
+    const bank = state.banks[state.bank], nb = ZP.sectionsNeeded(bank), eb = this.estimate(nb);
+    $("bankCpu").innerHTML = `runs ${nb} pair${nb === 1 ? "" : "s"}, ≈${eb}% audio load (estimate)` + (eb > 90 ? ' <span class="warn">— may be too heavy</span>' : "");
+  },
+
+  // ---- Section table
+  tableBuiltFor: -1,
+  refreshTable(force) {
+    const ed = state.editor, tb = $("secTable").querySelector("tbody");
+    if (force || this.tableBuiltFor !== ed.numSections) {
+      this.tableBuiltFor = ed.numSections;
+      tb.innerHTML = "";
+      for (let s = 0; s < ed.numSections; s++) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td><span class="swatch" style="background:${COLORS[s % COLORS.length]}"></span></td>
+          <td><input type="number" data-f="hz" min="10" max="21600" step="1"></td>
+          <td><input type="number" data-f="q" min="0.51" max="2000" step="0.01" style="width:64px"></td>
+          <td><input type="range" data-f="rw" min="0" max="100" style="width:64px"></td>
+          <td><select data-f="zk"><option value="none">None</option><option value="low">Lowpass</option><option value="high">Highpass</option><option value="band">Bandpass</option><option value="pair">Notch / pair</option><option value="real">Real</option></select></td>
+          <td class="zv"></td>`;
+        tr.addEventListener("pointerdown", () => { if (state.selected !== s) { state.selected = s; this.refreshTable(); this.render(); } });
+        tr.querySelector('[data-f="hz"]').addEventListener("change", e => {
+          const d = ed.sec[s]; setNatural(d, Math.max(10, +e.target.value || 1000), qOf(d)); this.editorChanged(true); });
+        tr.querySelector('[data-f="q"]').addEventListener("change", e => {
+          const d = ed.sec[s]; setNatural(d, naturalHz(d), +e.target.value || 0.707); this.editorChanged(true); });
+        tr.querySelector('[data-f="rw"]').addEventListener("input", e => { ed.sec[s].resWeight = (+e.target.value) / 100; this.editorChanged(); });
+        tr.querySelector('[data-f="zk"]').addEventListener("change", e => { this.setZeroKind(ed.sec[s], e.target.value); this.refreshTable(true); this.editorChanged(true); });
+        tb.appendChild(tr);
+      }
+    }
+    // Update values (but never under the user's cursor).
+    [...tb.rows].forEach((tr, s) => {
+      const d = ed.sec[s], kind = zeroKind(d);
+      tr.classList.toggle("sel", s === state.selected);
+      const set = (sel, v) => { const el = tr.querySelector(sel); if (el && document.activeElement !== el) el.value = v; };
+      set('[data-f="hz"]', Math.round(naturalHz(d)));
+      set('[data-f="q"]', qOf(d).toFixed(qOf(d) < 10 ? 3 : 1));
+      set('[data-f="rw"]', Math.round(d.resWeight * 100));
+      set('[data-f="zk"]', kind);
+      const zv = tr.querySelector(".zv");
+      const want = kind === "pair" ? "pair" : kind === "real" ? "real" : "";
+      if (zv.dataset.kind !== want) {
+        zv.dataset.kind = want;
+        if (want === "pair") {
+          zv.innerHTML = `<input type="number" data-z="hz" min="10" max="21600" step="1" title="Zero frequency (Hz)"> Hz r <input type="number" data-z="r" min="0" max="1" step="0.01" style="width:64px" title="Radius: 1 = on the circle = perfect notch">`;
+          zv.querySelector('[data-z="hz"]').addEventListener("change", e => { const z = Geo.zeroPair(d); Geo.setZeroPair(d, z.r, 2 * Math.PI * (+e.target.value) / ZP.kSampleRate); this.editorChanged(true); });
+          zv.querySelector('[data-z="r"]').addEventListener("change", e => { const z = Geo.zeroPair(d); Geo.setZeroPair(d, +e.target.value, z.theta); this.editorChanged(true); });
+        } else if (want === "real") {
+          zv.innerHTML = `<input type="number" data-z="a" min="-1" max="1" step="0.01" style="width:64px"> , <input type="number" data-z="b" min="-1" max="1" step="0.01" style="width:64px">`;
+          zv.querySelector('[data-z="a"]').addEventListener("change", e => { d.zeroA = Math.max(-1, Math.min(1, +e.target.value || 0)); this.editorChanged(true); });
+          zv.querySelector('[data-z="b"]').addEventListener("change", e => { d.zeroB = Math.max(-1, Math.min(1, +e.target.value || 0)); this.editorChanged(true); });
+        } else zv.innerHTML = "";
+      }
+      if (want === "pair") { const z = Geo.zeroPair(d); set('[data-z="hz"]', Math.round(z.theta * ZP.kSampleRate / (2 * Math.PI))); set('[data-z="r"]', z.r.toFixed(3)); }
+      if (want === "real") { set('[data-z="a"]', (+d.zeroA).toFixed(3)); set('[data-z="b"]', (+d.zeroB).toFixed(3)); }
+    });
+  },
+  setZeroKind(d, kind) {
+    const p = Geo.pole(d);
+    switch (kind) {
+      case "none": Object.assign(d, { zeroMode: ZP.kZeroReal, zeroA: 0, zeroB: 0 }); break;
+      case "low":  Object.assign(d, { zeroMode: ZP.kZeroReal, zeroA: -1, zeroB: -1 }); break;
+      case "high": Object.assign(d, { zeroMode: ZP.kZeroReal, zeroA: 1, zeroB: 1 }); break;
+      case "band": Object.assign(d, { zeroMode: ZP.kZeroReal, zeroA: 1, zeroB: -1 }); break;
+      case "real": Object.assign(d, { zeroMode: ZP.kZeroReal, zeroA: 0.5, zeroB: -0.5 }); break;
+      case "pair": d.zeroMode = ZP.kZeroPair; Geo.setZeroPair(d, 1, p.theta); break;   // notch at the pole frequency
+    }
+  },
+
+  // ---- Changes
+  auditionTimer: 0, lastAudition: 0,
+  editorChanged(final) {
+    this.refreshTable(); this.render();
+    if (final) persist();
+    if (this.auditioning) {
+      // Throttle live audition to ~25 messages per second.
+      const now = performance.now();
+      clearTimeout(this.auditionTimer);
+      if (now - this.lastAudition > 40) { this.lastAudition = now; Card.preview(state.editor); }
+      else this.auditionTimer = setTimeout(() => { this.lastAudition = performance.now(); Card.preview(state.editor); }, 40);
+    }
+  },
+  editSlot(i) {
+    state.editor = clone(state.banks[state.bank].slots[i]);
+    state.editingSlot = i; state.selected = 0;
+    $("designName").value = state.editor.name || "";
+    $("numSections").value = state.editor.numSections;
+    this.refreshTable(true); this.editorChanged(true);
+  },
+  async storeSlot(i) {
+    const slot = clone(state.editor); slot.name = $("designName").value || slot.name || `Slot ${i + 1}`;
+    state.banks[state.bank].slots[i] = slot;
+    state.editingSlot = i;
+    persist(); this.render();
+    if (Card.connected && $("liveSync").checked) {
+      const ok = await Card.sendSlot(state.bank, i, slot);
+      log(ok ? `Sent "${slot.name}" to bank ${"AB"[state.bank]} slot ${i + 1} (not yet saved to flash).` : "Card did not acknowledge the slot.");
+    }
+  },
+  async swapSlots(a, b) {
+    if (a === b) return;
+    const bank = state.banks[state.bank];
+    [bank.slots[a], bank.slots[b]] = [bank.slots[b], bank.slots[a]];
+    if (state.editingSlot === a) state.editingSlot = b; else if (state.editingSlot === b) state.editingSlot = a;
+    persist(); this.render();
+    if (Card.connected && $("liveSync").checked) { await Card.sendSlot(state.bank, a, bank.slots[a]); await Card.sendSlot(state.bank, b, bank.slots[b]); }
+  },
+
+  // ---- Card status
+  cardChanged() {
+    const c = Card.connected;
+    $("connDot").classList.toggle("ok", c);
+    $("connText").textContent = c ? `Zeds Dead ${Card.info.version}` : "Not connected";
+    $("connectBtn").textContent = c ? "Connected" : "Connect to card";
+    for (const id of ["readBtn", "sendBtn", "saveBtn", "factoryBtn", "revertBtn", "auditionBtn"]) $(id).disabled = !c;
+    if (c) {
+      const i = Card.info;
+      $("fwInfo").textContent = `Firmware ${i.version} · ${i.clockMHz} MHz · ${i.cyclesPerSample} cycles per sample · up to ${i.maxSections} pairs, ${i.numSlots} slots × ${i.numBanks} banks · CV inputs ${i.calibrated ? "calibrated from EEPROM" : "uncalibrated (default scaling)"}`;
+    } else {
+      this.auditioning = false; $("auditionBtn").classList.remove("on");
+      for (const id of ["mCpu", "mRate", "mSecs", "mCutoff", "mMorph"]) $(id).textContent = "–";
+    }
+    this.render();
+  },
+  statusChanged() {
+    const s = Card.status;
+    $("mCpu").textContent = s.cpu.toFixed(1) + "%";
+    $("mCpuPeak").textContent = `peak ${s.cpuPeak.toFixed(1)}%`;
+    const bar = $("mCpuBar"); bar.style.width = Math.min(100, s.cpu) + "%";
+    bar.style.background = s.cpuPeak > 95 ? "var(--bad)" : s.cpuPeak > 80 ? "var(--warn)" : "var(--good)";
+    $("mRate").textContent = s.rate;
+    $("mSecs").textContent = s.running;
+    $("mBank").textContent = s.preview ? "auditioning editor" : `bank ${"AB"[s.bank]} (${s.numSlots} slots)`;
+    $("mCutoff").textContent = fmtHz(s.cutoff);
+    $("mRes").textContent = `res ${(s.res * 100).toFixed(0)}%`;
+    $("mMorph").textContent = (s.morph + 1).toFixed(2);
+    $("mSpread").textContent = "spread: " + ["linked", "cutoff", "morph", "both"][s.spread & 3];
+    $("mLvlL").style.width = (s.lvlL / 127 * 100) + "%"; $("mLvlR").style.width = (s.lvlR / 127 * 100) + "%";
+    $("mCal").textContent = "CV calibration: " + (s.calibrated ? "yes" : "no");
+    if ($("followCard").checked && !s.preview) {
+      state.morph = s.morph; state.cutoff = Math.max(20, s.cutoff); state.res = s.res;
+      if (state.bank !== s.bank) this.setBank(s.bank);
+      this.syncKnobSliders(); this.render();
+    }
+  },
+
+  // ---- Bank switching & misc
+  setBank(b) {
+    state.bank = b;
+    document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("active", +x.dataset.bank === b));
+    $("numSlots").value = state.banks[b].numSlots;
+    state.editingSlot = -1;
+    state.morph = Math.min(state.morph, state.banks[b].numSlots - 1);
+    persist(); this.render();
+  },
+  syncKnobSliders() {
+    $("cutoff").value = Math.round(1000 * Math.log(state.cutoff / 20) / Math.log(18000 / 20));
+    $("res").value = Math.round(state.res * 1000);
+    $("cutoffVal").textContent = fmtHz(state.cutoff);
+    $("resVal").textContent = (state.res * 100).toFixed(0) + "%";
+    const n = state.banks[state.bank].numSlots;
+    $("morph").value = n > 1 ? Math.round(1000 * state.morph / (n - 1)) : 0;
+    this.refreshTable();
+  },
+
+  // ---- Library (stored in this browser)
+  library: store.get("zedsdead.library", []),
+  drawLibrary() {
+    const el = $("library"); el.innerHTML = "";
+    if (!this.library.length) { el.innerHTML = '<div class="small muted" style="padding:6px 0">No saved designs yet.</div>'; return; }
+    this.library.forEach((item, i) => {
+      const row = document.createElement("div"); row.className = "lib-item";
+      const name = document.createElement("span"); name.textContent = `${item.name} · ${item.slot.numSections} pair${item.slot.numSections === 1 ? "" : "s"}`;
+      const load = document.createElement("button"); load.textContent = "Load"; load.onclick = () => {
+        state.editor = ZP.sanitizeSlot(clone(item.slot)); state.editor.name = item.name; state.editingSlot = -1; state.selected = 0;
+        $("designName").value = item.name; $("numSections").value = state.editor.numSections; this.refreshTable(true); this.editorChanged(true); };
+      const del = document.createElement("button"); del.textContent = "Delete"; del.onclick = () => {
+        this.library.splice(i, 1); store.set("zedsdead.library", this.library); this.drawLibrary(); };
+      row.append(name, load, del); el.appendChild(row);
+    });
+  },
+};
+
+// ===========================================================================
+//  Wiring up the controls
+// ===========================================================================
+function download(name, obj) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 1)], { type: "application/json" }));
+  a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+$("connectBtn").onclick = () => Card.connect();
+$("cutoff").oninput = e => { state.cutoff = 20 * Math.pow(18000 / 20, e.target.value / 1000); UI.syncKnobSliders(); UI.editorChanged(); };
+$("res").oninput = e => { state.res = e.target.value / 1000; UI.syncKnobSliders(); UI.editorChanged(); };
+$("zoom").onchange = e => { state.zoom = +e.target.value; UI.render(); };
+$("morph").oninput = e => { const n = state.banks[state.bank].numSlots; state.morph = (e.target.value / 1000) * (n - 1); UI.render(); };
+$("designName").oninput = e => { state.editor.name = e.target.value; persist(); };
+$("numSections").onchange = e => {
+  const n = Math.max(1, Math.min(ZP.kMaxSections, e.target.value | 0)); e.target.value = n;
+  // New pairs start as a gentle resonance at the cutoff, with no zeros.
+  for (let s = state.editor.numSections; s < n; s++) state.editor.sec[s] = ZP.poleQ(1, 0.707, 0);
+  state.editor.numSections = n; state.selected = Math.min(state.selected, n - 1);
+  UI.refreshTable(true); UI.editorChanged(true);
+};
+$("designChip").addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", "design"); e.dataTransfer.effectAllowed = "copy"; });
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => UI.setBank(+b.dataset.bank));
+$("numSlots").onchange = async e => {
+  const n = Math.max(1, Math.min(6, e.target.value | 0)); e.target.value = n;
+  state.banks[state.bank].numSlots = n; state.morph = Math.min(state.morph, n - 1); persist(); UI.render();
+  if (Card.connected && $("liveSync").checked) await Card.sendNumSlots(state.bank, n);
+};
+$("factoryLocalBtn").onclick = () => { state.banks[state.bank] = ZP.factoryBank(state.bank); $("numSlots").value = 6; state.editingSlot = -1; persist(); UI.render(); log(`Bank ${"AB"[state.bank]} reset to factory presets in the editor.`); };
+
+$("auditionBtn").onclick = () => {
+  UI.auditioning = !UI.auditioning;
+  $("auditionBtn").classList.toggle("on", UI.auditioning);
+  $("auditionBtn").textContent = UI.auditioning ? "Auditioning: on" : "Audition on card";
+  Card.preview(UI.auditioning ? state.editor : null);
+};
+$("readBtn").onclick = async () => {
+  for (let b = 0; b < 2; b++) {
+    const bank = await Card.readBank(b);
+    if (!bank) { log("Reading from the card failed."); return; }
+    state.banks[b] = bank;
+  }
+  $("numSlots").value = state.banks[state.bank].numSlots; state.editingSlot = -1;
+  persist(); UI.render(); log("Read both banks from the card.");
+};
+$("sendBtn").onclick = async () => {
+  for (let b = 0; b < 2; b++) if (!(await Card.sendBank(b))) { log("Sending to the card failed."); return; }
+  log("Sent both banks to the card. Press 'Save to card flash' to keep them after power-off.");
+};
+$("saveBtn").onclick = async () => {
+  log("Saving to flash…");
+  const r = await Card.request([Card.MSG.SAVE], m => m[0] === 0x46, 3000);
+  log(r && r[1] ? "Saved to the card's flash ✓" : "Save failed or timed out.");
+};
+$("factoryBtn").onclick = async () => {
+  const r = await Card.request([Card.MSG.FACTORY, state.bank], m => m[0] === 0x48);
+  log(r ? `Card bank ${"AB"[state.bank]} set to factory presets (not saved).` : "No reply from card.");
+};
+$("revertBtn").onclick = async () => {
+  const r = await Card.request([Card.MSG.REVERT], m => m[0] === 0x49);
+  log(r ? (r[1] ? "Card reloaded its saved banks." : "Card has nothing valid saved in flash; it kept its current banks.") : "No reply from card.");
+};
+
+$("libSaveBtn").onclick = () => {
+  const name = ($("designName").value || "Untitled").slice(0, 24);
+  UI.library.push({ name, slot: clone(state.editor) }); store.set("zedsdead.library", UI.library); UI.drawLibrary();
+  log(`Saved "${name}" to the library.`);
+};
+$("exportBankBtn").onclick = () => download(`zeds-dead-bank-${"AB"[state.bank]}.json`, { format: "zeds-dead", version: 1, banks: [state.banks[state.bank]] });
+$("exportAllBtn").onclick = () => download("zeds-dead-banks.json", { format: "zeds-dead", version: 1, banks: state.banks, library: UI.library });
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async e => {
+  const file = e.target.files[0]; e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.format !== "zeds-dead" || !Array.isArray(data.banks)) throw new Error("not a Zeds Dead file");
+    const fix = b => ({ numSlots: Math.max(1, Math.min(6, b.numSlots | 0)), slots: b.slots.slice(0, 6).map(s => ZP.sanitizeSlot(s)) });
+    if (data.banks.length === 1) state.banks[state.bank] = fix(data.banks[0]);
+    else { state.banks[0] = fix(data.banks[0]); state.banks[1] = fix(data.banks[1]); }
+    if (Array.isArray(data.library)) { UI.library.push(...data.library.map(i => ({ name: String(i.name).slice(0, 24), slot: ZP.sanitizeSlot(i.slot) }))); store.set("zedsdead.library", UI.library); UI.drawLibrary(); }
+    $("numSlots").value = state.banks[state.bank].numSlots; persist(); UI.render();
+    log(`Imported ${file.name}.`);
+  } catch (err) { log("Import failed: " + err.message); }
+};
+
+// Poll the card's status 4 times a second while connected. (The card only
+// ever answers; this also keeps an audition alive.)
+setInterval(() => Card.pollStatus(), 250);
+window.addEventListener("resize", () => UI.render());
+
+// Start up.
+UI.buildSlots();
+UI.setBank(state.bank);
+$("designName").value = state.editor.name || "";
+$("numSections").value = state.editor.numSections;
+UI.syncKnobSliders();
+UI.refreshTable(true);
+UI.drawLibrary();
+ZView.init();
+UI.render();
+</script>
+</body>
+</html>

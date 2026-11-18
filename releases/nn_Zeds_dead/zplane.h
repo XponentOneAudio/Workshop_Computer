@@ -6,10 +6,11 @@
 //  deliberately does NOT include anything Workshop-Computer specific. That
 //  means you can compile it on a normal PC (see tools/host_test.cpp) to plot
 //  the filter responses and check it is stable, before ever flashing a card.
+//  The web editor (web/index.html) contains a line-for-line JavaScript copy of
+//  the designer part, so what you see in the browser is what the card does.
 //
 //  If you are new to digital filters, read README.md first — it contains a
-//  longer walkthrough with pictures-in-words. The comments here assume you have
-//  skimmed it, but try to be self-contained too.
+//  longer walkthrough. The comments here try to be self-contained too.
 //
 // ----------------------------------------------------------------------------
 //  THE BIG IDEA IN ONE PARAGRAPH
@@ -23,8 +24,8 @@
 //
 //  So instead of designing "a lowpass" and "a bandpass" as separate circuits
 //  and crossfading their outputs (which sounds like two filters, not one), we
-//  describe each filter shape — a "frame" — as a list of pole/zero positions,
-//  and to morph we literally slide the poles and zeros from one frame's
+//  describe each filter shape — a "slot" — as a list of pole/zero positions,
+//  and to morph we literally slide the poles and zeros from one slot's
 //  positions to the next. Every in-between point is itself a real, single
 //  filter. That is what E-mu called "Z-plane" filtering in the 1990s.
 //
@@ -32,19 +33,21 @@
 //  STRUCTURE
 // ----------------------------------------------------------------------------
 //
-//  * The filter is a CASCADE of kSections "biquads" (2nd-order sections).
-//    Each biquad owns one pair of poles and one pair of zeros, so 3 sections
-//    = a 6-pole filter. Audio goes through section 0, then 1, then 2.
+//  * The filter is a CASCADE of up to kMaxSections "biquads" (2nd-order
+//    sections). Each biquad owns one pair of poles and one pair of zeros, so
+//    3 sections = a 6-pole filter. Audio goes through section 0, then 1, ...
 //
-//  * A FRAME says, for each section, where its poles and zeros go, relative
-//    to the cutoff frequency set by the Main knob.
+//  * A SLOT (SlotData) says, for each section, where its poles and zeros go,
+//    RELATIVE to the cutoff frequency set by the Main knob. Slots are designed
+//    in the web editor by dragging poles and zeros around.
 //
-//  * A BANK is an ordered list of kFramesPerBank frames. The morph control
-//    (knob X) moves smoothly through the list: 0.0 = frame 0, 1.0 = frame 1,
-//    2.5 = halfway between frames 2 and 3, and so on.
+//  * A BANK (BankData) is an ordered list of up to kNumSlots slots. The morph
+//    control (knob X) moves smoothly through the list: 0.0 = slot 1,
+//    1.0 = slot 2, 2.5 = halfway between slots 3 and 4, and so on.
 //
-//  * The DESIGNER (float maths, slow, runs on the RP2040's second core a few
-//    thousand times per second) turns knob positions into biquad coefficients.
+//  * The DESIGNER (float maths, slow, runs on the RP2040's second core a
+//    thousand or more times per second) turns knob positions into biquad
+//    coefficients.
 //
 //  * The RUNNER (fixed-point integer maths, fast, runs 48000 times per second
 //    on the first core) pushes audio samples through the biquads.
@@ -73,9 +76,9 @@ namespace zp
 
 constexpr float kSampleRate     = 48000.0f;  // Workshop Computer runs at 48 kHz
 constexpr float kPi             = 3.14159265358979f;
-constexpr int   kSections       = 3;         // 3 biquads = 6 poles + 6 zeros
-constexpr int   kFramesPerBank  = 5;         // shapes per bank to morph through
-constexpr int   kNumBanks       = 2;
+constexpr int   kMaxSections    = 8;         // up to 8 biquads = 16 poles + 16 zeros
+constexpr int   kNumSlots       = 6;         // slots per bank to morph through
+constexpr int   kNumBanks       = 2;         // bank A (switch up), bank B (middle)
 
 // Highest pole/zero frequency we allow, as a fraction of the sample rate.
 // Nyquist (the highest representable frequency) is 0.5; we stay a bit below
@@ -83,137 +86,126 @@ constexpr int   kNumBanks       = 2;
 constexpr float kMaxFreqFraction = 0.45f;    // = 21.6 kHz at 48 kHz
 constexpr float kMinFreqHz       = 10.0f;
 
-// ----------------------------------------------------------------------------
-//  Describing filter shapes ("frames")
-// ----------------------------------------------------------------------------
+// Poles are never allowed closer to the unit circle than this. 0.9995 means a
+// "ping" takes about 2000 samples (~40 ms) to die away by a factor of e.
+constexpr float kMaxPoleRadius   = 0.9995f;
 
-// What kind of ZEROS a section has. A biquad's numerator (the "zeros" part) is
-//
-//          N(z) = n0 + n1·z⁻¹ + n2·z⁻²
-//
-// and each kind below is just a particular choice of (n0, n1, n2):
-//
-//   kAllPole : (1,  0,  0)   no zeros at all → a pure resonator ("formant")
-//   kLow     : (1,  2,  1)   double zero at z = -1 (= Nyquist) → lowpass
-//   kHigh    : (1, -2,  1)   double zero at z = +1 (= DC, 0 Hz) → highpass
-//   kBand    : (1,  0, -1)   one zero at DC, one at Nyquist → bandpass
-//   kNotch   : (1, -2cosθ, 1) zero pair ON the unit circle at angle θ → notch
-//
-// You can check these by factoring: (1 + z⁻¹)² = 1 + 2z⁻¹ + z⁻², which is
-// zero when z = -1. Likewise (1 - z⁻¹)² is zero when z = +1, and
-// (1 - z⁻¹)(1 + z⁻¹) = 1 - z⁻² is zero at both.
-enum ZeroKind : uint8_t { kAllPole, kLow, kHigh, kBand, kNotch };
+// How much the Resonance knob (at full) multiplies a pole's Q, for a pole whose
+// resonance weight is 1. Q is multiplied by (1 + kResonanceGain·weight·res²).
+constexpr float kResonanceGain   = 15.0f;
 
-// Recipe for ONE biquad section inside ONE frame.
-struct SectionSpec
+// ----------------------------------------------------------------------------
+//  Describing filter shapes ("slots")
+// ----------------------------------------------------------------------------
+//
+//  POLES. Every section has one pole pair: a point p = r·e^{jθ} and its mirror
+//  image r·e^{−jθ}. We store it in a form that SCALES with the cutoff knob:
+//
+//     poleRatio  :  θ = poleRatio × θc, where θc = 2π·cutoff/fs is the
+//                   cutoff's own angle on the circle.
+//     poleDamp   :  r = exp(−θ · poleDamp)
+//
+//  Why exp(−θ·d)? Think of the analogue world: a resonance at angular
+//  frequency ω with quality factor Q decays like e^{−ω t/(2Q)}. Sampling that
+//  every T seconds gives a pole radius of e^{−ωT/(2Q)} = e^{−θ/(2Q)}. So our
+//  "damping" d is (about) 1/(2Q), and keeping d fixed while the cutoff moves
+//  keeps the Q fixed: the filter keeps its character as you sweep it, just
+//  like an analogue filter does. d > 0 always means r < 1: stable.
+//
+//  ZEROS. Every section has one zero pair, in one of two forms:
+//
+//     kZeroPair : a mirror pair z = r·e^{±jθ}, scaled with cutoff just like
+//                 the pole:  θ = zeroA × θc,  r = exp(−θ · zeroB).
+//                 zeroB = 0 puts the zeros exactly ON the unit circle — a
+//                 perfect notch. (Zeros on or inside the circle only; they
+//                 can't affect stability, but that keeps the maths simple.)
+//     kZeroReal : two zeros on the real axis at zeroA and zeroB (each −1..+1).
+//                 These do NOT move with the cutoff. The useful ones:
+//                     (−1, −1) : double zero at Nyquist → lowpass slopes
+//                     (+1, +1) : double zero at DC      → highpass slopes
+//                     (+1, −1) : one at each end        → bandpass slopes
+//                     ( 0,  0) : zeros at the centre    → "no zeros"
+//
+//  Expanding the zeros gives the biquad's numerator n0 + n1·z⁻¹ + n2·z⁻²:
+//     pair : (1 − z·z⁻¹)(1 − z̄·z⁻¹) = 1 − 2r·cosθ·z⁻¹ + r²·z⁻²
+//     real : (1 − a·z⁻¹)(1 − b·z⁻¹) = 1 − (a+b)·z⁻¹ + ab·z⁻²
+//
+//  resWeight (0..1) says how strongly the Resonance knob sharpens this pole.
+//  A 6-pole lowpass typically has only its last pole pair "sing".
+
+enum ZeroMode : uint8_t { kZeroPair = 0, kZeroReal = 1 };
+
+struct SectionData
 {
-	float    poleRatio;  // pole frequency = cutoff × poleRatio
-	float    baseQ;      // pole "Q" (sharpness) with the Resonance knob at 0
-	float    resQ;       // extra Q added with the Resonance knob at maximum
-	ZeroKind zeros;      // which numerator shape (see above)
-	float    zeroRatio;  // only used by kNotch: notch frequency = cutoff × this
+	float   poleRatio;   // pole angle  = poleRatio × cutoff angle
+	float   poleDamp;    // pole radius = exp(−angle × poleDamp)   (≈ 1/(2Q))
+	float   resWeight;   // 0..1: how much the Resonance knob affects this pole
+	uint8_t zeroMode;    // kZeroPair or kZeroReal
+	float   zeroA;       // pair: angle ratio   | real: first zero (−1..1)
+	float   zeroB;       // pair: damping (≥ 0) | real: second zero (−1..1)
 };
 
-// One complete filter shape = one recipe per section.
-struct Frame
+struct SlotData
 {
-	const char* name;               // for the host test / documentation only
-	SectionSpec sec[kSections];
+	uint8_t     numSections;        // 0 .. kMaxSections (0 = flat, no filtering)
+	SectionData sec[kMaxSections];
 };
 
-// A Q of 0 is our way of saying "this section does nothing": as you will see
-// in placePole(), Q = 0 puts the poles at the very centre of the z-plane
-// (radius 0), and with kAllPole zeros the section becomes H(z) = 1.
-// Morphing a section from "bypass" to "something" therefore smoothly grows a
-// resonance out of nothing — no clicks, no crossfades.
-
-// ----------------------------------------------------------------------------
-//  THE BANKS
-// ----------------------------------------------------------------------------
-//
-//  The ORDER of frames matters, because we morph between neighbours. The
-//  classic bank was arranged so that each step is a "natural" movement:
-//
-//    LP → BP : the zeros at Nyquist (1,2,1) slide to (1,0,-1). Halfway, the
-//              numerator is (1,1,0) = a single zero at Nyquist: still a gentle
-//              lowpass. So the sound goes lowpass → "less low" → bandpass.
-//    BP → HP : (1,0,-1) slides to (1,-2,1); halfway is (1,-1,0) = a single zero
-//              at DC: a gentle highpass. Bandpass → highpass, smoothly.
-//    HP → Notch : the zero pair sits at DC (angle 0) for highpass and at the
-//              cutoff angle for notch, so morphing literally sweeps the
-//              zeros round the circle from 0 Hz up to the cutoff.
-//    Notch → Twin Peaks : the outer notches dissolve while two resonances
-//              grow either side of the remaining centre notch. The upper
-//              resonance uses highpass zeros: an all-pole resonance at 500 Hz
-//              falls 12 dB/octave above itself, and highpass zeros on the 2 kHz
-//              resonance rise 12 dB/octave below it, so the two cancel out and
-//              both peaks come out roughly equally loud.
-//
-//  Try reordering them later and listen to what changes!
-
-// Bank 0: "Classic" multimode (switch UP)
-//
-// For the 6-pole low/high-pass we use the Q values of a 6th-order Butterworth
-// filter (0.518, 0.707, 1.932) — the "maximally flat" textbook choice — and
-// put the user's resonance on the last (sharpest) section only, which is how
-// many analogue multi-pole filters behave: one pole pair does the "singing".
-static const Frame kClassicBank[kFramesPerBank] = {
-	{ "Lowpass 6-pole", {
-		{ 1.00f, 0.518f,  0.0f, kLow,     1.0f },
-		{ 1.00f, 0.707f,  0.0f, kLow,     1.0f },
-		{ 1.00f, 1.932f, 22.0f, kLow,     1.0f } } },
-	{ "Bandpass", {
-		{ 0.80f, 0.900f,  0.0f, kBand,    1.0f },
-		{ 1.25f, 0.900f,  0.0f, kBand,    1.0f },
-		{ 1.00f, 1.500f, 22.0f, kBand,    1.0f } } },
-	{ "Highpass 6-pole", {
-		{ 1.00f, 0.518f,  0.0f, kHigh,    1.0f },
-		{ 1.00f, 0.707f,  0.0f, kHigh,    1.0f },
-		{ 1.00f, 1.932f, 22.0f, kHigh,    1.0f } } },
-	{ "Triple notch", {
-		{ 0.70f, 3.000f,  0.0f, kNotch,   0.70f },
-		{ 1.00f, 1.500f, 12.0f, kNotch,   1.00f },
-		{ 1.40f, 3.000f,  0.0f, kNotch,   1.40f } } },
-	{ "Twin peaks", {
-		{ 0.50f, 4.000f, 18.0f, kAllPole, 1.0f },
-		{ 1.00f, 2.000f,  6.0f, kNotch,   1.00f },
-		{ 2.00f, 4.000f, 18.0f, kHigh,    1.0f } } },
+struct BankData
+{
+	uint8_t  numSlots;              // 1 .. kNumSlots: how many slots the morph covers
+	SlotData slot[kNumSlots];
 };
 
-// Bank 1: "Vowels" (switch MIDDLE)
-//
-// Human vowels are recognised mostly by their first three FORMANTS —
-// resonant peaks of the vocal tract. Classic speech synthesisers (e.g. the
-// Klatt cascade synthesiser) model a vowel as three all-pole resonators in
-// series, exactly what we build here. The frequencies are the well-known
-// Peterson & Barney (1952) averages for adult male voices, divided by 800 Hz,
-// so with the Main knob near 800 Hz you get "natural" vowels; turn it up or
-// down and the whole vocal tract shrinks or grows (chipmunk ↔ giant).
-constexpr float kVowelRef = 800.0f;
-static const Frame kVowelBank[kFramesPerBank] = {
-	{ "A (father)", {
-		{ 730.0f / kVowelRef, 4.0f, 14.0f, kAllPole, 1.0f },
-		{ 1090.0f / kVowelRef, 6.0f, 18.0f, kAllPole, 1.0f },
-		{ 2440.0f / kVowelRef, 8.0f, 24.0f, kAllPole, 1.0f } } },
-	{ "E (bed)", {
-		{ 530.0f / kVowelRef, 4.0f, 14.0f, kAllPole, 1.0f },
-		{ 1840.0f / kVowelRef, 6.0f, 18.0f, kAllPole, 1.0f },
-		{ 2480.0f / kVowelRef, 8.0f, 24.0f, kAllPole, 1.0f } } },
-	{ "I (beet)", {
-		{ 270.0f / kVowelRef, 4.0f, 14.0f, kAllPole, 1.0f },
-		{ 2290.0f / kVowelRef, 6.0f, 18.0f, kAllPole, 1.0f },
-		{ 3010.0f / kVowelRef, 8.0f, 24.0f, kAllPole, 1.0f } } },
-	{ "O (bought)", {
-		{ 570.0f / kVowelRef, 4.0f, 14.0f, kAllPole, 1.0f },
-		{ 840.0f / kVowelRef, 6.0f, 18.0f, kAllPole, 1.0f },
-		{ 2410.0f / kVowelRef, 8.0f, 24.0f, kAllPole, 1.0f } } },
-	{ "U (boot)", {
-		{ 300.0f / kVowelRef, 4.0f, 14.0f, kAllPole, 1.0f },
-		{ 870.0f / kVowelRef, 6.0f, 18.0f, kAllPole, 1.0f },
-		{ 2240.0f / kVowelRef, 8.0f, 24.0f, kAllPole, 1.0f } } },
-};
+// Number of biquads the audio core must run for a whole bank: the largest
+// section count of any slot in use. Morphing from a 2-section slot to a
+// 5-section one needs all 5 sections running throughout.
+inline int sectionsNeeded(const BankData& b)
+{
+	int n = 0;
+	for (int i = 0; i < b.numSlots && i < kNumSlots; ++i)
+		if (b.slot[i].numSections > n) n = b.slot[i].numSections;
+	return n;
+}
 
-static const Frame* const kBanks[kNumBanks] = { kClassicBank, kVowelBank };
+// Data can arrive from the web editor or from flash, so never trust it: force
+// every number into a sensible range, and replace NaNs ("not a number") with
+// safe defaults. A NaN coefficient would silence the card until power-off.
+inline float clampf(float x, float lo, float hi, float fallback)
+{
+	if (!(x == x)) return fallback;    // NaN is the only value not equal to itself
+	return x < lo ? lo : (x > hi ? hi : x);
+}
+
+inline void sanitize(SlotData& s)
+{
+	if (s.numSections > kMaxSections) s.numSections = kMaxSections;
+	for (int i = 0; i < kMaxSections; ++i)
+	{
+		SectionData& d = s.sec[i];
+		d.poleRatio = clampf(d.poleRatio, 0.001f, 1000.0f, 1.0f);
+		d.poleDamp  = clampf(d.poleDamp, 0.0001f, 20.0f, 0.7f);
+		d.resWeight = clampf(d.resWeight, 0.0f, 1.0f, 0.0f);
+		if (d.zeroMode != kZeroPair) d.zeroMode = kZeroReal;
+		if (d.zeroMode == kZeroPair)
+		{
+			d.zeroA = clampf(d.zeroA, 0.001f, 1000.0f, 1.0f);
+			d.zeroB = clampf(d.zeroB, 0.0f, 50.0f, 0.0f);
+		}
+		else
+		{
+			d.zeroA = clampf(d.zeroA, -1.0f, 1.0f, 0.0f);
+			d.zeroB = clampf(d.zeroB, -1.0f, 1.0f, 0.0f);
+		}
+	}
+}
+
+inline void sanitize(BankData& b)
+{
+	if (b.numSlots < 1) b.numSlots = 1;
+	if (b.numSlots > kNumSlots) b.numSlots = kNumSlots;
+	for (int i = 0; i < kNumSlots; ++i) sanitize(b.slot[i]);
+}
 
 // ----------------------------------------------------------------------------
 //  Float biquad + helpers (used by the designer)
@@ -253,64 +245,36 @@ inline float hzToAngle(float hz)
 	return 2.0f * kPi * hz / kSampleRate;
 }
 
-// ---- Where do the poles go? ------------------------------------------------
-//
-// We borrow the classic analogue description of a resonance: a frequency f
-// and a quality factor Q. An analogue 2-pole filter with these has its poles
-// (in the s-plane, the analogue cousin of the z-plane) at
-//
-//      s = −ω/(2Q)  ±  j·ω·√(1 − 1/(4Q²))        where ω = 2πf
-//
-// The real part says how fast a "ping" dies away; the imaginary part is the
-// frequency it rings at. To move to the digital z-plane we use the mapping
-// z = e^{sT} (T = 1/fs, one sample period). This is the "impulse invariant" or
-// "matched-z" mapping: the digital filter's impulse response is a sampled
-// copy of the analogue one. Because e^{a + jb} = e^a · e^{jb}:
-//
-//      radius  r = e^{−ωT/(2Q)}  = exp(−π f / (Q fs))
-//      angle   θ = ωT·√(1 − 1/(4Q²))
-//
-// Nice properties:
-//   * r is ALWAYS < 1 for any positive Q, so the pole is always inside the
-//     unit circle, which is exactly the condition for a stable filter.
-//   * Q → ∞ makes r → 1 (a pole right on the circle = infinite ringing).
-//   * Q → 0 makes r → 0: the poles collapse to the centre and do nothing.
-//     That is how a frame can "switch off" a section without a discontinuity.
-//
-// (For Q < 0.5 a real analogue filter would have two separate real poles; we
-// approximate that with a double pole at angle 0. It only happens briefly
-// while morphing towards a bypassed section, so the approximation is fine.)
-inline Pole placePole(const SectionSpec& s, float cutoffHz, float resonance)
+// Where does this section's pole pair sit, for the current cutoff and
+// resonance? (See "POLES" above for the reasoning.)
+inline Pole placePole(const SectionData& s, float cutoffHz, float resonance)
 {
-	// Resonance is squared so the knob has more travel in the useful
-	// low-to-mid range and only the last part of its turn goes "screaming".
-	const float q = s.baseQ + s.resQ * resonance * resonance;
-	if (q < 1.0e-3f) return Pole{ 0.0f, 0.0f };
-
-	const float w = hzToAngle(cutoffHz * s.poleRatio);  // ωT, in radians
 	Pole p;
-	p.r = expf(-w / (2.0f * q));
-	const float k = 1.0f - 1.0f / (4.0f * q * q);
-	p.theta = (k > 0.0f) ? w * sqrtf(k) : 0.0f;
+	p.theta = hzToAngle(cutoffHz * s.poleRatio);
+	// Resonance divides the damping, i.e. multiplies Q. It is squared so the
+	// knob has more travel in the useful low-to-mid range and only the last
+	// part of its turn goes "screaming".
+	const float d = s.poleDamp / (1.0f + kResonanceGain * s.resWeight * resonance * resonance);
+	p.r = expf(-p.theta * d);
+	if (p.r > kMaxPoleRadius) p.r = kMaxPoleRadius;
 	return p;
 }
 
-// ---- Where do the zeros go? ------------------------------------------------
-// Returns the numerator (n0, n1, n2) for a section; see ZeroKind above.
-inline void placeZeros(const SectionSpec& s, float cutoffHz, float n[3])
+// Numerator (n0, n1, n2) for this section's zeros. (See "ZEROS" above.)
+inline void placeZeros(const SectionData& s, float cutoffHz, float n[3])
 {
-	switch (s.zeros)
+	n[0] = 1.0f;
+	if (s.zeroMode == kZeroPair)
 	{
-	case kLow:   n[0] = 1.0f; n[1] =  2.0f; n[2] =  1.0f; break;
-	case kHigh:  n[0] = 1.0f; n[1] = -2.0f; n[2] =  1.0f; break;
-	case kBand:  n[0] = 1.0f; n[1] =  0.0f; n[2] = -1.0f; break;
-	case kNotch:
-		// A zero pair exactly ON the unit circle (radius 1) at angle θ:
-		//   (1 − e^{jθ}z⁻¹)(1 − e^{−jθ}z⁻¹) = 1 − 2cosθ·z⁻¹ + z⁻²
-		n[0] = 1.0f; n[1] = -2.0f * cosf(hzToAngle(cutoffHz * s.zeroRatio)); n[2] = 1.0f;
-		break;
-	case kAllPole:
-	default:     n[0] = 1.0f; n[1] =  0.0f; n[2] =  0.0f; break;
+		const float th = hzToAngle(cutoffHz * s.zeroA);
+		const float r  = expf(-th * s.zeroB);
+		n[1] = -2.0f * r * cosf(th);
+		n[2] = r * r;
+	}
+	else
+	{
+		n[1] = -(s.zeroA + s.zeroB);
+		n[2] = s.zeroA * s.zeroB;
 	}
 }
 
@@ -357,41 +321,57 @@ inline float magSq(const Biquad& q, const Probe& p)
 struct DesignParams
 {
 	float cutoffHz;   // where the filter "is" (Main knob + CV1)
-	float morph;      // 0 .. kFramesPerBank-1 (knob X + CV2)
+	float morph;      // 0 .. numSlots−1 (knob X + CV2)
 	float resonance;  // 0 .. 1 (knob Y)
-	int   bank;       // 0 = classic, 1 = vowels
 };
 
 struct Design
 {
-	Biquad sec[kSections];
-	float  makeup;          // overall output gain applied after the cascade
-	float  poleTheta[kSections];  // remembered for plotting / LEDs
+	int    numSections;              // how many of sec[] are in use
+	Biquad sec[kMaxSections];
+	float  makeup;                   // overall output gain applied after the cascade
+	float  poleTheta[kMaxSections];  // remembered for the loudness probes
 };
 
-// The heart of the card. Read this one slowly!
-inline void designCascade(const DesignParams& in, Design& out)
+// Design the filter that lies a fraction t of the way from slot A to slot B.
+// numRun is how many sections to produce (normally sectionsNeeded(bank)).
+//
+// This is the heart of the card. Read it slowly!
+inline void designBetween(const SlotData& A, const SlotData& B, float t,
+                          float cutoffHz, float resonance, int numRun, Design& out)
 {
-	// --- 1. Find the two neighbouring frames and how far between them we are.
-	float m = in.morph;
-	if (m < 0.0f) m = 0.0f;
-	if (m > float(kFramesPerBank - 1)) m = float(kFramesPerBank - 1);
-	int i = int(m);                          // frame "A" (floor)
-	if (i > kFramesPerBank - 2) i = kFramesPerBank - 2;
-	const float t = m - float(i);            // 0 = all A, 1 = all B
+	if (numRun > kMaxSections) numRun = kMaxSections;
+	if (numRun < 0) numRun = 0;
+	out.numSections = numRun;
 
-	int bank = in.bank;
-	if (bank < 0) bank = 0;
-	if (bank >= kNumBanks) bank = kNumBanks - 1;
-	const Frame& A = kBanks[bank][i];
-	const Frame& B = kBanks[bank][i + 1];
-
-	for (int s = 0; s < kSections; ++s)
+	for (int s = 0; s < numRun; ++s)
 	{
-		// --- 2. Morph the POLES in polar form.
+		const bool hasA = s < A.numSections;
+		const bool hasB = s < B.numSections;
+		Biquad q;
+
+		if (!hasA && !hasB)
+		{
+			// Neither slot uses this section: make it a "wire", H(z) = 1.
+			q.b0 = 1.0f; q.b1 = q.b2 = q.a1 = q.a2 = 0.0f;
+			out.sec[s] = q;
+			out.poleTheta[s] = -1.0f;   // marker: no pole to probe
+			continue;
+		}
+
+		// --- 1. Where are the poles in slot A and in slot B?
 		//
-		// We compute where the pole pair sits in frame A and in frame B, and
-		// then slide between them:
+		// If one slot doesn't use this section, we pretend its pole sits at
+		// radius 0 (the centre of the circle, where a pole has no effect), at
+		// the SAME angle as the other slot's pole. Then morphing just grows
+		// the resonance out of nothing, rather than also sweeping it in from
+		// some arbitrary frequency.
+		Pole pa = hasA ? placePole(A.sec[s], cutoffHz, resonance) : Pole{ 0.0f, 0.0f };
+		Pole pb = hasB ? placePole(B.sec[s], cutoffHz, resonance) : Pole{ 0.0f, 0.0f };
+		if (!hasA) pa.theta = pb.theta;
+		if (!hasB) pb.theta = pa.theta;
+
+		// --- 2. Morph the POLES in polar form.
 		//   * radius: straight-line (linear) interpolation. Both radii are < 1,
 		//     so anything in between is also < 1  ⇒  STABLE at every point of
 		//     the morph. This is the key safety property of morphing in the
@@ -401,17 +381,12 @@ inline void designCascade(const DesignParams& in, Design& out)
 		//   * angle: geometric interpolation, θ = θA^(1−t) · θB^t, i.e. linear
 		//     in LOG frequency. Our ears hear pitch logarithmically, so a
 		//     formant moving from 300 Hz to 2400 Hz passes 850 Hz at halfway
-		//     (one "octave-wise" midpoint) instead of 1350 Hz.
-		const Pole pa = placePole(A.sec[s], in.cutoffHz, in.resonance);
-		const Pole pb = placePole(B.sec[s], in.cutoffHz, in.resonance);
+		//     instead of 1350 Hz.
 		const float r = pa.r + (pb.r - pa.r) * t;
-		const float ta = pa.theta > 1.0e-4f ? pa.theta : 1.0e-4f;
-		const float tb = pb.theta > 1.0e-4f ? pb.theta : 1.0e-4f;
-		const float theta = ta * powf(tb / ta, t);
+		const float theta = pa.theta * powf(pb.theta / pa.theta, t);   // angles are ≥ hzToAngle(10 Hz) > 0
 
 		// Expand the pole pair back into denominator coefficients:
 		//   (1 − r·e^{jθ}z⁻¹)(1 − r·e^{−jθ}z⁻¹) = 1 − 2r·cosθ·z⁻¹ + r²·z⁻²
-		Biquad q;
 		q.a1 = -2.0f * r * cosf(theta);
 		q.a2 = r * r;
 
@@ -419,25 +394,23 @@ inline void designCascade(const DesignParams& in, Design& out)
 		//
 		// Zeros can never make a filter unstable (they only sit in the
 		// numerator; the "feedback" is all in the denominator), so we are free
-		// to interpolate them the simplest way. Interpolating the coefficients
-		// is also the only sensible option when a zero is real-valued and not
-		// part of a mirror pair (e.g. bandpass has one at +1 and one at −1).
-		float na[3], nb[3];
-		placeZeros(A.sec[s], in.cutoffHz, na);
-		placeZeros(B.sec[s], in.cutoffHz, nb);
+		// to interpolate them the simplest way. That also copes with real
+		// zeros morphing into a mirror pair, which polar interpolation can't.
+		// A slot that doesn't use this section counts as "no zeros" (1, 0, 0).
+		float na[3] = { 1.0f, 0.0f, 0.0f }, nb[3] = { 1.0f, 0.0f, 0.0f };
+		if (hasA) placeZeros(A.sec[s], cutoffHz, na);
+		if (hasB) placeZeros(B.sec[s], cutoffHz, nb);
 		q.b0 = na[0] + (nb[0] - na[0]) * t;
 		q.b1 = na[1] + (nb[1] - na[1]) * t;
 		q.b2 = na[2] + (nb[2] - na[2]) * t;
 
 		// --- 4. Normalise this section so its loudest point is gain 1.
 		//
-		// A resonant pole pair can have a gain of hundreds at its peak (and a
-		// lowpass with zeros at Nyquist starts with a DC gain of ~4 / |D(1)|).
-		// If we let that through untamed, the integer audio path would
-		// overflow. So we find (approximately) the loudest point of this
-		// section's response and divide by it. The response of a single
-		// biquad can only peak at DC, at Nyquist, or near the pole angle, so
-		// those three probes are enough.
+		// A resonant pole pair can have a gain of hundreds at its peak. If we
+		// let that through untamed, the integer audio path would overflow. So
+		// we find (approximately) the loudest point of this section's response
+		// and divide by it. A biquad's response nearly always peaks at DC, at
+		// Nyquist, or near the pole angle, so those three probes are enough.
 		const Probe pDC(0.0f), pNyq(kPi), pPole(theta);
 		float peak = magSq(q, pDC);
 		const float mNyq = magSq(q, pNyq);   if (mNyq > peak) peak = mNyq;
@@ -473,22 +446,44 @@ inline void designCascade(const DesignParams& in, Design& out)
 	// in-between. Those extra-hot peaks are tamed by a gentle soft clipper in
 	// the runner, which also adds a pleasing analogue-ish grit.
 	float totalPeak = 0.0f, body = 0.0f;
-	for (int k = 0; k < kSections + 2; ++k)
+	for (int k = -2; k < numRun; ++k)
 	{
-		const float w = (k < kSections) ? out.poleTheta[k] : (k == kSections ? 0.0f : kPi);
+		float w;
+		if (k == -2) w = 0.0f;              // DC
+		else if (k == -1) w = kPi;          // Nyquist
+		else if (out.poleTheta[k] < 0.0f) continue;   // unused section
+		else w = out.poleTheta[k];
 		const Probe p(w);
 		float mag = 1.0f;
-		for (int s = 0; s < kSections; ++s) mag *= magSq(out.sec[s], p);
+		for (int s = 0; s < numRun; ++s) mag *= magSq(out.sec[s], p);
 		if (mag > totalPeak) totalPeak = mag;
-		if (k >= kSections && mag > body) body = mag;   // the DC & Nyquist probes
+		if (k < 0 && mag > body) body = mag;   // the DC & Nyquist probes
 	}
 	totalPeak = sqrtf(totalPeak);
 	body = sqrtf(body);
 	const float safePeak = totalPeak > 1.0e-4f ? totalPeak : 1.0e-4f;
-	const float peakiness = 1.0f - body / safePeak;    // 0..1
-	float makeup = (1.0f + 3.0f * in.resonance * peakiness) / safePeak;
+	float peakiness = 1.0f - body / safePeak;    // 0..1
+	if (peakiness < 0.0f) peakiness = 0.0f;
+	float makeup = (1.0f + 3.0f * resonance * peakiness) / safePeak;
 	if (makeup > 200.0f) makeup = 200.0f;   // don't amplify near-silence into noise
 	out.makeup = makeup;
+}
+
+// Design for a morph position within a bank.
+inline void designMorph(const BankData& bank, const DesignParams& in, Design& out)
+{
+	int n = bank.numSlots;
+	if (n < 1) n = 1;
+	if (n > kNumSlots) n = kNumSlots;
+	float m = in.morph;
+	if (m < 0.0f) m = 0.0f;
+	if (m > float(n - 1)) m = float(n - 1);
+	int i = int(m);                     // slot "A" (floor)
+	if (i > n - 2) i = n - 2;
+	if (i < 0) i = 0;
+	const int j = (n > 1) ? i + 1 : i;  // slot "B"
+	const float t = (n > 1) ? m - float(i) : 0.0f;
+	designBetween(bank.slot[i], bank.slot[j], t, in.cutoffHz, in.resonance, sectionsNeeded(bank), out);
 }
 
 // ----------------------------------------------------------------------------
@@ -531,8 +526,9 @@ struct FixedBiquad
 // Everything core 0 needs for one stereo update.
 struct FixedFrame
 {
-	FixedBiquad sec[2][kSections];   // [channel][section]
-	int32_t     makeup[2];           // Q16
+	int32_t     numSections;                 // how many biquads to run
+	FixedBiquad sec[2][kMaxSections];        // [channel][section]
+	int32_t     makeup[2];                   // Q16
 };
 
 inline int32_t floatToQ28(float x)
@@ -542,10 +538,19 @@ inline int32_t floatToQ28(float x)
 	return int32_t(x * float(kCoeffOne));
 }
 
-inline void toFixed(const Design& d, FixedBiquad sec[kSections], int32_t& makeup)
+// "A wire": the biquad that passes audio through untouched.
+inline FixedBiquad fixedPassthrough()
 {
-	for (int s = 0; s < kSections; ++s)
+	FixedBiquad q;
+	q.c[0] = kCoeffOne; q.c[1] = q.c[2] = q.c[3] = q.c[4] = 0;
+	return q;
+}
+
+inline void toFixed(const Design& d, FixedBiquad sec[kMaxSections], int32_t& makeup)
+{
+	for (int s = 0; s < kMaxSections; ++s)
 	{
+		if (s >= d.numSections) { sec[s] = fixedPassthrough(); continue; }
 		sec[s].c[0] = floatToQ28(d.sec[s].b0);
 		sec[s].c[1] = floatToQ28(d.sec[s].b1);
 		sec[s].c[2] = floatToQ28(d.sec[s].b2);

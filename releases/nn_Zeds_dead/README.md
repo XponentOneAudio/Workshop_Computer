@@ -1,6 +1,6 @@
 # Zeds Dead: a stereo morphing Z-plane filter
 
-**Status: prototype.** It compiles for the RP2040 and the maths passes the PC test suite in `tools/`, but it has **not yet been tried on a real Workshop Computer**. Expect to tune it by ear.
+**Status: prototype.** It compiles for the RP2040, the maths passes the PC test suite in `tools/`, and the web editor has been tested against a simulated card. It has **not yet been tried on a real Workshop Computer**. Expect to tune it by ear.
 
 Zeds Dead is a stereo multimode filter for the Music Thing Modular Workshop System Computer. It doesn't switch between lowpass, bandpass, highpass and so on: it **morphs** between them. All the way through the morph it stays a single filter, with its poles and zeros gliding smoothly across the *z-plane*. The idea comes from the "Z-plane" filters in E-mu's late-90s samplers and the Morpheus. This card is an original, much simpler take on it, written to be read and learned from.
 
@@ -11,19 +11,56 @@ Zeds Dead is a stereo multimode filter for the Music Thing Modular Workshop Syst
 | Control | Function |
 |---|---|
 | **Main knob** | Cutoff frequency, 20 Hz to 18 kHz (exponential) |
-| **Knob X** | **Morph**: glides through the 5 shapes of the current bank |
+| **Knob X** | **Morph**: glides through the slots in use in the current bank (up to 6) |
 | **Knob Y** | Resonance |
-| **Switch UP** | *Classic* bank: Lowpass → Bandpass → Highpass → Triple notch → Twin peaks |
-| **Switch MIDDLE** | *Vowel* bank: A → E → I → O → U (set Main to about 800 Hz for natural vowels) |
+| **Switch UP** | Bank A. Factory: Lowpass → Bandpass → Highpass → Triple notch → Twin peaks → Quad notch |
+| **Switch MIDDLE** | Bank B. Factory: vowels A → E → I → O → U → ER (set Main to about 800 Hz for natural vowels) |
 | **Switch DOWN** (momentary) | Cycles the stereo spread mode: *linked* / *cutoff spread* / *morph spread* / *both* |
 | **Audio In 1 / 2** | Left / right input. If only In 1 is patched, it feeds both sides. |
 | **Audio Out 1 / 2** | Left / right output |
 | **CV In 1** | Cutoff, 1 V/oct, added to Main. Uses the calibration stored on the module (see below). |
 | **CV In 2** | Morph, added to X. 5 V covers the whole bank. Also calibrated. |
 | **LEDs 0, 1** (top row) | Left / right output level |
-| **LEDs 2 to 5** | A dot of light showing the morph position. For about 1 s after a DOWN press they show the spread mode instead. |
+| **LEDs 2 to 5** | A dot of light showing the morph position. For about 1 s after a DOWN press they show the spread mode instead. All four glow while the web editor is auditioning. |
+| **USB** | Connect to a computer and open the web editor (below) to design your own slots |
 
 Patch ideas: put a slow LFO into CV 2 and sweep through the vowels. Turn on "morph spread" so the two channels sit at different points of the morph, for wide stereo from a mono source. Or feed an envelope to CV 1 and resonance up high on the Classic bank.
+
+---
+
+## The web editor
+
+![The web editor, connected to a (simulated) card](docs/editor.png)
+
+`web/index.html` is a single self-contained page. Open it in **Chrome or Edge**: talking to the card needs WebMIDI with SysEx, which those browsers support. Designing works offline in any browser.
+
+* **Z-plane.** Drag the poles (×) and zeros (○) of each pole/zero pair. Their mirror images below the axis follow automatically. Zeros snap onto the unit circle for a perfect notch. Zoom in around DC for low-frequency work.
+* **Pairs table.** Pick how many pole/zero pairs (1 to 8) this design uses. Type exact values: pole frequency and Q, how much the Resonance knob affects each pole, and the zero type (none, lowpass, highpass, bandpass, notch/pair, or two free real zeros).
+* **Frequency response.** The response at a preview cutoff and resonance, which stand in for the Main and Y knobs. Each pair's own contribution is drawn faintly.
+* **Audition on card.** The card plays the design you're editing, live, while you drag.
+* **Bank.** Six slots per bank. Drag the "design" chip onto a slot (or press *Store*) to put the design there. Drag one slot onto another to swap them. Set how many slots knob X morphs through. The morph preview shows exactly what the card does between slots, and it can follow the card's real knob X.
+* **Card panel.** Shows the **audio core load** (average and peak, measured on the card), the coefficient update rate, how many pairs are running, the knob and CV values, output levels and calibration status. It also has buttons to read, send and save both banks to the card's flash, plus factory and revert.
+* **Library.** Name and keep designs in the browser, and export or import banks as `.json` files.
+
+Everything is stored *relative to the cutoff*, so a design you draw at 2 kHz slides up and down with the Main knob and CV 1, keeping its shape and Q.
+
+The editor contains a line-for-line JavaScript copy of the firmware's filter maths. `tools/check_web.js` proves the two agree: the factory presets encode to identical bytes, and the responses agree within 0.05 dB.
+
+### CPU load and how many pairs you can use
+
+The audio core has 4000 clock cycles per sample at 192 MHz. ComputerCard's own work and the output stage take about 1000 of those, and each pole/zero pair (for both channels) costs roughly 500 more. The card runs only as many pairs as the bank's busiest slot needs. The editor shows an estimate as you design, and the card panel shows the real measurement.
+
+By that estimate, up to about 5 pairs is comfortable, 6 is close to the limit, and 7 to 8 will probably overload the audio core at 192 MHz. You'd hear that as crackling. The firmware allows 8 so you can find the real limit with the meter. These numbers haven't been confirmed on hardware yet.
+
+The meter works by timing the whole audio interrupt with the processor's SysTick counter. That's a small local addition to `ComputerCard.h`, marked at the top of the file.
+
+### USB protocol
+
+The card is a USB-MIDI device named "MTMComputer", like other ComputerCard web-editor cards. Messages are SysEx: `F0 7D <type> <data…> F7`, where 0x7D is MIDI's "non-commercial" manufacturer ID. The editor asks and the card answers. The full message table is at the top of `main.cpp`.
+
+Each slot travels as 209 bytes. Every 32-bit float is split into five 7-bit pieces, because SysEx data bytes can't use the top bit. Saved banks live in the last 4 KB sector of flash, with a magic number, version and CRC-32. If the data is missing or corrupt, the card uses the factory banks.
+
+The firmware is built `copy_to_ram`, so it runs entirely from RAM. Core 1 can then write flash while core 0 keeps playing audio without a glitch, the same approach as the Resonator card (`21_resonator`).
 
 ---
 
@@ -31,23 +68,28 @@ Patch ideas: put a slow LFO into CV 2 and sweep through the vowels. Turn on "mor
 
 | File | What's in it |
 |---|---|
-| `zplane.h` | **All the maths.** Filter frames, the coefficient designer and the fixed-point biquad runner. Has no hardware code, so it compiles on a PC. |
-| `main.cpp` | Hardware glue: knobs, jacks, LEDs, and how the two CPU cores cooperate. |
-| `tools/host_test.cpp` | Runs on a PC. Checks stability and fixed-point accuracy, torture-tests fast modulation, and draws response plots as SVG. |
+| `zplane.h` | **All the maths.** Slot data, the coefficient designer and the fixed-point biquad runner. Has no hardware code, so it compiles on a PC. |
+| `bank.h` | Factory presets, SysEx byte encoding and the flash image format |
+| `main.cpp` | Hardware glue: knobs, jacks, LEDs, USB messages, flash saving, the CPU meter, and how the two CPU cores cooperate |
+| `web/index.html` | The browser editor |
+| `tools/host_test.cpp` | Runs on a PC. Checks stability, fixed-point accuracy and data formats, torture-tests fast modulation, and draws response plots as SVG. |
+| `tools/check_web.js` | Checks the web editor's JavaScript maths against the C++ |
+| `usb_descriptors.c`, `tusb_config.h` | USB-MIDI setup, copied from the ComputerCard `web_interface` example |
 | `docs/*.svg` | Plots of the morph sweeps produced by the host test |
 | `ComputerCard.h` | Chris Johnson's ComputerCard library (copied from `Demonstrations+HelloWorlds`) |
 
 ### Building
 
 ```sh
-# Firmware (needs the Pico SDK 2.x and arm-none-eabi-gcc)
+# Firmware (needs the Pico SDK 2.x with its TinyUSB submodule, and arm-none-eabi-gcc)
 mkdir build && cd build
 PICO_SDK_PATH=/path/to/pico-sdk cmake ..
 make            # → zeds_dead.uf2, drag onto the Computer in BOOTSEL mode
 
-# PC test bench (any C++17 compiler)
+# PC test bench (any C++17 compiler), and the web editor check (Node.js)
 cd tools
 g++ -O2 -std=c++17 -I.. host_test.cpp -o host_test && ./host_test
+./host_test vectors > vectors.txt && node check_web.js vectors.txt
 ```
 
 ---
@@ -139,22 +181,31 @@ Musicians think in terms of **cutoff frequency f** and **resonance Q**. An analo
   s = −ω/(2Q)  ±  j·ω·√(1 − 1/(4Q²))        (ω = 2πf, the analogue "s-plane")
 ```
 
-To get to the digital z-plane we use the mapping **z = e^{sT}**, where T = 1/48000 is the sample period. This is called *impulse invariance* or the *matched-z transform*. Since e^{a + jb} = eᵃ · e^{jb}, the real part of s turns into the **radius** and the imaginary part into the **angle**:
+To get to the digital z-plane we use the mapping **z = e^{sT}**, where T = 1/48000 is the sample period. This is called *impulse invariance* or the *matched-z transform*. Since e^{a + jb} = eᵃ · e^{jb}, the real part of s turns into the **radius** and the imaginary part into the **angle**.
+
+The card stores each pole pair in a form that's convenient for that mapping, *relative to the cutoff*:
 
 ```
-  radius  r = exp(−π·f / (Q·fs))
-  angle   θ = (2π·f/fs) · √(1 − 1/(4Q²))
+  angle   θ = poleRatio × θc          (θc = 2π·cutoff/fs, the cutoff's own angle)
+  radius  r = exp(−θ × poleDamp)
 ```
 
-This is `placePole()` in `zplane.h`. Notice how well behaved it is:
+The damping d = poleDamp is the analogue pole's real part divided by its imaginary part. With that ratio fixed, the **Q stays the same as the cutoff knob moves the pole**, just as on an analogue filter. The relationships are:
 
-* For any Q > 0, r is below 1, so **every pole we can place is stable.**
-* As Q grows, r → 1 and the resonance gets sharper.
-* As Q → 0, r → 0: the poles shrink to the centre of the circle, where they're the same distance from every point on it. They then **have no effect**. The frames use Q = 0 to mean "switch this section off", and morphing towards that grows or dissolves a resonance smoothly.
+```
+  Q  = √(1 + d²) / (2d)                d = 1 / √(4Q² − 1)
+  natural frequency = θ·√(1 + d²)      (a damped pole rings a little below it)
+```
+
+The Resonance knob divides d, which multiplies the Q, by up to 1 + 15 × (that pole's resonance weight). See `placePole()` in `zplane.h`. Notice how well behaved it is:
+
+* For any d > 0, r is below 1, so **every pole we can place is stable.** As a final safety net, r is capped at 0.9995.
+* Small d means r close to 1: a sharp resonance.
+* A pole at radius 0 sits at the centre of the circle, the same distance from every point on it, so it **has no effect**. When a slot uses fewer pairs than its neighbour, its missing poles count as radius 0. Morphing then grows or dissolves those resonances smoothly.
 
 ## 5. Placing the zeros: the "mode"
 
-The zeros decide what *kind* of filter a section is. With a numerator n0 + n1·z⁻¹ + n2·z⁻²:
+The zeros decide what *kind* of filter a section is. The card stores them as either a **mirror pair** (angle relative to the cutoff, plus a damping, exactly like a pole, and allowed onto the circle) or **two real zeros** at fixed places on the real axis. With a numerator n0 + n1·z⁻¹ + n2·z⁻²:
 
 | Kind | (n0, n1, n2) | Zeros at | Effect |
 |---|---|---|---|
@@ -163,38 +214,41 @@ The zeros decide what *kind* of filter a section is. With a numerator n0 + n1·z
 | highpass | (1, −2, 1) | z = +1 twice | silence at DC |
 | bandpass | (1, 0, −1) | z = +1 and −1 | silence at both ends |
 | notch | (1, −2cos θ, 1) | e^{±jθ}, on the circle | silence at frequency θ |
+| any pair | (1, −2r·cos θ, r²) | r·e^{±jθ} | a dip, deeper as r → 1 |
+| any real | (1, −(a+b), ab) | a and b | slopes and shelves |
 
 Check one yourself: (1 + z⁻¹)² = 1 + 2z⁻¹ + z⁻², and it's zero when z = −1.
 
 ## 6. Cascades: building bigger filters from biquads
 
-One biquad gives a 2-pole (12 dB/octave) filter. For steeper or more complex shapes we chain three, so audio goes through section 0, then 1, then 2. The total transfer function is the product H₀·H₁·H₂: **6 poles and 6 zeros** to place wherever we like. A steep 36 dB/octave lowpass is three lowpass sections at the same frequency with different Q values (here the textbook Butterworth values 0.518, 0.707 and 1.932). A vowel is three resonances at that vowel's formant frequencies.
+One biquad gives a 2-pole (12 dB/octave) filter. For steeper or more complex shapes we chain several (1 to 8, chosen per slot in the editor). With three, so audio goes through section 0, then 1, then 2. The total transfer function is the product H₀·H₁·H₂: **6 poles and 6 zeros** to place wherever we like. A steep 36 dB/octave lowpass is three lowpass sections at the same frequency with different Q values (here the textbook Butterworth values 0.518, 0.707 and 1.932). A vowel is three resonances at that vowel's formant frequencies.
 
 Why not one big 6th-order equation? High-order direct forms are extremely sensitive to rounding: a tiny coefficient error can move a pole outside the circle. Cascaded biquads keep each pole pair under separate control, so they're far more robust. This is the standard practice.
 
-## 7. Frames and morphing: the "Z-plane" idea
+## 7. Slots and morphing: the "Z-plane" idea
 
-A **frame** is a complete recipe for the three sections. For each one it gives a pole frequency (as a ratio of the cutoff), a Q, and a zero type. A **bank** is an ordered list of 5 frames. Knob X selects a position like 2.3, meaning "30 % of the way from frame 2 to frame 3".
+A **slot** is a complete recipe for up to 8 sections. For each one it gives a pole position (relative to the cutoff), a resonance weight, and the zeros. A **bank** is an ordered list of up to 6 slots. Knob X selects a position like 2.3, meaning "30 % of the way from slot 3 to slot 4".
 
-The naive way to morph would be to run all five filters and crossfade their *outputs*. That sounds like several filters mixed together: you hear phase cancellation and "double" peaks. Instead we **interpolate the filter itself**:
+The naive way to morph would be to run all six filters and crossfade their *outputs*. That sounds like several filters mixed together: you hear phase cancellation and "double" peaks. Instead we **interpolate the filter itself**:
 
-**Poles**: interpolated in polar form, using `designCascade()` step 2:
+**Poles**: interpolated in polar form (`designBetween()` step 2):
 
 * Radius: linear, r = r_A + (r_B − r_A)·t. Both endpoints are below 1, so every in-between value is too. **The filter is guaranteed stable at every point of the morph.** This is the most important line in the card.
 * Angle: geometric, θ = θ_A^(1−t)·θ_B^t. That's linear in *log-frequency*, which matches how we hear pitch. A formant gliding from 300 Hz to 2400 Hz passes 850 Hz at the halfway point, not 1350 Hz.
 
 **Zeros**: here we interpolate the numerator coefficients directly. Zeros only appear in the numerator, so they **can't** cause instability, and the simplest method is fine. It also handles a bandpass's lone real zeros, which don't come in mirror pairs.
 
-The **order of the frames** shapes the sound of the morph. In the Classic bank:
+The **order of the slots** shapes the sound of the morph. In factory bank A:
 
 * **LP → BP**: the numerator goes from (1,2,1) to (1,0,−1). Halfway is (1,1,0), a single zero at Nyquist, which is a gentle lowpass. So you hear lowpass, then less low, then bandpass.
 * **BP → HP**: halfway is (1,−1,0), a single zero at DC, which is a gentle highpass.
 * **HP → Notch**: the zero pair *slides around the unit circle* from 0 Hz up to the cutoff. You can hear the notch sweep upward.
 * **Notch → Twin peaks**: the side notches dissolve as two resonances grow either side of the centre notch.
+* **Twin peaks → Quad notch**: a fourth pair appears out of nothing. Its pole grows out from the centre of the circle, giving a phaser-like comb of notches.
 
 ## 8. Keeping the volume sensible
 
-A resonant pole pair can have a gain of several hundred at its peak. Two normalisation steps keep that under control (`designCascade()` steps 4 and 5):
+A resonant pole pair can have a gain of several hundred at its peak. Two normalisation steps keep that under control (`designBetween()` steps 4 and 5):
 
 1. **Per section**: we measure the gain at DC, at Nyquist and at the pole angle (one of these is always roughly the loudest point of a biquad) and scale b0, b1, b2 so the peak is 1. Nothing can then overflow inside the cascade.
 2. **Overall makeup**: we measure the whole cascade at the same probe points and set a gain that brings its peak back to 1. If we stopped there, turning up resonance would make everything *except* the peak quieter. So we let the peak rise by up to +12 dB, in proportion to resonance × "peakiness":
@@ -209,7 +263,7 @@ A resonant pole pair can have a gain of several hundred at its peak. Two normali
 
 The RP2040's Cortex-M0+ cores have **no floating-point hardware**. At 192 MHz there are 4000 clock cycles per sample, so we split the work:
 
-* **Core 1** does all the float maths (`exp`, `cos`, `sqrt`, the normalisation) a few thousand times per second, and produces fresh coefficients.
+* **Core 1** handles USB, and does all the float maths (`exp`, `cos`, `sqrt`, the normalisation) many times per second to produce fresh coefficients. The editor shows the actual rate.
 * **Core 0** runs the 48 kHz audio callback using **integers only**.
 
 Core 0 uses *fixed point*: we pretend there is a binary point at a fixed position inside an integer.
@@ -227,7 +281,7 @@ Two classic tricks, both explained in the code comments:
 
 Core 1 writes coefficients and core 0 reads them, at the same time. If core 0 read an `a1` from the new design and an `a2` from the old one, that pair might be an unstable filter, even though both designs are stable on their own. So we use **double buffering**. There are two coefficient buffers: core 1 fills the one core 0 isn't using, then flips an index (with a memory barrier, `__dmb()`) to hand it over.
 
-On core 0, every sample, each coefficient moves 1/32 of the way towards the latest target (`ProcessSample()` step 1). That removes zipper noise. It's safe because the region of stable (a1, a2) values for a biquad is a **triangle**, |a2| < 1 and |a1| < 1 + a2, and a triangle is *convex*: any blend of two points inside it stays inside it.
+On core 0, every sample, each coefficient moves 1/32 of the way towards the latest target (`ProcessSample()` step 2). That removes zipper noise. It's safe because the region of stable (a1, a2) values for a biquad is a **triangle**, |a2| < 1 and |a1| < 1 + a2, and a triangle is *convex*: any blend of two points inside it stays inside it.
 
 ## 11. Stereo
 
@@ -249,16 +303,22 @@ so that 1 V into CV In 1 really moves the cutoff by one octave. These two functi
 
 ## Testing on a PC
 
-`tools/host_test.cpp` uses the exact same `zplane.h` code as the card:
+`tools/host_test.cpp` uses the exact same `zplane.h` and `bank.h` code as the card:
 
 ```
-[stability] 50220 designs checked, largest pole radius 0.999965
-[accuracy] worst fixed-vs-float gain error 0.100 dB
-[torture] 20 s fast modulation: peak 2048, 9.287% samples at full scale, silent tail 0
+[stability] 93000 designs checked, largest pole radius 0.999500
+[accuracy] 45 measurements, worst fixed-vs-float gain error 0.129 dB
+[torture] 30 s fast modulation over 3 banks: peak 2048, 11.912% samples at full scale, silent tail 1
+[data] slot = 209 SysEx bytes, flash image = 2372 bytes; encode/decode, garbage and CRC checks done
 ALL CHECKS PASSED
+
+[web] 12 slots byte-identical check, 84 responses compared, worst difference 0.0417 dB
+WEB EDITOR MATCHES FIRMWARE
 ```
 
-It also writes the plots in `docs/`. They're a good way to learn: edit a frame in `zplane.h`, re-run, and see the result.
+The torture test includes a deliberately extreme 8-pair bank, and the data test feeds 2000 random garbage slots through the decoder to check they always come out as safe, stable filters.
+
+The test also writes the plots in `docs/`. They're a good way to learn: edit a preset in `bank.h`, re-run, and see the result. (Or use the web editor!)
 
 ![Classic bank, no resonance](docs/response_classic_res0.svg)
 ![Classic bank, resonance 0.6](docs/response_classic_res06.svg)
@@ -266,8 +326,9 @@ It also writes the plots in `docs/`. They're a good way to learn: edit a frame i
 
 ## Known limitations and ideas
 
-* **Not yet tested on hardware.** The CPU load on core 0 is estimated, not measured. If audio glitches, reduce `kSections` to 2 or lower the coefficient-smoothing work.
+* **Not yet tested on hardware.** In particular, the USB link, the flash saving and the CPU meter have only been tested against a simulated card in the browser. The per-pair CPU cost is an estimate until the meter confirms it.
 * CV tracking relies on the calibration stored in the module's EEPROM (see "CV calibration" above). A module that has never been calibrated falls back to an ideal ±6 V scaling, which is only roughly 1 V/oct. The Workshop Computer's CV inputs are also less precise than its audio inputs: one ADC step is about 3 mV, or about 3.5 cents.
 * At very low cutoffs (below about 40 Hz), float precision in the coefficient design makes the pole frequency slightly inaccurate (around 1 to 2 %). A state-variable or "coupled form" runner would fix this.
 * The pulse inputs and CV outputs are unused. Ideas: pulse to step between banks, or CV out of the morph position or an envelope follower.
-* More banks would be easy: just add `Frame` tables. Some to try: phaser-like notch combs, "telephone" band-limits, or user frames edited over USB.
+* Slot names live only in the editor (and its exported files). The card stores the shapes, not the names.
+* Ideas: more banks, overclocking to allow 8 pairs comfortably, or a pulse input to step between banks.

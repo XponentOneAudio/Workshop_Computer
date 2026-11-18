@@ -1,12 +1,12 @@
 Name: Zeds Dead
-short-description: Stereo morphing Z-plane multimode filter that glides between LP, BP, HP, notch, twin-peak and vowel shapes.
+short-description: Stereo morphing Z-plane filter. Design your own pole/zero shapes in a web editor and morph between six slots.
 Language: C++ (Pico SDK + ComputerCard)
 Creator: TBC
-Version: 0.1
+Version: 0.2
 Status: Prototype
 draft: true
 date-created: 2026-11-16
-date-updated: 2026-11-16
+date-updated: 2026-11-18
 
 tags:
   - filter
@@ -18,8 +18,9 @@ tags:
 summary: |
   Stereo 6-pole filter whose poles and zeros glide smoothly between filter shapes ("Z-plane" morphing).
   Main sets cutoff, X morphs between the five shapes of the current bank, Y sets resonance.
-  Switch up selects the Classic bank (LP, BP, HP, notch, twin peaks); middle selects the Vowel bank (A, E, I, O, U).
-  Pressing the switch down cycles stereo spread modes.
+  Switch up selects bank A, middle selects bank B; each holds up to six slots, editable over USB in the web editor
+  (factory: classic LP/BP/HP/notch shapes and vowels). Pressing the switch down cycles stereo spread modes.
+  The editor lets you drag poles and zeros, audition designs live, see the card's CPU load, and save banks to flash.
 
 panel:
   inputs:
@@ -50,8 +51,8 @@ controls:
         name: Cutoff
         description: 20 Hz to 18 kHz, exponential
       x:
-        name: Morph (Classic)
-        description: Lowpass → Bandpass → Highpass → Triple notch → Twin peaks
+        name: Morph (Bank A)
+        description: Moves through the slots of bank A (factory LP → BP → HP → notch → twin peaks → quad notch)
       y:
         name: Resonance
         description: Sharpness of the resonant poles
@@ -60,8 +61,8 @@ controls:
         name: Formant Shift
         description: Scales all formants; around 800 Hz gives natural vowels
       x:
-        name: Morph (Vowels)
-        description: A → E → I → O → U
+        name: Morph (Bank B)
+        description: Moves through the slots of bank B (factory vowels A → E → I → O → U → ER)
       y:
         name: Resonance
         description: Sharpness of the formants
@@ -91,3 +92,9 @@ controls:
         - id: LED5
           name: Morph Position D
           description: Morph position dot (or spread mode 3 after a switch press)
+
+host:
+  usb:
+    - name: Zeds Dead Editor
+      role: editor
+      description: Browser editor (web/index.html, WebMIDI) for designing pole/zero slots, auditioning, CPU load readout and saving banks to flash

@@ -6,6 +6,9 @@ version 0.4.0   -  14 June 2026
 Local changes for nn_Zeds_dead (re-apply when updating ComputerCard):
 - Added CVInMillivolts(), CVIn1Millivolts(), CVIn2Millivolts()
   (copied from releases/00_Simple_MIDI)
+- Added audio-interrupt timing for the CPU load meter: SysTick is started in
+  AudioWorker(), BufferFull() measures its own duration, and
+  ISRCyclesAverage() / ISRCyclesPeak() / ResetISRPeak() report it.
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -384,6 +387,16 @@ protected:
 	/// Return true iff input calibration has been loaded from EEPROM.
 	bool InputsCalibrated() const { return inputsCalibrated; }
 
+	// Local addition (nn_Zeds_dead): audio interrupt timing, in CPU clock
+	// cycles. The whole per-sample interrupt (ComputerCard's own work plus
+	// ProcessSample) is timed with the core's SysTick counter.
+	/// Smoothed average duration of the audio interrupt, in clock cycles.
+	uint32_t ISRCyclesAverage() const { return isrCyclesAvgQ8 >> 8; }
+	/// Longest audio interrupt since the last ResetISRPeak(), in clock cycles.
+	uint32_t ISRCyclesPeak() const { return isrCyclesPeak; }
+	/// Start a new peak measurement (safe to call from the other core).
+	void ResetISRPeak() { isrPeakReset = true; }
+
 	/// Return calibrated Audio In 1 in millivolts.
 	int32_t __not_in_flash_func(AudioIn1Millivolts)()
 	{
@@ -488,6 +501,11 @@ private:
 	InputCalCoeffs inputCalCoeffs[4]; // [0]=AudioIn1, [1]=AudioIn2, [2]=CVIn1, [3]=CVIn2
 	bool inputsCalibrated;
 
+	// Local addition (nn_Zeds_dead): audio interrupt timing
+	volatile uint32_t isrCyclesAvgQ8 = 0;   // average, ×256
+	volatile uint32_t isrCyclesPeak = 0;
+	volatile bool isrPeakReset = false;
+
 	// Buffers that DMA reads into / out of
 	uint16_t ADC_Buffer[2][8];
 	uint16_t SPI_Buffer[2][2];
@@ -555,6 +573,7 @@ private:
 #include "hardware/i2c.h"
 #include "hardware/irq.h"
 #include "hardware/spi.h"
+#include "hardware/structs/systick.h"   // local addition (nn_Zeds_dead)
 
 // Input normalisation probe pin
 #define NORMALISATION_PROBE 4
@@ -634,6 +653,12 @@ uint32_t __not_in_flash_func(ComputerCard::next_norm_probe)()
 // Main audio core function
 void __not_in_flash_func(ComputerCard::AudioWorker)()
 {
+	// Local addition (nn_Zeds_dead): start this core's SysTick timer as a free-
+	// running 24-bit down-counter at the CPU clock, used to time BufferFull().
+	systick_hw->csr = 0;
+	systick_hw->rvr = 0x00FFFFFF;
+	systick_hw->cvr = 0;
+	systick_hw->csr = 0x5;   // ENABLE | CLKSOURCE = processor clock, no interrupt
 
 	adc_select_input(0);
 	adc_set_round_robin(0b0001111U);
@@ -741,6 +766,7 @@ void __not_in_flash_func(ComputerCard::CorrectADCDNL)(uint16_t &value) const
 // Per-audio-sample ISR, called when two sets of ADC samples have been collected from all four inputs
 void __not_in_flash_func(ComputerCard::BufferFull)()
 {
+	const uint32_t isrStart = systick_hw->cvr;   // local addition (nn_Zeds_dead)
 	static int startupCounter = 8; // Decreases by 1 each sample, can do startup things when nonzero.
 	static int mux_state = 0;
 	static int norm_probe_count = 0;
@@ -919,6 +945,13 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	lastSwitchVal = switchVal;
 	
 	if (startupCounter) startupCounter--;
+
+	// Local addition (nn_Zeds_dead): how long did this interrupt take?
+	// SysTick counts DOWN, and wraps within 24 bits.
+	const uint32_t isrCycles = (isrStart - systick_hw->cvr) & 0x00FFFFFF;
+	isrCyclesAvgQ8 = isrCyclesAvgQ8 + isrCycles - (isrCyclesAvgQ8 >> 8);   // ~256-sample average
+	if (isrPeakReset) { isrCyclesPeak = isrCycles; isrPeakReset = false; }
+	else if (isrCycles > isrCyclesPeak) isrCyclesPeak = isrCycles;
 }
 
 // Properties of the flash chip, read once by ProbeFlash() below, before main()
