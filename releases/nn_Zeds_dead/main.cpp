@@ -95,7 +95,8 @@ using namespace zp;
 //    0x04 SET_NUMSLOTS bank n              0x44 ACK   bank n
 //    0x05 PREVIEW   on [<slot>]            (no reply — sent many times a second)
 //    0x06 SAVE                             0x46 SAVED ok
-//    0x07 STATUS                           0x47 STATUS cpu, rates, knobs ...
+//    0x07 STATUS                           0x47 STATUS cpu, rates, late count
+//                                          0x67 STATUS (part 2) knobs, levels ...
 //    0x08 FACTORY   bank                   0x48 ACK   bank
 //    0x09 REVERT                           0x49 ACK   ok (reloaded from flash)
 //
@@ -169,6 +170,17 @@ protected:
 	{
 		const FixedFrame& target = frames[readIndex];
 
+		// ---- 0. Switch off the CV-output interrupt (once). ------------------
+		// ComputerCard drives the two CV outputs from a second interrupt on
+		// this core, ~96 000 times a second, to dither its PWM. This card
+		// doesn't use the CV outputs, so that is pure overhead: turning it off
+		// gives a few percent of the audio core back. (They just hold still.)
+		if (!cvPwmIrqOff)
+		{
+			irq_set_enabled(PWM_IRQ_WRAP, false);
+			cvPwmIrqOff = true;
+		}
+
 		// ---- 1. How many biquads to run? ---------------------------------
 		// This depends on the bank (its largest slot). Running only what's
 		// needed is what keeps the CPU load down for simple shapes. If more
@@ -190,9 +202,16 @@ protected:
 		//
 		// Core 1 delivers fresh coefficients a thousand or more times a
 		// second. Jumping straight to them would cause small steps ("zipper
-		// noise"), so each sample we move 1/32 of the way from where we are
-		// towards the latest target: a one-pole low-pass on every coefficient,
-		// with a time constant of 32 samples ≈ 0.7 ms.
+		// noise"), so we glide: move a fraction of the way from where we are
+		// towards the latest target — a one-pole low-pass on every coefficient.
+		//
+		// To save time on this core we don't glide every biquad every sample.
+		// The samples take turns in groups of four: on each sample only the
+		// biquads whose number matches (section number mod 4) are moved, by
+		// 1/8 of the way. Each coefficient is therefore updated every 4th
+		// sample by 1/8 — on average the same glide as 1/32 every sample,
+		// a time constant of about 32 samples ≈ 0.7 ms — for a quarter of
+		// the work.
 		//
 		// Is it safe to blend coefficients like this? For a single biquad the
 		// set of stable (a1, a2) values is a TRIANGLE:
@@ -202,13 +221,14 @@ protected:
 		// the old and new (both stable) coefficients, so every intermediate
 		// filter is stable too. (Numerator coefficients can't affect
 		// stability, so they can be blended freely.)
+		smoothPhase = (smoothPhase + 1) & 3;
 		for (int ch = 0; ch < 2; ++ch)
 		{
-			for (int s = 0; s < n; ++s)
+			for (int s = smoothPhase; s < n; s += 4)
 			{
 				int32_t* cur = current.sec[ch][s].c;
 				const int32_t* tgt = target.sec[ch][s].c;
-				for (int k = 0; k < 5; ++k) cur[k] += (tgt[k] - cur[k]) >> 5;
+				for (int k = 0; k < 5; ++k) cur[k] += (tgt[k] - cur[k]) >> 3;
 			}
 			current.makeup[ch] += (target.makeup[ch] - current.makeup[ch]) >> 5;
 		}
@@ -245,7 +265,7 @@ private:
 			x = runBiquad(current.sec[ch][s], state[ch][s], x);
 
 		// Makeup gain is Q16 (65536 = ×1).
-		int64_t y = (int64_t(x) * current.makeup[ch]) >> kMakeupFracBits;
+		int64_t y = smull32(x, current.makeup[ch]) >> kMakeupFracBits;
 		const int64_t lim = int64_t(1) << 30;
 		if (y >  lim) y =  lim;
 		if (y < -lim) y = -lim;
@@ -599,7 +619,8 @@ private:
 			put14(out + 3, peak);
 			put14(out + 5, designRate);
 			out[7] = uint8_t(numRunning);
-			sendSysEx(out, 8);   // first part: the CPU figures
+			put14(out + 8, ISRLateCount() & 0x3FFF);   // audio interrupts that started late
+			sendSysEx(out, 10);   // first part: the CPU figures
 			uint8_t more[16];
 			more[0] = uint8_t(msg::kStatus | msg::kReply | 0x20);   // 0x67: second part
 			more[1] = uint8_t(activeBank);
@@ -689,6 +710,8 @@ private:
 	// Core 0 only.
 	FixedFrame current;                    // smoothed coefficients in use
 	BiquadState state[2][kMaxSections];    // filter memories [channel][section]
+	int smoothPhase = 0;                   // which quarter of the biquads glide this sample
+	bool cvPwmIrqOff = false;
 
 	// Core 1 only.
 	BankData banks[kNumBanks];

@@ -560,6 +560,69 @@ inline void toFixed(const Design& d, FixedBiquad sec[kMaxSections], int32_t& mak
 	makeup = int32_t(d.makeup * float(1 << kMakeupFracBits));
 }
 
+// ---- A fast 32 × 32 → 64-bit signed multiply --------------------------------
+//
+// The Cortex-M0+ has a single-cycle MULS, but it only gives the LOW 32 bits of
+// a product. Writing  int64_t(a) * b  in C makes the compiler call a library
+// routine that multiplies two full 64-bit numbers (6 multiplies, ~25
+// instructions, plus the call) — wasteful, since our numbers are only 32-bit.
+//
+// This does the schoolbook method with 16-bit "digits" instead:
+//
+//     a = ah·2¹⁶ + al        (ah signed, al unsigned 0..65535)
+//     b = bh·2¹⁶ + bl
+//     a·b = ah·bh·2³² + (ah·bl + al·bh)·2¹⁶ + al·bl
+//
+// Each of the four partial products fits in 32 bits, so each is one MULS:
+//   al·bl  < 2³²            (unsigned)
+//   ah·bl, al·bh  within ±2³¹  (e.g. −32768 × 65535 = −2147450880)
+//   ah·bh  ≤ 2³⁰
+//
+// On the RP2040 it is written in Thumb assembly: 17 instructions, no call.
+// (Written in C, the compiler handles the 64-bit additions so clumsily that
+// it ends up SLOWER than the library routine — we measured.) Each middle
+// product is added in two halves: its low 16 bits shifted up into the low
+// word, and its sign-extended top 16 bits into the high word, with ADCS
+// carrying between them. On a PC the plain C version below is used, and
+// tools/emulate_m0.py runs the real ARM code in an emulator to check the two
+// agree.
+static inline int64_t __not_in_flash_func(smull32)(int32_t a, int32_t b)
+{
+#if defined(__ARM_ARCH_6M__)
+	uint32_t lo, hi, t;
+	__asm__ (
+		".syntax unified         \n\t"   // same as the Pico SDK's pico_default_asm
+		"uxth %[lo], %[a]        \n\t"   // lo = al
+		"asrs %[a], %[a], #16    \n\t"   // a  = ah
+		"uxth %[t], %[b]         \n\t"   // t  = bl
+		"asrs %[b], %[b], #16    \n\t"   // b  = bh
+		"movs %[hi], %[a]        \n\t"
+		"muls %[hi], %[b]        \n\t"   // hi = ah·bh
+		"muls %[a], %[t]         \n\t"   // a  = ah·bl   (middle product 1)
+		"muls %[t], %[lo]        \n\t"   // t  = al·bl   (low word so far)
+		"muls %[lo], %[b]        \n\t"   // lo = al·bh   (middle product 2)
+		"lsls %[b], %[a], #16    \n\t"   // add middle product 1 × 2¹⁶
+		"asrs %[a], %[a], #16    \n\t"
+		"adds %[t], %[b]         \n\t"
+		"adcs %[hi], %[a]        \n\t"
+		"lsls %[b], %[lo], #16   \n\t"   // add middle product 2 × 2¹⁶
+		"asrs %[lo], %[lo], #16  \n\t"
+		"adds %[t], %[b]         \n\t"
+		"adcs %[hi], %[lo]       \n\t"
+		: [lo] "=&l"(lo), [hi] "=&l"(hi), [t] "=&l"(t), [a] "+l"(a), [b] "+l"(b)
+		:
+		: "cc");
+	return int64_t((uint64_t(hi) << 32) | t);
+#else
+	const uint32_t al = uint32_t(a) & 0xFFFFu, bl = uint32_t(b) & 0xFFFFu;
+	const int32_t  ah = a >> 16, bh = b >> 16;
+	uint64_t r = (uint64_t(uint32_t(ah * bh)) << 32) + uint64_t(al * bl);
+	r += uint64_t(int64_t(ah * int32_t(bl))) << 16;
+	r += uint64_t(int64_t(int32_t(al) * bh)) << 16;
+	return int64_t(r);
+#endif
+}
+
 // Memory of one biquad between samples: the last two inputs and outputs, plus
 // the rounding error "left over" from the previous output (see below).
 struct BiquadState
@@ -587,11 +650,11 @@ struct BiquadState
 static inline int32_t __not_in_flash_func(runBiquad)(const FixedBiquad& q, BiquadState& st, int32_t x)
 {
 	int64_t acc = st.err;
-	acc += int64_t(q.c[0]) * x;
-	acc += int64_t(q.c[1]) * st.x1;
-	acc += int64_t(q.c[2]) * st.x2;
-	acc -= int64_t(q.c[3]) * st.y1;
-	acc -= int64_t(q.c[4]) * st.y2;
+	acc += smull32(q.c[0], x);
+	acc += smull32(q.c[1], st.x1);
+	acc += smull32(q.c[2], st.x2);
+	acc -= smull32(q.c[3], st.y1);
+	acc -= smull32(q.c[4], st.y2);
 
 	int64_t y = acc >> kCoeffFracBits;           // back to sample scale
 	st.err = acc - (y << kCoeffFracBits);        // the bits we just dropped
@@ -616,15 +679,16 @@ static inline int32_t __not_in_flash_func(softClip)(int32_t v)
 	const int32_t knee = kFullScale + (kFullScale >> 1);   // 1.5 × full scale
 	if (v >=  knee) return  kFullScale;
 	if (v <= -knee) return -kFullScale;
-	// v³ would overflow 64 bits, so drop 8 bits first:
-	//   w = v/2⁸  →  v³/F² = w³·2²⁴ / 2⁴⁶ = w³ / 2²²
-	const int64_t w = v >> 8;
-	const int64_t cube = (w * w * w) >> 22;
+	// v³ would overflow 64 bits, so drop 9 bits first:
+	//   w = v/2⁹  →  v³/F² = w³·2²⁷ / 2⁴⁶ = w³ / 2¹⁹
+	// |v| < 1.5·2²³ so |w| < 24576 and w² < 2³⁰: fits a 32-bit int.
+	const int32_t w = v >> 9;
+	const int64_t cube = smull32(w * w, w) >> 19;
 	// Multiply by 4/27 WITHOUT dividing: division is very slow on the M0+
 	// (no divide instruction for 64-bit numbers), so instead we multiply by
 	// round(4/27 × 2¹⁶) = 9709 and shift right by 16. Same answer to within
 	// one part in ~20000, at a fraction of the cost.
-	return int32_t(v - ((cube * 9709) >> 16));
+	return int32_t(v - (smull32(int32_t(cube), 9709) >> 16));   // |cube| < 2²⁵
 }
 
 } // namespace zp

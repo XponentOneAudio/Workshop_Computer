@@ -8,7 +8,9 @@ Local changes for nn_Zeds_dead (re-apply when updating ComputerCard):
   (copied from releases/00_Simple_MIDI)
 - Added audio-interrupt timing for the CPU load meter: SysTick is started in
   AudioWorker(), BufferFull() measures its own duration, and
-  ISRCyclesAverage() / ISRCyclesPeak() / ResetISRPeak() report it.
+  ISRCyclesAverage() / ISRCyclesPeak() / ResetISRPeak() report it, and
+  ISRLateCount() counts interrupts that started late (the previous one ran
+  past its 20.8 us slot).
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -396,6 +398,11 @@ protected:
 	uint32_t ISRCyclesPeak() const { return isrCyclesPeak; }
 	/// Start a new peak measurement (safe to call from the other core).
 	void ResetISRPeak() { isrPeakReset = true; }
+	/// How many audio interrupts have started more than 1/8 of a sample late
+	/// since power-up. Interrupts are started by the ADC, so they should be
+	/// exactly one sample apart; a late one means the one before overran
+	/// its slot (and the ADC/knob readings may have been disturbed).
+	uint32_t ISRLateCount() const { return isrLateCount; }
 
 	/// Return calibrated Audio In 1 in millivolts.
 	int32_t __not_in_flash_func(AudioIn1Millivolts)()
@@ -505,6 +512,9 @@ private:
 	volatile uint32_t isrCyclesAvgQ8 = 0;   // average, ×256
 	volatile uint32_t isrCyclesPeak = 0;
 	volatile bool isrPeakReset = false;
+	volatile uint32_t isrLateCount = 0;
+	uint32_t isrPeriodCycles = 0, isrPrevStart = 0;
+	bool isrTimingArmed = false;
 
 	// Buffers that DMA reads into / out of
 	uint16_t ADC_Buffer[2][8];
@@ -659,6 +669,7 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 	systick_hw->rvr = 0x00FFFFFF;
 	systick_hw->cvr = 0;
 	systick_hw->csr = 0x5;   // ENABLE | CLKSOURCE = processor clock, no interrupt
+	isrPeriodCycles = clock_get_hz(clk_sys) / 48000;
 
 	adc_select_input(0);
 	adc_set_round_robin(0b0001111U);
@@ -766,7 +777,15 @@ void __not_in_flash_func(ComputerCard::CorrectADCDNL)(uint16_t &value) const
 // Per-audio-sample ISR, called when two sets of ADC samples have been collected from all four inputs
 void __not_in_flash_func(ComputerCard::BufferFull)()
 {
-	const uint32_t isrStart = systick_hw->cvr;   // local addition (nn_Zeds_dead)
+	// Local addition (nn_Zeds_dead): note when we started, and whether we
+	// started late compared with the previous interrupt.
+	const uint32_t isrStart = systick_hw->cvr;
+	{
+		const uint32_t gap = (isrPrevStart - isrStart) & 0x00FFFFFF;   // SysTick counts down
+		if (isrTimingArmed && gap > isrPeriodCycles + (isrPeriodCycles >> 3)) isrLateCount = isrLateCount + 1;
+		isrPrevStart = isrStart;
+		isrTimingArmed = true;
+	}
 	static int startupCounter = 8; // Decreases by 1 each sample, can do startup things when nonzero.
 	static int mux_state = 0;
 	static int norm_probe_count = 0;

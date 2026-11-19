@@ -666,7 +666,8 @@ const Card = {
     const m = Array.from(data.slice(2, data.length - 1));
     if (m[0] === 0x47) {           // status, part 1: CPU
       Object.assign(this.status, { cpu: (m[1] | (m[2] << 7)) / 10, cpuPeak: (m[3] | (m[4] << 7)) / 10,
-                                   rate: m[5] | (m[6] << 7), running: m[7] });
+                                   rate: m[5] | (m[6] << 7), running: m[7],
+                                   late: m.length >= 10 ? (m[8] | (m[9] << 7)) : null });
     } else if (m[0] === 0x67) {    // status, part 2: knobs
       Object.assign(this.status, { bank: m[1], morph: (m[2] | (m[3] << 7)) / 1000, cutoff: (m[4] | (m[5] << 7)) * 2,
                                    res: m[6] / 127, spread: m[7], preview: !!m[8], lvlL: m[9], lvlR: m[10],
@@ -1052,13 +1053,14 @@ const UI = {
     drawCurve(ctx, X, Y, ZP.designMorph(bank, state.cutoff, state.morph, state.res), cssVar("--ink"), { width: 2.2, fill: 0.06, bottom: h - 18 });
   },
 
-  // ---- CPU estimates. Rough model from the firmware's cycle budget: about
-  // 1000 cycles of fixed work plus ~500 per pole/zero pair (both channels),
-  // out of 4000 cycles per sample at 192 MHz. The card's own meter is the
-  // real answer; this just warns before you send something too heavy.
+  // ---- CPU estimates. Model from the first hardware measurement plus the
+  // emulator's cycle counts: about 1150 cycles of fixed work plus ~520 per
+  // pole/zero pair (both channels), out of 4000 cycles per sample at 192 MHz.
+  // The card's own meter is the real answer; this just warns before you send
+  // something too heavy.
   estimate(n) {
     const per = (Card.info && Card.info.cyclesPerSample) || 4000;
-    return Math.round(100 * (1000 + 500 * n) / per);
+    return Math.round(100 * (1150 + 520 * n) / per);
   },
 
   updateReadouts() {
@@ -1208,8 +1210,10 @@ const UI = {
   },
 
   // ---- Card status
+  lateBase: null, lastLate: 0,
   cardChanged() {
     const c = Card.connected;
+    this.lateBase = null; this.lastLate = 0;
     $("dot").classList.toggle("ok", c);
     $("status-text").textContent = c ? `Connected · Zeds Dead ${Card.info.version}` : "Not connected";
     $("btn-connect").textContent = c ? "Connected" : "Connect card";
@@ -1228,19 +1232,35 @@ const UI = {
   statusChanged() {
     const s = Card.status;
     $("c-cpu").textContent = s.cpu.toFixed(1) + "%";
-    $("c-cpu-peak").textContent = `peak ${s.cpuPeak.toFixed(1)}%`;
+    // Late interrupts: counted on the card since power-up (14-bit, wraps), so
+    // show how many happened since this page connected.
+    let lateTxt = "";
+    if (s.late !== null && s.late !== undefined) {
+      if (this.lateBase === null) this.lateBase = s.late;
+      const late = (s.late - this.lateBase + 16384) % 16384;
+      lateTxt = late ? ` · ${late} late` : " · none late";
+      $("c-cpu-box").classList.toggle("warn", s.cpuPeak > 90 || late > 0);
+      if (late > (this.lastLate || 0)) log(`The audio interrupt ran late ${late} time${late === 1 ? "" : "s"} since connecting: the audio core is overloaded. Use fewer pairs.`, true);
+      this.lastLate = late;
+    }
+    $("c-cpu-peak").textContent = `peak ${s.cpuPeak.toFixed(1)}%` + lateTxt;
     const bar = $("c-cpu-bar"); bar.style.width = Math.min(100, s.cpu) + "%";
     bar.classList.toggle("hot", s.cpuPeak > 80 && s.cpuPeak <= 95); bar.classList.toggle("over", s.cpuPeak > 95);
-    $("c-cpu-box").classList.toggle("warn", s.cpuPeak > 90);
     $("c-rate").textContent = s.rate;
     $("c-run").textContent = s.running;
     $("c-bank").textContent = s.preview ? "auditioning" : `bank ${"AB"[s.bank]}, ${s.numSlots} slots`;
     $("c-l").style.width = (s.lvlL / 127 * 100) + "%"; $("c-r").style.width = (s.lvlR / 127 * 100) + "%";
     $("c-cal").textContent = "CV calibration: " + (s.calibrated ? "yes" : "no");
-    if ($("follow").checked && !s.preview) {
+    if ($("follow").checked && !s.preview && !this.sliderHeld) {
       if (state.bank !== s.bank) state.bank = s.bank;
-      state.morph = Math.min(s.morph, state.banks[state.bank].numSlots - 1);
-      state.cutoff = Math.max(20, s.cutoff); state.res = s.res;
+      // A small deadband: the knobs and CV always jitter by a hair, and
+      // redrawing for every hair makes the screen look jumpy. Only follow
+      // changes bigger than about 1/200 of the knob's travel.
+      const m = Math.min(s.morph, state.banks[state.bank].numSlots - 1);
+      if (Math.abs(m - state.morph) > 0.02) state.morph = m;
+      const c = Math.max(20, s.cutoff);
+      if (Math.abs(Math.log2(c / state.cutoff)) > 0.05) state.cutoff = c;
+      if (Math.abs(s.res - state.res) > 0.005) state.res = s.res;
       this.syncSliders(); this.refreshTable();
     }
     this.render();
@@ -1376,6 +1396,11 @@ $("cutoff").oninput = e => { state.cutoff = 20 * Math.pow(18000 / 20, e.target.v
 $("res").oninput = e => { state.res = e.target.value / 1000; UI.editorChanged(); };
 $("morph").oninput = e => { const n = state.banks[state.bank].numSlots; state.morph = (e.target.value / 1000) * (n - 1); UI.render(); };
 $("follow").onchange = () => UI.render();
+// While you hold a slider, the card's knob values don't move it under you.
+for (const id of ["cutoff", "res", "morph"]) {
+  $(id).addEventListener("pointerdown", () => { UI.sliderHeld = true; });
+  window.addEventListener("pointerup", () => { UI.sliderHeld = false; });
+}
 $("name").oninput = e => { state.editor.name = e.target.value; persist(); };
 
 $("btn-psave").onclick = () => {

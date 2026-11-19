@@ -136,7 +136,7 @@ struct FixedChannel
 	{
 		int32_t x = int32_t(in) << kSampleShift;
 		for (int s = 0; s < n; ++s) x = runBiquad(cur[s], st[s], x);
-		int64_t y = (int64_t(x) * makeup) >> kMakeupFracBits;
+		int64_t y = smull32(x, makeup) >> kMakeupFracBits;
 		if (y >  (int64_t(1) << 30)) y =  (int64_t(1) << 30);
 		if (y < -(int64_t(1) << 30)) y = -(int64_t(1) << 30);
 		int32_t out = softClip(int32_t(y)) >> kSampleShift;
@@ -297,6 +297,18 @@ static void testData()
 		CHECK(std::isfinite(d.makeup), "garbage gave non-finite makeup");
 	}
 
+	// smull32 (the portable C version; tools/emulate_m0.py checks the ARM
+	// assembly version) against ordinary 64-bit multiplication.
+	for (int trial = 0; trial < 1000000; ++trial)
+	{
+		rng = rng * 1664525u + 1013904223u; const int32_t a = int32_t(rng);
+		rng = rng * 1664525u + 1013904223u; const int32_t b = int32_t(rng) >> (trial & 15);
+		CHECK(smull32(a, b) == int64_t(a) * int64_t(b), "smull32(%d, %d) wrong", a, b);
+	}
+	for (int32_t a : { 0, 1, -1, 0x7FFFFFFF, int32_t(-0x7FFFFFFF - 1), 0xFFFF, -0xFFFF, 0x8000, -0x8000 })
+		for (int32_t b : { 0, 1, -1, 0x7FFFFFFF, int32_t(-0x7FFFFFFF - 1), 0xFFFF, -0xFFFF, 0x8000, -0x8000 })
+			CHECK(smull32(a, b) == int64_t(a) * int64_t(b), "smull32 edge (%d, %d) wrong", a, b);
+
 	// Flash image: valid when built properly, invalid when any byte flips.
 	FlashImage img;
 	std::memset(&img, 0, sizeof(img));
@@ -310,7 +322,7 @@ static void testData()
 	FlashImage erased;
 	std::memset(&erased, 0xFF, sizeof(erased));   // what blank flash reads as
 	CHECK(!imageValid(erased), "blank flash accepted as valid");
-	std::printf("[data] slot = %d SysEx bytes, flash image = %d bytes; encode/decode, garbage and CRC checks done\n",
+	std::printf("[data] slot = %d SysEx bytes, flash image = %d bytes; encode/decode, garbage, smull32 and CRC checks done\n",
 	            kSlotBytes, int(sizeof(FlashImage)));
 }
 

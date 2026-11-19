@@ -48,11 +48,18 @@ The editor contains a line-for-line JavaScript copy of the firmware's filter mat
 
 ### CPU load and how many pairs you can use
 
-The audio core has 4000 clock cycles per sample at 192 MHz. ComputerCard's own work and the output stage take about 1000 of those, and each pole/zero pair (for both channels) costs roughly 500 more. The card runs only as many pairs as the bank's busiest slot needs. The editor shows an estimate as you design, and the card panel shows the real measurement.
+The audio core has 4000 clock cycles per sample at 192 MHz: a 20.8 µs slot. If the audio interrupt overruns its slot, ComputerCard's knob/switch multiplexer readings can be disturbed, so the knobs seem to jump. The card runs only as many pairs as the bank's busiest slot needs.
 
-By that estimate, up to about 5 pairs is comfortable, 6 is close to the limit, and 7 to 8 will probably overload the audio core at 192 MHz. You'd hear that as crackling. The firmware allows 8 so you can find the real limit with the meter. These numbers haven't been confirmed on hardware yet.
+The first hardware test showed a peak of about 89% with factory bank A (4 pairs). That's inside the slot, but with almost no margin, and the meter didn't count ComputerCard's CV-output interrupt. So the audio path has been slimmed down:
 
-The meter works by timing the whole audio interrupt with the processor's SysTick counter. That's a small local addition to `ComputerCard.h`, marked at the top of the file.
+* **Fast multiply.** `sample × coefficient` used the Pico SDK's general 64 × 64-bit multiply routine: 6 multiplies and a function call, 87 calls per sample. `smull32()` in `zplane.h` is a 17-instruction Thumb assembly 32 × 32 → 64-bit multiply with 4 multiplies and no call. Measured in an ARM emulator (`tools/emulate_m0.py`), one biquad went from about 271 to about 238 cycles. The fixed-cost 64-bit accumulate and error feedback are most of what's left.
+* **Staggered smoothing.** The coefficient glide now updates a quarter of the biquads each sample, by 1/8 instead of 1/32. That's the same glide time for a quarter of the work.
+* **CV-output interrupt off.** ComputerCard dithers the CV outputs from a ~96 kHz interrupt on the audio core. This card doesn't use the CV outputs, so it's switched off.
+* **Late-interrupt counter.** The card counts every audio interrupt that starts late, meaning the one before it ran over its slot. The editor shows "none late" or the count next to the peak load, and warns when it goes up. This is the definitive "is it inside 20 µs?" test.
+
+Rough budget at 192 MHz after these changes: about 1150 cycles of fixed work, plus about 520 per pair for both channels. That's about 80% for 4 pairs and about 100% for 6, so **keep to 4–5 pairs at 192 MHz** until a bigger change gives more room (see "Known limitations"). The editor's estimate uses these figures. The card's meter is the real answer.
+
+The meter times the whole audio interrupt with the processor's SysTick counter. That's a small local addition to `ComputerCard.h`, marked at the top of the file.
 
 ### USB protocol
 
@@ -74,6 +81,7 @@ The firmware is built `copy_to_ram`, so it runs entirely from RAM. Core 1 can th
 | `web/index.html` | The browser editor |
 | `tools/host_test.cpp` | Runs on a PC. Checks stability, fixed-point accuracy and data formats, torture-tests fast modulation, and draws response plots as SVG. |
 | `tools/check_web.js` | Checks the web editor's JavaScript maths against the C++ |
+| `tools/emulate_m0.py`, `tools/m0_bench.cpp` | Runs the audio maths as real Cortex-M0+ code in an emulator: checks the assembly multiply bit-for-bit and counts cycles (`pip install unicorn`) |
 | `usb_descriptors.c`, `tusb_config.h` | USB-MIDI setup, copied from the ComputerCard `web_interface` example |
 | `docs/*.svg` | Plots of the morph sweeps produced by the host test |
 | `ComputerCard.h` | Chris Johnson's ComputerCard library (copied from `Demonstrations+HelloWorlds`) |
@@ -90,6 +98,7 @@ make            # → zeds_dead.uf2, drag onto the Computer in BOOTSEL mode
 cd tools
 g++ -O2 -std=c++17 -I.. host_test.cpp -o host_test && ./host_test
 ./host_test vectors > vectors.txt && node check_web.js vectors.txt
+python3 emulate_m0.py      # needs arm-none-eabi-gcc and "pip install unicorn"
 ```
 
 ---
@@ -331,4 +340,5 @@ The test also writes the plots in `docs/`. They're a good way to learn: edit a p
 * At very low cutoffs (below about 40 Hz), float precision in the coefficient design makes the pole frequency slightly inaccurate (around 1 to 2 %). A state-variable or "coupled form" runner would fix this.
 * The pulse inputs and CV outputs are unused. Ideas: pulse to step between banks, or CV out of the morph position or an envelope follower.
 * Slot names live only in the editor (and its exported files). The card stores the shapes, not the names.
-* Ideas: more banks, overclocking to allow 8 pairs comfortably, or a pulse input to step between banks.
+* **CPU headroom.** At 192 MHz about 4–5 pairs fit comfortably. Two ways to allow more: run the right channel's filter on core 1 (roughly halves the audio core's filter work), or raise the clock to 240 MHz (another card in this repo, `97_alloy`, runs there at 1.25 V).
+* Ideas: more banks, or a pulse input to step between banks.
