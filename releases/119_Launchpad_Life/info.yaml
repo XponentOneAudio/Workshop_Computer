@@ -1,0 +1,110 @@
+draft: true
+Name: Launchpad Life
+short-description: "Game of Life sequencer played and displayed on a Novation Launchpad X over USB MIDI Host, with a paged interface on the top and side buttons"
+summary: |
+  A cellular-automaton sequencer. An 8x8 Game of Life lives on a Novation
+  Launchpad X plugged straight into the Computer's USB-C socket - no laptop
+  needed. A playhead sweeps across the grid column by column; the live cells
+  it finds become pitches on the CV outputs and gates on the pulse outputs.
+  Every few steps the grid evolves into its next generation, so the melody
+  slowly mutates by itself.<br><br>
+
+  Press pads to draw or erase cells. The eight top buttons choose a page
+  (Play, Rule, Evolve, Tempo, Length, Scale, Root, Options) and the eight
+  side buttons are the controls for that page, lit to show the current
+  settings. Eight rules are included, from Conway's Life to Seeds, Day and
+  Night and Maze.<br><br>
+
+  The source is commented line by line for people learning C++.
+Language: C++ (Pico SDK + ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+date-created: 2026-11-19
+date-updated: 2026-11-19
+
+uf2:
+  - path: UF2/launchpad_life.uf2
+    name: Launchpad Life 0.1.0
+
+tags:
+  - sequencer
+  - generative
+  - cellular-automata
+  - usb-host
+  - midi
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: unused
+      type: audio
+      description: Not used.
+    - id: AudioIn2
+      name: unused
+      type: audio
+      description: Not used.
+    - id: CVIn1
+      name: Transpose
+      type: cv
+      description: Transposes both pitch outputs, roughly 1V/oct, rounded to semitones.
+    - id: CVIn2
+      name: Chaos
+      type: cv
+      description: Added to the Main knob - randomly flips cells each generation.
+    - id: PulseIn1
+      name: Clock
+      type: pulse
+      description: Each rising edge is one step. With no clock for 2 seconds the internal clock (Tempo page) takes over.
+    - id: PulseIn2
+      name: Reset
+      type: pulse
+      description: The next step plays the first column of the loop.
+  outputs:
+    - id: AudioOut1
+      name: Population
+      type: cv
+      description: Number of live cells on the whole grid, as a voltage.
+    - id: AudioOut2
+      name: Density
+      type: cv
+      description: Number of live cells in the current column, as a voltage.
+    - id: CVOut1
+      name: Pitch high
+      type: cv
+      description: 1V/oct pitch of the highest live cell in the current column, with glide (Y knob).
+    - id: CVOut2
+      name: Pitch low
+      type: cv
+      description: 1V/oct pitch of the lowest live cell, or column density 0-5V (Options page).
+    - id: PulseOut1
+      name: Gate
+      type: pulse
+      description: Fires on every step whose column has a live cell (trigger, or half-step gate).
+    - id: PulseOut2
+      name: Births
+      type: pulse
+      description: Fires when the column holds a cell born in the latest generation.
+
+controls:
+  switch:
+    up:
+      name: Run
+      description: Start the sequencer.
+    middle:
+      name: Stop
+      description: Stop the sequencer (when moved down from Run).
+    down:
+      name: Randomise
+      description: Momentary. Randomise the grid and re-send Programmer mode to the Launchpad.
+  knobs:
+    - main:
+        name: Chaos
+        description: Randomly flips cells each generation. Fully anticlockwise = none.
+      x:
+        name: Skip
+        description: Chance that a step stays silent. Fully anticlockwise = never skip.
+      y:
+        name: Glide
+        description: Slides CV Out 1 between notes. Fully anticlockwise = instant.
