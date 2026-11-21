@@ -1,0 +1,174 @@
+draft: false
+Name: Mutagen
+short-description: "A pulse-width and sync oscillator: two 'mutants' bend any wave's timing, edited from a Music Thing 8mu, with a web editor"
+Language: C++ (ComputerCard)
+Creator: XponentOneAudio
+Version: "0.1.0"
+Status: Beta
+License: MIT
+Editor: web
+date-created: 2026-11-21
+date-updated: 2026-11-21
+
+contact:
+  email: XponentOneAudio@gmail.com
+
+# Vendors, unmodified and under their own MIT terms:
+#   ComputerCard.h, EightMU.h (which carries the rppicomidi usb_midi_host
+#   driver, (c) 2023 rppicomidi)
+#     (c) Chris Johnson
+
+uf2:
+  - path: UF2/mutagen.uf2
+    name: Mutagen 0.1.0
+
+tags:
+  - oscillator
+  - vco
+  - pwm
+  - sync
+  - lfo
+  - usb-host
+  - midi
+  - 8mu
+
+summary: |
+  An oscillator that plays with pulse width and sync, inspired by the
+  "mutants" of a well-known digital polysynth. Its wave - sine, triangle,
+  saw, square or any blend of neighbours - goes through two mutants in
+  series, each of which bends the wave's timing rather than filtering it:<br><br>
+
+  PULSE (pulse width for any wave), SQUEEZE (the wave starts slowly and
+  speeds up), MIRROR (forwards to a turning point, then back), WARP (the
+  phase pushed by a curve you draw with eight faders), PHASEDIFF (the wave
+  minus a shifted copy: two saws make a clean pulse) and SYNC (hard sync to
+  a copy 1 to 16 times as fast). Each has a RATIO - how many times a cycle
+  it happens, 1/4 to 16, settling on whole numbers - a DEPTH, a WINDOW that
+  softens restarts into formants, FEEDBACK and a dry/wet MIX.<br><br>
+
+  Two LFOs, CV In 2, Audio In 2 (at audio rate) and an 8mu's tilt modulate
+  the depths, ratios, mixes, wave and pitch. Audio In 1 hard-syncs it to
+  another oscillator, and Pulse Out 2 is a sync out.<br><br>
+
+  The oscillator runs at twice the sample rate from band-limited tables
+  chosen for how fast each mutant plays the wave, so even narrow pulses stay
+  clean; if a patch is ever too heavy for the processor it goes lean (once a
+  sample) on its own.<br><br>
+
+  The 8mu's buttons choose the page - A MUTANT 1, B MUTANT 2, C OSC,
+  D LFO 1, pressed again WARP 1, WARP 2, MOD, LFO 2 - and its faders pick
+  up. The knobs work without one. An optional web editor (web/index.html,
+  Chrome or Edge) draws the wave and its harmonics live, keeps presets, plays
+  a copy of the engine in the browser, and passes on an 8mu plugged into the
+  computer.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Sync
+      type: audio
+      description: While patched, hard sync from another oscillator - the wave restarts at each rising zero crossing.
+    - id: AudioIn2
+      name: Audio mod
+      type: audio
+      description: Audio-rate modulation of the two depths, by the amounts on the MOD page (faders 5 and 6).
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: 1V/oct, added to Main.
+    - id: CVIn2
+      name: Mod
+      type: cv
+      description: Modulation by the MOD page's amounts; at first mutant 1's depth, +5V for all of it.
+    - id: PulseIn1
+      name: Restart
+      type: pulse
+      description: Restarts the wave.
+    - id: PulseIn2
+      name: LFO reset
+      type: pulse
+      description: Restarts both LFOs.
+  outputs:
+    - id: AudioOut1
+      name: Oscillator
+      type: audio
+      description: The oscillator after both mutants.
+    - id: AudioOut2
+      name: Out 2
+      type: audio
+      description: Chosen on the OSC page - the same, the dry wave, after mutant 1 only, or a square one or two octaves down.
+    - id: CVOut1
+      name: LFO 1
+      type: cv
+      description: LFO 1, +/-5V.
+    - id: CVOut2
+      name: LFO 2
+      type: cv
+      description: LFO 2, +/-5V.
+    - id: PulseOut1
+      name: LFO 1 square
+      type: pulse
+      description: High while LFO 1 is above zero.
+    - id: PulseOut2
+      name: Sync out
+      type: pulse
+      description: The oscillator's own square - high for the first half of each cycle - to sync another oscillator.
+
+controls:
+  switch:
+    up:
+      name: Depths
+      description: Main sets the pitch, X mutant 1's depth, Y mutant 2's depth.
+    middle:
+      name: Ratios
+      description: Main sets the pitch, X mutant 1's ratio, Y mutant 2's ratio.
+    down:
+      name: Modes
+      description: >
+        Momentary. Hold it - Main sets the wave, X mutant 1's mode and Y
+        mutant 2's mode. While held, the LEDs show the two modes in binary,
+        mutant 1 down the left and mutant 2 down the right.
+  knobs:
+    - when:
+        z: up
+      main:
+        name: Pitch
+        description: C1 to C7, C4 at the centre; CV In 1 and the OSC page's SEMI and FINE are added.
+      x:
+        name: Depth 1
+        description: Mutant 1's depth - the same value as MUTANT 1 fader 3. After the switch moves, or a fader or the editor changes it, a knob does nothing until it reaches the value.
+      y:
+        name: Depth 2
+        description: Mutant 2's depth.
+    - when:
+        z: middle
+      main:
+        name: Pitch
+        description: As switch up.
+      x:
+        name: Ratio 1
+        description: Mutant 1's ratio, 1/4 to 16, settling on whole numbers and simple fractions.
+      y:
+        name: Ratio 2
+        description: Mutant 2's ratio.
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: Page A / depth 1
+          description: With an 8mu or the web editor, LEDs 1-4 show the page's button (A B / C D), lit for its first page and blinking for its second. Without one, mutant 1's depth after modulation.
+        - id: LED1
+          name: Page B / depth 2
+          description: Or mutant 2's depth.
+        - id: LED2
+          name: Page C / sync
+          description: Or lit while Audio In 1 is patched (sync).
+        - id: LED3
+          name: Page D / restart
+          description: Or flashes at a restart from Pulse In 1.
+        - id: LED4
+          name: LFO 1
+          description: Follows LFO 1.
+        - id: LED5
+          name: LFO 2
+          description: Follows LFO 2. Blinks fast while a knob is waiting to pick up its setting.

@@ -1,0 +1,1401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutagen editor</title>
+<!--
+  MUTAGEN - web editor for the Music Thing Modular Workshop Computer card.
+  One static file, no network needed. Talks to the card over WebMIDI + SysEx
+  (protocol: ../sysex.h). The card works without this page; the page adds a
+  picture of the wave and its harmonics, presets, a preview you can hear in
+  the browser, and a way to use an 8mu plugged into this computer rather
+  than into the card.
+
+  The fader values (0-4095), what they mean, the pickup and the 8mu's LEDs
+  mirror ../mutagen.h, ../ui.h and ../main.cpp; ENGINE_SRC below is a
+  floating-point copy of the sound engine in ../mutagen.h. Visual style and
+  8mu handling shared with the Weights, CVSeq and WaveSeq editors.
+-->
+<style>
+  :root {
+    --bg: #f4f2ee; --panel: #ffffff; --ink: #1c1b19; --muted: #6a675f; --line: #d9d5cc;
+    --wave-bg: #fbfaf7; --grid: #e6e2d8;
+    --accent: #0b7d78; --accent-soft: #cfe9e6; --warm: #b5560a; --warm-soft: #f6dcc6;
+    --ok: #2b7a2b; --bad: #b3261e; --track: #e3dfd5; --shadow: 0 1px 2px rgba(0,0,0,.08);
+    --v1: #0b7d78; --v2: #b5560a; --led: #e8401c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141514; --panel: #1e201f; --ink: #ecebe6; --muted: #9a978d; --line: #34362f;
+      --wave-bg: #171918; --grid: #2a2d29;
+      --accent: #4fd1c5; --accent-soft: #1d3d3a; --warm: #f0a35e; --warm-soft: #4a3320;
+      --ok: #7ed37e; --bad: #ff8a80; --track: #33352f; --shadow: none;
+      --v1: #4fd1c5; --v2: #f0a35e; --led: #ff6a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+  h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warm); } .dot.bad { background: var(--bad); }
+  .spacer { flex: 1; }
+  .muown { padding: 2px 8px; font-size: 12px; border-color: var(--accent); }
+  .muown.away { color: var(--muted); border-color: var(--line); border-style: dashed; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  button.playing { background: var(--warm); color: var(--panel); border-color: var(--warm); }
+  #msg { padding: 6px 16px; min-height: 1.4em; color: var(--muted); }
+  #msg.err { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr) 340px; }
+  @media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card > h2 { display: flex; align-items: center; gap: 8px; }
+  .card > h2 .fold { margin-left: auto; padding: 0 7px; min-width: 26px; height: 22px; line-height: 1; font-size: 14px;
+    color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+  .card > h2 .fold:hover { color: var(--ink); border-color: var(--accent); }
+  .card.folded > :not(h2) { display: none; }
+  .card.folded > h2 { margin-bottom: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); min-width: 0; }
+  canvas { display: block; width: 100%; border-radius: 6px; background: var(--wave-bg); }
+  #wave { height: 190px; }
+  #spectrum { height: 120px; margin-top: 8px; }
+  .jacks { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.4; }
+  .jacks th, .jacks td { text-align: left; vertical-align: top; padding: 4px 0; border-top: 1px solid var(--line); }
+  .jacks th { white-space: nowrap; padding-right: 10px; font-weight: 600; }
+  .jacks td { color: var(--muted); }
+  .jacks tr.grp th { border-top: 0; padding-top: 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .jacks tr.grp:first-child th { padding-top: 0; }
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .readout { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .readout.waiting { outline: 2px dotted var(--warm); outline-offset: 2px; }
+  .readout .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .readout .v { font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .readout .sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 6px; border-radius: 3px; background: var(--track); margin-top: 6px; overflow: hidden; position: relative; }
+  .bar > div { position: absolute; top: 0; bottom: 0; background: var(--accent); }
+  .bar.bip > div { background: var(--warm); }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .notes { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .notes p { margin: 6px 0 0; }
+  .notes b { color: var(--ink); font-weight: 600; }
+  .notes .jacks { margin-top: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend span::before { content: ''; display: inline-block; width: 14px; height: 3px; margin-right: 5px; vertical-align: middle; background: currentColor; border-radius: 2px; }
+  .legend .l1 { color: var(--v1); } .legend .l0 { color: var(--muted); } .legend .l2 { color: var(--v2); }
+
+  /* Preview */
+  .preview { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .preview .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .preview input[type=range] { flex: 1 1 180px; accent-color: var(--accent); }
+  .preview .note { min-width: 6.5em; font-variant-numeric: tabular-nums; }
+  .preview label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+  /* Pages and faders */
+  .tabs { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+  .tab { padding: 4px 2px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; background: var(--panel);
+    font-size: 12px; line-height: 1.3; text-align: center; min-width: 0; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab b { display: inline-block; min-width: 2em; text-align: center; border-radius: 4px; background: var(--track); font-size: 13px; }
+  .tab.on { border-color: var(--accent); background: var(--accent-soft); }
+  .tab.on b { background: var(--accent); color: var(--panel); }
+  .ledrow { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+  .ledrow span { justify-self: center; width: 12px; height: 12px; border-radius: 50%; background: var(--led); opacity: .08; border: 1px solid var(--line); }
+  .faders { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; border-radius: 6px; padding: 4px 0; }
+  .fader.knob { background: var(--accent-soft); }
+  .fader .name { font-size: 12px; color: var(--muted); text-align: center; min-height: 2.6em; line-height: 1.3; overflow-wrap: anywhere; }
+  .fader .slot { position: relative; height: 150px; width: 32px; }
+  .fader input[type=range] {
+    writing-mode: vertical-lr; direction: rtl; width: 32px; height: 150px; margin: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }
+  .fader .ghost { position: absolute; left: 2px; right: 2px; height: 0; border-top: 2px dashed var(--warm); pointer-events: none; display: none; }
+  .fader .centre { position: absolute; left: -3px; right: -3px; top: 75px; height: 0; border-top: 1px solid var(--muted); opacity: .5; pointer-events: none; display: none; }
+  .fader.bip .centre { display: block; }
+  .fader .val { font-variant-numeric: tabular-nums; font-size: 12px; text-align: center; min-height: 2.6em; overflow-wrap: anywhere; }
+  @media (max-width: 640px) { .faders, .ledrow, .tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+  /* Presets */
+  #presets { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow: auto; }
+  #presets li { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 6px; }
+  #presets li:hover { background: var(--accent-soft); }
+  #presets li .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #presets li .tag { font-size: 11px; color: var(--muted); }
+  #presets li button { padding: 2px 6px; font-size: 12px; }
+  .preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  details { margin-top: 16px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mutagen</h1>
+  <div class="status"><span id="dot" class="dot"></span><span id="status-text">Not connected</span></div>
+  <button id="mu-owner" class="muown" hidden></button>
+  <div class="spacer"></div>
+  <button id="btn-connect" class="primary">Connect card &amp; 8mu</button>
+  <button id="btn-rescan" hidden>Rescan</button>
+  <button id="btn-read" disabled>Read from card</button>
+  <button id="btn-send" disabled>Send to card</button>
+  <button id="btn-reset">Reset</button>
+</header>
+<div id="msg"></div>
+
+<main>
+  <div style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Now playing</h2>
+      <div class="readouts">
+        <div class="readout" id="rb-pitch"><div class="k">Pitch</div><div class="v" id="ro-pitch">-</div><div class="sub" id="ro-pitch-sub"></div></div>
+        <div class="readout" id="rb-wave"><div class="k">Wave</div><div class="v" id="ro-wave">-</div><div class="sub" id="ro-wave-sub"></div></div>
+        <div class="readout" id="rb-m1"><div class="k">Mutant 1</div><div class="v" id="ro-m1">-</div><div class="sub" id="ro-m1-sub"></div><div class="bar"><div id="bar-m1"></div></div></div>
+        <div class="readout" id="rb-m2"><div class="k">Mutant 2</div><div class="v" id="ro-m2">-</div><div class="sub" id="ro-m2-sub"></div><div class="bar"><div id="bar-m2"></div></div></div>
+        <div class="readout"><div class="k">LFO 1</div><div class="v" id="ro-l1">-</div><div class="bar bip"><div id="bar-l1"></div></div></div>
+        <div class="readout"><div class="k">LFO 2</div><div class="v" id="ro-l2">-</div><div class="bar bip"><div id="bar-l2"></div></div></div>
+      </div>
+      <div class="caption" id="busy"></div>
+    </section>
+
+    <section class="card">
+      <h2>Wave</h2>
+      <canvas id="wave" aria-label="Two cycles of Out 1, after both mutants, with the dry wave behind"></canvas>
+      <div class="legend"><span class="l1">Out 1 (both mutants)</span><span class="l2">after mutant 1</span><span class="l0">the dry wave</span></div>
+      <canvas id="spectrum" aria-label="The harmonics of Out 1"></canvas>
+      <div class="caption" id="wave-note">Out 1 over two cycles, and its first 64 harmonics (0 to &minus;60 dB). With the card connected this follows what it is playing, modulation and all; otherwise the faders, with the LFOs running here.</div>
+    </section>
+
+    <section class="card">
+      <h2>Faders</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="ledrow" id="ledrow" title="The 8mu's LEDs, as the card lights them"></div>
+      <div class="faders" id="faders"></div>
+      <div class="caption" id="page-hint"></div>
+    </section>
+
+    <section class="card">
+      <h2>Listen here</h2>
+      <div class="preview">
+        <button id="btn-listen">Listen</button>
+        <span class="k">Pitch</span>
+        <input type="range" id="pv-pitch" min="0" max="4095" step="1" value="2048" aria-label="Preview pitch, as the Main knob">
+        <span class="note" id="pv-note"></span>
+        <label><input type="range" id="pv-vol" min="0" max="100" value="35" style="width:90px" aria-label="Preview volume"> volume</label>
+      </div>
+      <div class="caption">A copy of the card's engine running in this browser, playing the faders on screen: for shaping a sound without the module, or before sending it. The slider is the Main knob (C1 to C7, then SEMI and FINE); the keys <kbd>A</kbd>&ndash;<kbd>K</kbd> play C4 to C5 (<kbd>W</kbd> <kbd>E</kbd> <kbd>T</kbd> <kbd>Y</kbd> <kbd>U</kbd> the black notes, <kbd>Z</kbd> <kbd>X</kbd> an octave down or up). The X and Y knobs are the depths and ratios already on the MUTANT pages.</div>
+    </section>
+  </div>
+
+  <aside style="display:grid; gap:16px; align-content:start; min-width:0">
+    <section class="card">
+      <h2>Presets</h2>
+      <ul id="presets"></ul>
+      <div class="preset-actions">
+        <button id="btn-save">Save current…</button>
+        <button id="btn-export">Export</button>
+        <button id="btn-import">Import</button>
+        <input type="file" id="import-file" accept=".json,application/json" hidden>
+      </div>
+      <div class="caption">A preset is all eight pages of faders (which include the depths, ratios, modes and wave the knobs set; the pitch stays on the knob). Presets live in this browser. Loading one sends it to the card if one is connected. The card itself keeps nothing over power-off.</div>
+    </section>
+    <section class="card">
+      <h2>Inputs &amp; outputs</h2>
+      <table class="jacks">
+        <tr class="grp"><th colspan="2">Inputs</th></tr>
+        <tr><th>CV In 1</th><td>Pitch, 1 V/oct, added to Main</td></tr>
+        <tr><th>CV In 2</th><td>Modulation, as the MOD page sets (at first: mutant 1's depth, +5 V for all of it)</td></tr>
+        <tr><th>Audio In 1</th><td>Hard sync from another oscillator, while patched: the wave restarts at each rising zero crossing</td></tr>
+        <tr><th>Audio In 2</th><td>Audio-rate modulation of the depths (MOD page, faders 5 and 6)</td></tr>
+        <tr><th>Pulse In 1</th><td>Restarts the wave</td></tr>
+        <tr><th>Pulse In 2</th><td>Restarts both LFOs</td></tr>
+        <tr class="grp"><th colspan="2">Outputs</th></tr>
+        <tr><th>Audio Out 1</th><td>The oscillator, after both mutants</td></tr>
+        <tr><th>Audio Out 2</th><td>OSC page fader 6: the same, the dry wave, after mutant 1 only, or a square an octave or two down</td></tr>
+        <tr><th>CV Out 1, 2</th><td>LFO 1, 2, &plusmn;5 V</td></tr>
+        <tr><th>Pulse Out 1</th><td>LFO 1's square</td></tr>
+        <tr><th>Pulse Out 2</th><td>The oscillator's square: a sync out for another oscillator</td></tr>
+      </table>
+    </section>
+    <section class="card">
+      <h2>8mu</h2>
+      <div class="notes">
+        <p>The 8mu can plug into the module (no computer needed) or into this computer, which passes it on to the card.</p>
+        <table class="jacks">
+          <tr><th>Buttons</th><td>A <b>Mutant 1</b>, B <b>Mutant 2</b>, C <b>Osc</b>, D <b>LFO 1</b>. Press the same button again for its second page: A <b>Warp 1</b>, B <b>Warp 2</b>, C <b>Mod</b>, D <b>LFO 2</b>.</td></tr>
+          <tr><th>Mutant</th><td>Mode, ratio, depth, window, feedback, mix, LFO 1 &rarr; depth, LFO 2 &rarr; depth.</td></tr>
+          <tr><th>Warp</th><td>Eight points of a curve that pushes the phase back and forth, for that mutant's WARP mode.</td></tr>
+          <tr><th>Osc</th><td>Wave, semitones, fine, bit crush, drive, Out 2, glide, level.</td></tr>
+          <tr><th>LFO</th><td>Rate, shape, then where it goes: ratio 1, ratio 2, wave, pitch, mix 1, mix 2.</td></tr>
+          <tr><th>Mod</th><td>CV In 2 &rarr; depth 1, depth 2, ratio 1, ratio 2; Audio In 2 &rarr; depth 1, depth 2; tilt &rarr; depth 1 (left-right), depth 2 (front-back).</td></tr>
+          <tr><th>Centre zero</th><td>Faders that go either way (the amounts, SEMI, FINE, the warp points) are zero in the middle, with a small dead zone.</td></tr>
+          <tr><th>Pickup</th><td>After a page change a fader does nothing until it reaches (or passes) the stored value; the same after a knob or this page changes it. A dashed line on the on-screen fader shows where a waiting 8mu fader is.</td></tr>
+          <tr><th>LEDs</th><td>Each fader's setting: how far it is from zero, or which choice for one that picks from a list. A mutant's depth and mix show what they are after modulation, and each LFO's rate fader pulses with it.</td></tr>
+          <tr><th>Tilt</th><td>Past about 15&deg; from flat, as the MOD page's last two faders set.</td></tr>
+        </table>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Panel</h2>
+      <div class="notes">
+        <table class="jacks">
+          <tr><th>Switch up</th><td>Main <b>pitch</b> (C1 to C7), X <b>mutant 1 depth</b>, Y <b>mutant 2 depth</b></td></tr>
+          <tr><th>Switch middle</th><td>Main <b>pitch</b>, X <b>mutant 1 ratio</b>, Y <b>mutant 2 ratio</b></td></tr>
+          <tr><th>Switch down</th><td>Hold it: Main the <b>wave</b>, X <b>mutant 1 mode</b>, Y <b>mutant 2 mode</b>. The LEDs show the modes in binary (mutant 1 down the left, mutant 2 down the right)</td></tr>
+          <tr><th>Knobs</th><td>X and Y set the same values as the 8mu's faders. After the switch moves, or something else changes the value, a knob does nothing until it reaches it; that setting's box above has a dotted outline until then, and the Computer's bottom right LED blinks fast</td></tr>
+          <tr><th>LEDs</th><td>Top four: the 8mu page's button (lit for its first page, blinking for its second), or with no 8mu or editor, the two depths, sync and restart. Bottom two: the LFOs</td></tr>
+        </table>
+      </div>
+    </section>
+    <section class="card">
+      <h2>How it connects</h2>
+      <div class="caption" style="margin-top:0">
+        The card picks its USB mode at power-up. <b>8mu plugged into the card</b>: the card reads it directly and this page isn't used.
+        <b>Computer plugged into the card</b>: the card appears as a MIDI device called <b>Mutagen</b>, and an 8mu plugged
+        into this computer is passed on by this page. After plugging a computer in, <b>power-cycle the module</b>.
+      </div>
+      <details>
+        <summary>Help</summary>
+        <ul class="caption">
+          <li>Use a USB-C <b>data</b> cable, and close any other app using the card or the 8mu (Serial Monitor, a DAW).</li>
+          <li>Use Chrome, Edge or another Chromium browser. Safari and iOS browsers can't do WebMIDI with SysEx.</li>
+          <li>Press <kbd>Connect card &amp; 8mu</kbd> and allow MIDI with SysEx when the browser asks.</li>
+          <li>On-screen faders: drag, or focus one and use the arrow keys. Double-click puts one back to zero (the centre, for one that goes either way).</li>
+          <li>Several 8mus on this computer all drive the page together. With another Workshop editor open too (CVSeq, Weights, WaveSeq), one 8mu drives whichever editor you last clicked in; the header shows <b>8mu: here</b> or <b>8mu: elsewhere</b>, and clicking it takes the 8mu back.</li>
+          <li>The card reports how long it takes to make each sample. If a patch is too much for it (both mutants part-wet, windowed, with feedback, Out 2 on mutant 1&hellip;) it goes <b>lean</b>: Out 1 made once a sample instead of twice, a little rougher at high pitch. The line under <i>Now playing</i> says so.</li>
+        </ul>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<script>
+'use strict';
+// ============================================================================
+// The engine, in floating point, as mutagen.h.  Used here to draw the wave
+// and its harmonics, and in an AudioWorklet for the preview.
+// ============================================================================
+const ENGINE_SRC = String.raw`
+const NF = 8, NPAGES = 8;
+const P = { MUT1: 0, MUT2: 1, OSC: 2, LFO1: 3, WARP1: 4, WARP2: 5, MOD: 6, LFO2: 7 };
+const M = { MODE: 0, RATIO: 1, DEPTH: 2, WINDOW: 3, FB: 4, MIX: 5, LFO1: 6, LFO2: 7 };
+const O = { WAVE: 0, SEMI: 1, FINE: 2, BITS: 3, DRIVE: 4, OUT2: 5, GLIDE: 6, LEVEL: 7 };
+const L = { RATE: 0, SHAPE: 1, RATIO1: 2, RATIO2: 3, WAVE: 4, PITCH: 5, MIX1: 6, MIX2: 7 };
+const MODES = 6, SHAPES = 7, OUT2S = 5, SEMIS = 49;
+const PULSE = 0, SQUEEZE = 1, MIRROR = 2, WARP = 3, PHASEDIFF = 4, SYNC = 5;
+const zoneOf = (v, n) => Math.max(0, Math.min(n - 1, Math.floor(v * n / 4096)));
+const zoneValue = (z, n) => Math.floor((2 * z + 1) * 4096 / (2 * n));
+const CENTRE = 48;
+function bipolar(v) {          // -1 ... +1
+  const d = v - 2048;
+  if (d > -CENTRE && d < CENTRE) return 0;
+  return d > 0 ? Math.min(1, (d - CENTRE) / (2047 - CENTRE)) : Math.max(-1, (d + CENTRE) / (2048 - CENTRE));
+}
+const DETENTS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+const DETENT_LOG = DETENTS.map(r => Math.log2(r / 0.25));
+function ratioOctaves(v) {     // octaves above 1/4, settling on the detents
+  const lg = v * 6 / 4095;
+  for (const d of DETENT_LOG) if (Math.abs(lg - d) < 0.025) return d;
+  return lg;
+}
+const TS = 1024, LEVELS = 9;
+function buildTables() {
+  const sine = new Float32Array(TS + 1);
+  for (let i = 0; i <= TS; i++) sine[i] = Math.sin(2 * Math.PI * i / TS);
+  const waves = [null];
+  for (let w = 1; w < 4; w++) {
+    const levels = [];
+    let peak = 1e-9;
+    for (let lv = 0; lv < LEVELS; lv++) {
+      const n = 256 >> lv, t = new Float32Array(TS + 1);
+      for (let h = 1; h <= n; h++) {
+        let a = 0;
+        if (w === 1 && (h & 1)) a = (((h >> 1) & 1) ? -1 : 1) * 8 / (Math.PI * Math.PI) / (h * h);
+        else if (w === 2) a = ((h & 1) ? 2 : -2) / Math.PI / h;
+        else if (w === 3 && (h & 1)) a = 4 / Math.PI / h;
+        if (!a) continue;
+        for (let i = 0; i < TS; i++) t[i] += a * sine[(h * i) & (TS - 1)];
+      }
+      for (let i = 0; i < TS; i++) peak = Math.max(peak, Math.abs(t[i]));
+      levels.push(t);
+    }
+    for (const t of levels) { for (let i = 0; i < TS; i++) t[i] *= 0.9766 / peak; t[TS] = t[0]; }
+    waves.push(levels);
+  }
+  return { sine, get: (w, lv) => w === 0 ? sine : waves[w][lv] };
+}
+function lookup(t, p) {        // p in cycles
+  const x = (p - Math.floor(p)) * TS, i = Math.floor(x), f = x - i;
+  return t[i] + (t[i + 1] - t[i]) * f;
+}
+// One mutant
+function makeStage() {
+  return { mode: PULSE, depth: 0, lgr: 2, mix: 1, window: 0, fb: 0, pts: new Float64Array(9), prev: 0,
+    r: 1, w: 0.5, u1: 0.625, u2: 0.875, vh: 1, vl: 1, lg1: 0, lg2: 0, ks: 1, phi: 0.5, ca: 0, cb: 1, active: true };
+}
+function prepare(st) {
+  const d = st.depth;
+  st.r = 0.25 * Math.pow(2, Math.max(0, Math.min(6, st.lgr)));
+  st.active = st.mix > 0;
+  if (st.mode === PHASEDIFF) { st.ca = 1 - st.mix / 2; st.cb = -st.mix / 2; } else { st.ca = 1 - st.mix; st.cb = st.mix; }
+  let s1 = 1, s2 = 1;
+  switch (st.mode) {
+    case PULSE: st.w = 0.5 * (1 - 0.97 * d); st.vh = 0.5 / st.w; st.u1 = 1.25 * st.w; st.u2 = 1 - st.w / 4;
+      st.vl = 0.25 / (st.u2 - st.u1); s1 = s2 = st.vh; break;
+    case MIRROR: st.w = Math.max(1e-4, 1 - 0.98 * d); s1 = 1 / st.w; s2 = Math.min(256, 1 / Math.max(1e-6, 1 - st.w)); break;
+    case SQUEEZE: { const t = d * 3, j = Math.min(2, Math.floor(t)), f = t - j; st.sqJ = j; st.sqF = f;
+      s1 = s2 = (1 - f) * (1 << j) + f * (2 << j); break; }
+    case WARP: for (let j = 0; j < 8; j++) s1 = Math.max(s1, Math.abs(1 + 0.5 * d * (st.pts[j + 1] - st.pts[j]) * 8)); s2 = s1; break;
+    case PHASEDIFF: st.phi = 0.5 * (1 - 0.97 * d); s1 = s2 = st.r; break;
+    default: st.ks = Math.pow(2, 4 * d); s1 = s2 = st.ks; break;
+  }
+  st.lg1 = Math.log2(s1); st.lg2 = Math.log2(s2);
+}
+// The mutated phase (in cycles) for S; out.lg how much faster, out.gain WINDOW
+function map(st, S, out) {
+  const x = S * st.r, u = x - Math.floor(x);
+  let b, w2;
+  out.lg = st.lg1;
+  switch (st.mode) {
+    case PULSE: w2 = u < st.u1 ? u * st.vh : (u < st.u2 ? 0.625 + (u - st.u1) * st.vl : 1 - (1 - u) * st.vh); b = S + (w2 - u) / st.r; break;
+    case SQUEEZE: { const p1 = u * u, p2 = p1 * p1; let lo, hi;
+      if (st.sqJ === 0) { lo = u; hi = p1; } else if (st.sqJ === 1) { lo = p1; hi = p2; } else { lo = p2; hi = p2 * p2; }
+      w2 = lo - (lo - hi) * st.sqF; b = S + (w2 - u) / st.r; break; }
+    case MIRROR: if (u < st.w) w2 = u / st.w; else { w2 = (1 - u) / (1 - st.w); out.lg = st.lg2; } b = S + (w2 - u) / st.r; break;
+    case WARP: { const p8 = u * 8, j = Math.floor(p8), c = st.pts[j] + (st.pts[j + 1] - st.pts[j]) * (p8 - j);
+      b = S + 0.5 * st.depth * c / st.r; break; }
+    case PHASEDIFF: b = x + st.phi; break;
+    default: b = u * st.ks / st.r; break;
+  }
+  if (st.fb) b += st.prev * st.fb * 0.5;
+  out.gain = st.window > 0 ? 1 - st.window * (1 - (1 - Math.cos(2 * Math.PI * u)) / 2) : 1;
+  b = b % 4; if (b < 0) b += 4;
+  return b;
+}
+// The engine: values (8 pages of 8, 0-4095) in, samples out
+function makeEngine(tables, sampleRate) {
+  const e = {
+    values: null, knob: 2048, cv2: 0, tilt: [0, 0], stages: [makeStage(), makeStage()],
+    lfo: [{ phase: 0, out: 0, held: 0, from: 0, to: 0 }, { phase: 0, out: 0, held: 0, from: 0, to: 0 }],
+    wave: 0, waveA: 0, waveF: 0, pitch: 4, pitchS: -1, acc: 0, level: 0.8, drive: 0, bits: 0, out2: 1,
+    hb: { a: new Float64Array(6), b: new Float64Array(12) }, lean: false,
+  };
+  const HB = [10302, -3106, 1515, -777, 371, -161].map(c => c / 32768);
+  const tmp = { lg: 0, gain: 1 };
+  const V = (pg, f) => e.values[pg][f];
+  function lfoStep(l, rateHz, shape, dt) {
+    const o = e.lfo[l];
+    o.phase += rateHz * dt;
+    if (o.phase >= 1) { o.phase -= Math.floor(o.phase); o.held = Math.random() * 2 - 1; o.from = o.to; o.to = Math.random() * 2 - 1; }
+    const p = o.phase;
+    switch (shape) {
+      case 0: o.out = Math.sin(2 * Math.PI * p); break;
+      case 1: o.out = p < 0.5 ? 4 * p - 1 : 3 - 4 * p; break;
+      case 2: o.out = 2 * p - 1; break;
+      case 3: o.out = 1 - 2 * p; break;
+      case 4: o.out = p < 0.5 ? 1 : -1; break;
+      case 5: o.out = o.held; break;
+      default: o.out = o.from + (o.to - o.from) * (1 - Math.cos(Math.PI * p)) / 2;
+    }
+  }
+  e.lfoRate = (v) => 0.02 * Math.pow(2, 10.966 * v / 4095);
+  // Control: every modulation target, dt seconds since the last
+  e.control = function (dt, live) {
+    const l = [0, 1].map(i => { const pg = i ? P.LFO2 : P.LFO1; if (!live) lfoStep(i, e.lfoRate(V(pg, L.RATE)), zoneOf(V(pg, L.SHAPE), SHAPES), dt); return e.lfo[i].out; });
+    const cv = e.cv2;
+    for (let s = 0; s < 2; s++) {
+      const st = e.stages[s], pg = s ? P.MUT2 : P.MUT1;
+      st.mode = zoneOf(V(pg, M.MODE), MODES);
+      st.window = V(pg, M.WINDOW) / 4095;
+      st.fb = V(pg, M.FB) * 1.5 / 4095;
+      if (live) { st.depth = live.depth[s]; st.lgr = live.lgr[s]; st.mix = live.mix[s]; }
+      else {
+        st.depth = Math.max(0, Math.min(1, V(pg, M.DEPTH) / 4095 + l[0] * bipolar(V(pg, M.LFO1)) + l[1] * bipolar(V(pg, M.LFO2))
+          + cv * bipolar(V(P.MOD, s)) + e.tilt[s] * bipolar(V(P.MOD, 6 + s))));
+        st.lgr = Math.max(0, Math.min(6, ratioOctaves(V(pg, M.RATIO)) + 2 * (l[0] * bipolar(V(P.LFO1, L.RATIO1 + s)) + l[1] * bipolar(V(P.LFO2, L.RATIO1 + s)) + cv * bipolar(V(P.MOD, 2 + s)))));
+        st.mix = Math.max(0, Math.min(1, V(pg, M.MIX) / 4095 + l[0] * bipolar(V(P.LFO1, L.MIX1 + s)) + l[1] * bipolar(V(P.LFO2, L.MIX1 + s))));
+      }
+      const pw = s ? P.WARP2 : P.WARP1;
+      for (let f = 0; f < 8; f++) st.pts[f] = bipolar(V(pw, f));
+      st.pts[8] = st.pts[0];
+      prepare(st);
+    }
+    e.wave = live ? live.wave : Math.max(0, Math.min(4095, V(P.OSC, O.WAVE) + 512 * (l[0] * bipolar(V(P.LFO1, L.WAVE)) + l[1] * bipolar(V(P.LFO2, L.WAVE)))));
+    const t = e.wave * 3 / 4096;
+    e.waveA = Math.min(2, Math.floor(t)); e.waveF = t - e.waveA;
+    if (e.waveF < 0.008) e.waveF = 0;
+    if (e.waveF > 0.992 && e.waveA < 2) { e.waveA++; e.waveF = 0; }
+    const semi = zoneOf(V(P.OSC, O.SEMI), SEMIS) - 24, fine = bipolar(V(P.OSC, O.FINE)) / 24;
+    const a1 = bipolar(V(P.LFO1, L.PITCH)), a2 = bipolar(V(P.LFO2, L.PITCH));
+    const target = 1 + e.knob * 6 / 4095 + semi / 12 + fine;
+    const glide = 0.002 * Math.pow(2, 10 * V(P.OSC, O.GLIDE) / 4095);
+    e.pitchS = e.pitchS < 0 ? target : e.pitchS + (target - e.pitchS) * Math.min(1, dt / glide);
+    e.pitch = live && live.pitch != null ? live.pitch : Math.max(0, Math.min(10.2, e.pitchS + l[0] * a1 * Math.abs(a1) + l[1] * a2 * Math.abs(a2)));
+    e.level = V(P.OSC, O.LEVEL) / 4095;
+    e.drive = V(P.OSC, O.DRIVE) / 4095;
+    const bits = V(P.OSC, O.BITS);
+    e.bits = bits < 64 ? 0 : 12 - Math.floor(bits * 11 / 4096);
+    e.out2 = zoneOf(V(P.OSC, O.OUT2), OUT2S);
+  };
+  function base(p, lg) {
+    const lv = Math.max(0, Math.min(LEVELS - 1, Math.ceil(lg)));
+    const a = lookup(tables.get(e.waveA, lv), p);
+    return e.waveF ? a + (lookup(tables.get(e.waveA + 1, lv), p) - a) * e.waveF : a;
+  }
+  function eval1(S, lg) {
+    const st = e.stages[0];
+    if (!st.active) return base(S, lg);
+    const b = map(st, S, tmp), lgs = tmp.lg, g = tmp.gain;
+    let v = st.cb * g * base(b, lg + lgs);
+    if (st.ca) v += st.ca * base(S, lg);
+    st.prev = v;
+    return v;
+  }
+  function eval2(S, lg) {
+    const st = e.stages[1];
+    if (!st.active) return eval1(S, lg);
+    const b = map(st, S, tmp), lgs = tmp.lg, g = tmp.gain;
+    let v = st.cb * g * eval1(b, lg + lgs);
+    if (st.ca) v += st.ca * eval1(S, lg);
+    st.prev = v;
+    return v;
+  }
+  e.eval1 = eval1; e.eval2 = eval2; e.base = base;
+  e.hz = () => 16.3516 * Math.pow(2, e.pitch);
+  function finish(x) {
+    x *= e.level;
+    if (e.drive > 0) { const n = Math.max(-1, Math.min(1, x * (1 + 7 * e.drive) * 2 / 3)); x = (3 * n - n * n * n) / 2; }
+    if (e.bits) { const q = Math.pow(2, e.bits - 1); x = Math.floor(x * q) / q; }
+    return Math.max(-1, Math.min(1, x));
+  }
+  // One output sample (Out 1, Out 2), at sampleRate, made at twice that
+  e.sample = function () {
+    const f = e.hz(), inc = f / (2 * sampleRate);
+    const lg = Math.log2(f * 256 / (sampleRate * 2 * 56 / 96));
+    const y0 = eval2(e.acc, lg); e.acc = (e.acc + inc) % 4;
+    const y1 = eval2(e.acc, lg);
+    const S0 = e.acc; e.acc = (e.acc + inc) % 4;
+    const h = e.hb;
+    for (let i = 5; i > 0; i--) h.a[i] = h.a[i - 1];
+    for (let i = 11; i > 0; i--) h.b[i] = h.b[i - 1];
+    h.a[0] = y0; h.b[0] = y1;
+    let y = 0.5 * h.a[5];
+    for (let k = 0; k < 6; k++) y += HB[k] * (h.b[5 - k] + h.b[6 + k]);
+    let z;
+    const lg2 = Math.log2(f * 256 / (sampleRate * 22 / 48));
+    switch (e.out2) {
+      case 0: z = y; break;
+      case 1: z = base(S0, lg2); break;
+      case 2: { const keep = e.stages[0].prev; z = eval1(S0, lg2); e.stages[0].prev = keep; break; }
+      case 3: z = lookup(tables.get(3, Math.max(0, Math.min(8, Math.ceil(lg2 - 1)))), S0 / 2); break;
+      default: z = lookup(tables.get(3, Math.max(0, Math.min(8, Math.ceil(lg2 - 2)))), S0 / 4);
+    }
+    return [finish(y), finish(z)];
+  };
+  return e;
+}
+`;
+const ENG = new Function(ENGINE_SRC + '; return { P, M, O, L, MODES, SHAPES, OUT2S, SEMIS, zoneOf, zoneValue, bipolar, ratioOctaves, buildTables, makeEngine, lookup };')();
+const { P, M, O, L } = ENG;
+
+// ============================================================================
+// Constants mirroring the firmware (mutagen.h, ui.h, main.cpp, sysex.h)
+// ============================================================================
+const NF = 8, NPAGES = 8;
+const LETTERS = ['A', 'B', 'C', 'D'];
+const PAGE_NAMES = ['Mutant 1', 'Mutant 2', 'Osc', 'LFO 1', 'Warp 1', 'Warp 2', 'Mod', 'LFO 2'];
+const TAB_ORDER = [0, 4, 1, 5, 2, 6, 3, 7];   // A1 A2 B1 B2 C1 C2 D1 D2
+const nextPage = (pg, b) => (pg & 3) === b ? (pg + 4) % NPAGES : b;   // EightMuUi::NextPage
+const MODE_NAMES = ['Pulse', 'Squeeze', 'Mirror', 'Warp', 'PhaseDiff', 'Sync'];
+const SHAPE_NAMES = ['Sine', 'Triangle', 'Ramp up', 'Ramp down', 'Square', 'S&H', 'Drift'];
+const OUT2_NAMES = ['Same', 'Dry', 'Mutant 1', 'Sub −1', 'Sub −2'];
+const WAVE_NAMES = ['sine', 'triangle', 'saw', 'square'];
+const FADER_NAMES = {
+  mut: ['Mode', 'Ratio', 'Depth', 'Window', 'Feedback', 'Mix', 'LFO 1 → depth', 'LFO 2 → depth'],
+  osc: ['Wave', 'Semi', 'Fine', 'Bits', 'Drive', 'Out 2', 'Glide', 'Level'],
+  lfo: ['Rate', 'Shape', '→ ratio 1', '→ ratio 2', '→ wave', '→ pitch', '→ mix 1', '→ mix 2'],
+  mod: ['CV 2 → depth 1', 'CV 2 → depth 2', 'CV 2 → ratio 1', 'CV 2 → ratio 2', 'Audio 2 → depth 1', 'Audio 2 → depth 2', 'Tilt ↔ → depth 1', 'Tilt ↕ → depth 2'],
+  warp: ['Point 1', 'Point 2', 'Point 3', 'Point 4', 'Point 5', 'Point 6', 'Point 7', 'Point 8'],
+};
+const kindOf = (pg) => pg === P.MUT1 || pg === P.MUT2 ? 'mut' : pg === P.OSC ? 'osc' : pg === P.LFO1 || pg === P.LFO2 ? 'lfo' : pg === P.MOD ? 'mod' : 'warp';
+// ui.h IsBipolar and ZonesOf
+function isBipolar(pg, f) {
+  const k = kindOf(pg);
+  if (k === 'mut') return f === M.LFO1 || f === M.LFO2;
+  if (k === 'osc') return f === O.SEMI || f === O.FINE;
+  if (k === 'lfo') return f >= L.RATIO1;
+  return true;
+}
+function zonesOf(pg, f) {
+  const k = kindOf(pg);
+  if (k === 'mut' && f === M.MODE) return ENG.MODES;
+  if (k === 'osc' && f === O.OUT2) return ENG.OUT2S;
+  if (k === 'osc' && f === O.SEMI) return ENG.SEMIS;
+  if (k === 'lfo' && f === L.SHAPE) return ENG.SHAPES;
+  return 0;
+}
+const PAGE_HINT = {
+  mut: 'Mode: how this mutant bends the wave. Ratio: how many times a cycle (whole numbers keep the pitch; below 1 or in between adds sub-harmonics and sync-like edges). Depth: how far (X with the switch up). Window: fades the mutated wave at each restart, softening edges into formants. Feedback: the output pushes its own phase. Mix: dry to mutated. Then how much each LFO moves the depth.',
+  warp: 'Eight points of a curve, centre zero, that push the phase back (below the centre) and forth (above) through each run of this mutant, in its WARP mode: a drawn FM. The depth scales the whole curve.',
+  osc: 'Wave: sine, triangle, saw, square and every blend between neighbours (Main with the switch down). Semi ±24, fine ±50 cents. Bits: a bit crusher, off at the bottom. Drive into a soft clip. Out 2: what Audio Out 2 plays. Glide on the pitch. Level of both outputs.',
+  lfo: 'Rate 0.02 Hz to 40 Hz, the shape, then how much this LFO moves each mutant’s ratio (up to two octaves either way), the wave, the pitch (up to an octave, finer near the centre) and each mutant’s mix. Each LFO is on a CV Out; LFO 1’s square is on Pulse Out 1.',
+  mod: 'How much CV In 2 (+5 V for all of it), Audio In 2 (at audio rate) and the 8mu’s tilt move each mutant’s depth or ratio. Centre is none; down is the other way.',
+};
+// What the knobs set (main.cpp kTargets): page, fader
+const KNOB_TARGETS = { up: [[P.MUT1, M.DEPTH], [P.MUT2, M.DEPTH]], mid: [[P.MUT1, M.RATIO], [P.MUT2, M.RATIO]], down: [[P.MUT1, M.MODE], [P.MUT2, M.MODE], [P.OSC, O.WAVE]] };
+const SYSEX_MFR = 0x7D, SYSEX_PRODUCT = 0x4D, PROTOCOL_VERSION = 1;
+const CMD = { HELLO: 1, STATE: 2, SET: 3, SET_ALL: 4, PAGE: 5, RESET: 6, STATUS: 7, PING: 9, MOTION: 11 };
+const FIRST_FADER_CC = 34, FIRST_MOTION_CC = 42;
+const BUTTON_NOTES = [36, 48, 60, 72];
+const EIGHTMU_BLINK_OFF = [0xF0, 0x7D, 0x00, 0x00, 0x30, 0xF7];
+const NAMES12 = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+
+// Defaults (Engine::DefaultValues)
+const BV = (pct) => pct === 0 ? 2048 : pct > 0 ? 2048 + 48 + Math.floor(pct * 1999 / 100) : 2048 - 48 + Math.ceil(pct * 2000 / 100);
+const RV = (r) => Math.round(Math.log2(r / 0.25) / 6 * 4095);
+const ZV = ENG.zoneValue;
+const DEFAULTS = [
+  [ZV(0, 6), RV(1), 0, 0, 0, 4095, BV(35), 2048],
+  [ZV(5, 6), RV(1), 0, 0, 0, 4095, 2048, 2048],
+  [2730, ZV(24, 49), 2048, 0, 0, ZV(1, 5), 0, 3276],
+  [1983, ZV(1, 7), 2048, 2048, 2048, 2048, 2048, 2048],
+  [2048, 3496, 4095, 3496, 2048, 600, 0, 600],
+  [2048, 4095, 2048, 0, 2048, 4095, 2048, 0],
+  [4095, 2048, 2048, 2048, 2048, 2048, 2048, 2048],
+  [1194, ZV(0, 7), 2048, 2048, 2048, 2048, 2048, 2048],
+];
+
+// ============================================================================
+// State
+// ============================================================================
+const state = {
+  values: DEFAULTS.map(r => r.slice()),
+  page: 0,
+  // live, from the card's STATUS
+  live: null,
+  liveAt: 0,
+};
+const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
+// 8mu on this computer: where its faders are (0-127), which have picked up
+const mu = { phys: new Array(NF).fill(-1), engaged: new Array(NF).fill(false), wrote: new Array(NF).fill(-1),
+             ledSent: new Array(NF).fill(-1), lastBlinkOff: 0, cc: new Array(8).fill(0), motionTimer: 0 };
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+function say(text, isErr) { const m = $('msg'); m.textContent = text || ''; m.className = isErr ? 'err' : ''; }
+function setStatus(kind, text) { $('dot').className = 'dot ' + kind; $('status-text').textContent = text; }
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const cardLive = () => link.cardOnline && state.live && performance.now() - link.lastStatus < 3000;
+
+// The engine on this page, for the picture (and the simulation without a card)
+const tables = ENG.buildTables();
+const pageEngine = ENG.makeEngine(tables, 48000);
+pageEngine.values = state.values;
+
+// ============================================================================
+// What the faders mean
+// ============================================================================
+const pct = (x) => Math.round(x * 100) + '%';
+const spct = (x) => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(Math.round(x * 100)) + '%';
+function ratioText(lgr) {
+  const r = 0.25 * Math.pow(2, lgr);
+  const fr = [[0.25, '¼'], [1 / 3, '⅓'], [0.5, '½'], [2 / 3, '⅔'], [0.75, '¾']];
+  for (const [v, t] of fr) if (Math.abs(r - v) < 0.002) return '×' + t;
+  if (Math.abs(r - Math.round(r)) < 0.005) return '×' + Math.round(r);
+  return '×' + (r < 10 ? r.toFixed(2) : r.toFixed(1));
+}
+function noteText(oct) {
+  const semis = oct * 12, n = Math.round(semis), cents = Math.round((semis - n) * 100);
+  return NAMES12[((n % 12) + 12) % 12] + Math.floor(n / 12) + (cents ? ' ' + (cents > 0 ? '+' : '') + cents + '¢' : '');
+}
+const hzText = (oct) => { const hz = 16.3516 * Math.pow(2, oct); return hz < 1000 ? hz.toFixed(1) + ' Hz' : (hz / 1000).toFixed(2) + ' kHz'; };
+function waveText(v) {
+  const t = v * 3 / 4096, a = Math.min(2, Math.floor(t)), f = t - a;
+  if (f < 0.008) return WAVE_NAMES[a];
+  if (f > 0.992) return WAVE_NAMES[a + 1];
+  return WAVE_NAMES[a] + '→' + WAVE_NAMES[a + 1] + ' ' + pct(f);
+}
+const fmtTime = (s) => s >= 1 ? s.toFixed(2) + ' s' : Math.round(s * 1000) + ' ms';
+// What depth does in each mode
+function depthMeaning(mode, d) {
+  switch (mode) {
+    case 0: return 'width ' + (50 * (1 - 0.97 * d)).toFixed(1) + '%';
+    case 1: return 'up to ×' + ((1 - (d * 3 % 1)) * (1 << Math.min(2, Math.floor(d * 3))) + (d * 3 % 1) * (2 << Math.min(2, Math.floor(d * 3)))).toFixed(1) + ' fast';
+    case 2: return d === 0 ? 'no turn' : 'turns at ' + Math.round(100 * (1 - 0.98 * d)) + '%';
+    case 3: return 'push ' + pct(d * 0.5) + ' of a cycle';
+    case 4: return 'copy ' + (50 * (1 - 0.97 * d)).toFixed(1) + '% along';
+    default: return 'copy ×' + Math.pow(2, 4 * d).toFixed(2) + ' fast';
+  }
+}
+function describe(pg, f, v) {
+  const k = kindOf(pg);
+  if (k === 'mut') {
+    const mode = ENG.zoneOf(state.values[pg][M.MODE], 6);
+    switch (f) {
+      case M.MODE: return MODE_NAMES[ENG.zoneOf(v, 6)];
+      case M.RATIO: return ratioText(ENG.ratioOctaves(v));
+      case M.DEPTH: return pct(v / 4095) + ' · ' + depthMeaning(mode, v / 4095);
+      case M.WINDOW: return v ? pct(v / 4095) : 'off';
+      case M.FB: return v ? Math.round(v * 150 / 4095) + '%' : 'off';
+      case M.MIX: return v === 0 ? 'dry (off)' : v === 4095 ? 'wet' : pct(v / 4095) + ' wet';
+      default: return spct(ENG.bipolar(v));
+    }
+  }
+  if (k === 'osc') {
+    switch (f) {
+      case O.WAVE: return waveText(v);
+      case O.SEMI: { const s = ENG.zoneOf(v, 49) - 24; return (s > 0 ? '+' : s < 0 ? '−' : '') + Math.abs(s) + ' st'; }
+      case O.FINE: { const c = Math.round(ENG.bipolar(v) * 50); return (c > 0 ? '+' : c < 0 ? '−' : '') + Math.abs(c) + '¢'; }
+      case O.BITS: return v < 64 ? 'off' : (12 - Math.floor(v * 11 / 4096)) + ' bits';
+      case O.DRIVE: return v ? '×' + (1 + 7 * v / 4095).toFixed(1) : 'off';
+      case O.OUT2: return OUT2_NAMES[ENG.zoneOf(v, 5)];
+      case O.GLIDE: return v < 8 ? 'off' : fmtTime(0.002 * Math.pow(2, 10 * v / 4095));
+      default: return pct(v / 4095);
+    }
+  }
+  if (k === 'lfo') {
+    if (f === L.RATE) { const hz = 0.02 * Math.pow(2, 10.966 * v / 4095); return hz < 1 ? (1 / hz).toFixed(1) + ' s' : hz.toFixed(hz < 10 ? 2 : 1) + ' Hz'; }
+    if (f === L.SHAPE) return SHAPE_NAMES[ENG.zoneOf(v, 7)];
+    const b = ENG.bipolar(v);
+    if (f === L.RATIO1 || f === L.RATIO2) return b ? (b > 0 ? '±' : '∓') + Math.abs(2 * b).toFixed(2) + ' oct' : 'none';
+    if (f === L.PITCH) { const c = Math.round(b * Math.abs(b) * 1200); return c ? (c > 0 ? '±' : '∓') + Math.abs(c) + '¢' : 'none'; }
+    return b ? spct(b) : 'none';
+  }
+  if (k === 'mod') { const b = ENG.bipolar(v); return b ? (f === 2 || f === 3 ? (b > 0 ? '+' : '−') + Math.abs(2 * b).toFixed(2) + ' oct' : spct(b)) : 'none'; }
+  return spct(ENG.bipolar(v));
+}
+
+// ============================================================================
+// The 8mu's LEDs, as EightMuUi::Leds lights them (0-4095)
+// ============================================================================
+function ledValues() {
+  const pg = state.page, vals = state.values[pg], led = new Array(NF).fill(0), k = kindOf(pg);
+  const live = cardLive() ? state.live : null;
+  for (let i = 0; i < NF; i++) {
+    const v = vals[i], n = zonesOf(pg, i);
+    let b;
+    if (n && !isBipolar(pg, i)) b = Math.floor((ENG.zoneOf(v, n) + 1) * 4095 / n);
+    else if (isBipolar(pg, i)) b = Math.floor(Math.abs(ENG.bipolar(v)) * 4095);
+    else b = v;
+    if (k === 'mut') {
+      const s = pg === P.MUT2 ? 1 : 0, st = pageEngine.stages[s];
+      if (i === M.DEPTH) b = Math.floor((live ? live.depth[s] : st.depth) * 4095);
+      if (i === M.MIX) b = Math.floor((live ? live.mix[s] : st.mix) * 4095);
+    }
+    if (k === 'lfo' && i === L.RATE) { const l = pg === P.LFO2 ? 1 : 0; b = Math.floor(((live ? live.lfo[l] : pageEngine.lfo[l].out) + 1) * 2047); }
+    led[i] = clamp(b, 0, 4095);
+  }
+  return led;
+}
+
+// ============================================================================
+// Faders
+// ============================================================================
+const faderEls = [], ledEls = [];
+function buildFaders() {
+  const tabs = $('tabs');
+  TAB_ORDER.forEach((pg) => {
+    const b = pg & 3, layer = pg >> 2;
+    const t = document.createElement('button'); t.className = 'tab'; t.dataset.page = pg;
+    t.innerHTML = '<b>' + LETTERS[b] + (layer + 1) + '</b><span>' + PAGE_NAMES[pg] + '</span>';
+    t.title = PAGE_NAMES[pg] + ' (8mu: button ' + LETTERS[b] + (layer ? ', pressed twice' : '') + ')';
+    t.addEventListener('click', () => selectPage(pg, true)); tabs.appendChild(t);
+  });
+  const row = $('ledrow');
+  for (let i = 0; i < NF; i++) { const s = document.createElement('span'); row.appendChild(s); ledEls.push(s); }
+  const el = $('faders');
+  for (let i = 0; i < NF; i++) {
+    const f = document.createElement('div'); f.className = 'fader';
+    f.innerHTML = '<div class="name"></div><div class="slot"><input type="range" min="0" max="4095" step="1">' +
+      '<div class="centre"></div><div class="ghost"></div></div><div class="val"></div>';
+    const input = f.querySelector('input');
+    input.addEventListener('input', () => userSetValue(state.page, i, +input.value));
+    input.addEventListener('dblclick', () => userSetValue(state.page, i, isBipolar(state.page, i) ? 2048 : 0));
+    el.appendChild(f);
+    faderEls.push({ root: f, input, ghost: f.querySelector('.ghost'), name: f.querySelector('.name'), val: f.querySelector('.val') });
+  }
+}
+function knobOwned(pg, i) {
+  const all = [...KNOB_TARGETS.up, ...KNOB_TARGETS.mid, ...KNOB_TARGETS.down];
+  return all.some(([p, f]) => p === pg && f === i);
+}
+function refreshFaders() {
+  const pg = state.page, vals = state.values[pg], k = kindOf(pg);
+  [...$('tabs').children].forEach((t) => t.classList.toggle('on', +t.dataset.page === pg));
+  $('page-hint').textContent = PAGE_HINT[k];
+  faderEls.forEach((f, i) => {
+    const v = vals[i];
+    if (document.activeElement !== f.input || +f.input.value !== v) f.input.value = v;
+    f.name.textContent = FADER_NAMES[k][i];
+    f.input.setAttribute('aria-label', PAGE_NAMES[pg] + ' ' + FADER_NAMES[k][i]);
+    f.val.textContent = describe(pg, i, v);
+    f.root.classList.toggle('bip', isBipolar(pg, i));
+    f.root.classList.toggle('knob', knobOwned(pg, i));
+    f.root.title = knobOwned(pg, i) ? 'A knob sets this too (see Panel)' : '';
+    const ph = mu.phys[i], waiting = link.muIns.length > 0 && ph >= 0 && !mu.engaged[i];
+    f.ghost.style.display = waiting ? 'block' : 'none';
+    if (waiting) f.ghost.style.top = ((1 - ph / 127) * 150) + 'px';
+  });
+}
+function drawLedRow() {
+  const led = ledValues();
+  ledEls.forEach((s, i) => { s.style.opacity = (0.08 + 0.92 * led[i] / 4095).toFixed(3); });
+}
+
+// ============================================================================
+// Changing values (from the screen, the 8mu, a preset or the card)
+// ============================================================================
+let pending = new Map(), flushTimer = 0;
+function queueSend(key, bytes) {
+  if (!link.cardOnline) return;
+  pending.set(key, bytes);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = 0; const b = pending; pending = new Map(); for (const m of b.values()) sendRaw(m); }, 16);
+}
+function sendRaw(bytes) {
+  if (!link.card.out) return;
+  try { link.card.out.send(bytes); } catch (e) { say('Could not send to the card: ' + e.message, true); }
+}
+const sysex = (cmd, payload) => [0xF0, SYSEX_MFR, SYSEX_PRODUCT, cmd, ...payload, 0xF7];
+const put14 = (v) => [(v >> 7) & 127, v & 127];
+function setValue(page, i, v, send) {
+  v = clamp(v | 0, 0, 4095);
+  if (state.values[page][i] === v) return false;
+  state.values[page][i] = v;
+  if (send) queueSend('v' + page + '.' + i, sysex(CMD.SET, [page, i, ...put14(v)]));
+  changed();
+  return true;
+}
+function userSetValue(page, i, v) {
+  if (setValue(page, i, v, true) && page === state.page) mu.engaged[i] = false;   // a physical fader must meet it again
+}
+function selectPage(p, send) {
+  if (p === state.page) return;
+  state.page = p;
+  reengage();
+  if (send) queueSend('page', sysex(CMD.PAGE, [p]));
+  changed();
+}
+// Which 8mu faders already sit on their value (pickup, as EightMuUi)
+function reengage() {
+  for (let i = 0; i < NF; i++) {
+    const ph = mu.phys[i];
+    mu.engaged[i] = ph >= 0 && near(ph, state.page, i);
+    if (mu.engaged[i]) mu.wrote[i] = state.values[state.page][i];
+  }
+}
+const faderValue = (f) => Math.floor(f * 4095 / 127);
+function near(f, pg, i) {
+  const v = state.values[pg][i], n = zonesOf(pg, i), fv = faderValue(f);
+  return Math.abs(fv - v) <= 100 || (n && ENG.zoneOf(fv, n) === ENG.zoneOf(v, n));
+}
+let renderQueued = false, saveTimer = 0;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; refreshFaders(); renderPresets(); });
+}
+function changed() {
+  requestRender();
+  pushPreview();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => store.set('mutagen.last.v1', { v: state.values }), 400);
+}
+
+// ---- 8mu plugged into this computer -----------------------------------------
+function eightmuFader(i, f) {
+  const last = mu.phys[i], pg = state.page, target = state.values[pg][i];
+  mu.phys[i] = f;
+  // changed elsewhere (a knob, the screen): let go
+  if (mu.engaged[i] && target !== mu.wrote[i]) mu.engaged[i] = false;
+  if (!mu.engaged[i]) {
+    const fv = faderValue(f), lv = last >= 0 ? faderValue(last) : -1;
+    const crossed = lv >= 0 && ((lv < target) !== (fv < target));
+    if (!near(f, pg, i) && !crossed) { requestRender(); return; }
+    mu.engaged[i] = true;
+  }
+  const v = faderValue(f);
+  mu.wrote[i] = v;
+  setValue(pg, i, v, true);
+}
+// Buttons act when pressed, as on the card
+function eightmuButton(b, down) {
+  if (!down) return;
+  selectPage(nextPage(state.page, b), true);
+  mu.engaged.fill(false);
+  reengage();
+  requestRender();
+}
+// Tilt, as EightMU::Pitch/Roll compute it: the difference of a pair of CCs
+function scheduleMotion() {
+  if (mu.motionTimer) return;
+  mu.motionTimer = setTimeout(() => {
+    mu.motionTimer = 0;
+    const pitch = (mu.cc[0] - mu.cc[1]) * 16, roll = (mu.cc[2] - mu.cc[3]) * 16;
+    pageEngine.tilt = [tiltQ(roll), tiltQ(pitch)];
+    const p = clamp(pitch + 2048, 0, 4095), r = clamp(roll + 2048, 0, 4095);
+    sendRaw(sysex(CMD.MOTION, [...put14(p), ...put14(r)]));
+  }, 33);
+}
+function tiltQ(t) { const dz = 512; if (Math.abs(t) < dz) return 0; return clamp((t - Math.sign(t) * dz) / (2032 - dz), -1, 1); }
+
+// ---- Which editor the 8mu drives (shared with the other Workshop editors)
+const EDITOR_NAME = 'Mutagen';
+const OWNER_KEY = 'workshop.8mu.owner';
+const owner = { id: Math.random().toString(36).slice(2) + Date.now().toString(36), here: true, other: '', chan: null };
+function claim8mu(announce) {
+  const was = owner.here;
+  owner.here = true;
+  const msg = { id: owner.id, name: EDITOR_NAME, t: Date.now() };
+  try { if (owner.chan) owner.chan.postMessage(msg); } catch (e) {}
+  try { localStorage.setItem(OWNER_KEY, JSON.stringify(msg)); } catch (e) {}
+  if (!was) { taken8mu(); if (announce && link.muIns.length) say('The 8mu now drives this editor.'); }
+  refreshOwner();
+}
+function heardClaim(msg) {
+  if (!msg || msg.id === owner.id) return;
+  owner.other = msg.name || '';
+  if (owner.here) { owner.here = false; mu.engaged.fill(false); requestRender(); }
+  refreshOwner();
+}
+function taken8mu() { mu.engaged.fill(false); reengage(); mu.ledSent.fill(-1); mu.lastBlinkOff = 0; requestRender(); }
+function refreshOwner() {
+  const b = $('mu-owner'); if (!b) return;
+  b.hidden = !link.muIns.length;
+  b.classList.toggle('away', !owner.here);
+  b.textContent = owner.here ? '8mu: here' : '8mu: elsewhere';
+  b.title = owner.here ? 'The 8mu on this computer drives this editor. Click in another editor to hand it over.'
+    : 'The 8mu is driving the ' + (owner.other || 'other') + ' editor. Click here, or anywhere on this page, to take it back.';
+}
+function setupOwnership() {
+  try { owner.chan = new BroadcastChannel('workshop-computer-8mu'); owner.chan.onmessage = (e) => heardClaim(e.data); } catch (e) {}
+  window.addEventListener('storage', (e) => { if (e.key === OWNER_KEY && e.newValue) { try { heardClaim(JSON.parse(e.newValue)); } catch (err) {} } });
+  const take = () => { if (!owner.here) claim8mu(true); };
+  window.addEventListener('pointerdown', take, true);
+  window.addEventListener('keydown', take, true);
+  window.addEventListener('focus', take);
+  $('mu-owner').addEventListener('click', () => claim8mu(true));
+  claim8mu(false);
+}
+function eightmuMessage(d) {
+  if (d.length < 3 || d[0] < 0x80 || d[0] >= 0xF0) return;
+  const type = d[0] & 0xF0;
+  if (!owner.here) {
+    if (type === 0xB0 && d[1] >= FIRST_FADER_CC && d[1] < FIRST_FADER_CC + NF) { mu.phys[d[1] - FIRST_FADER_CC] = d[2] & 0x7F; requestRender(); }
+    return;
+  }
+  if (type === 0xB0) {
+    const cc = d[1];
+    if (cc >= FIRST_FADER_CC && cc < FIRST_FADER_CC + NF) eightmuFader(cc - FIRST_FADER_CC, d[2] & 0x7F);
+    else if (cc >= FIRST_MOTION_CC && cc < FIRST_MOTION_CC + 8) { mu.cc[cc - FIRST_MOTION_CC] = d[2] & 0x7F; scheduleMotion(); }
+  } else if (type === 0x90 || type === 0x80) {
+    const b = BUTTON_NOTES.indexOf(d[1]);
+    if (b >= 0) eightmuButton(b, type === 0x90 && d[2] > 0);
+  }
+}
+function serviceEightmuLeds(now) {
+  if (!link.muOuts.length || !owner.here) return;
+  if (now - mu.lastBlinkOff > 2000) {
+    mu.lastBlinkOff = now;
+    for (const o of link.muOuts) try { o.send(EIGHTMU_BLINK_OFF); } catch (e) {}
+    mu.ledSent.fill(-1);
+    return;
+  }
+  if (now - mu.lastBlinkOff < 60) return;
+  const led = ledValues();
+  for (let i = 0; i < NF; i++) {
+    const v = led[i] >> 5;
+    if (v === mu.ledSent[i]) continue;
+    mu.ledSent[i] = v;
+    for (const o of link.muOuts) try { o.send([0x90, i, v]); } catch (e) {}
+  }
+}
+
+// ============================================================================
+// WebMIDI
+// ============================================================================
+const isCardName = (n) => /mutagen/i.test(n || '');
+const is8mu = (p) => [p.name, p.manufacturer, (p.manufacturer || '') + ' ' + (p.name || '')].some(s => /8mu/i.test(s || ''));
+async function connect() {
+  if (!navigator.requestMIDIAccess) { say('This browser has no WebMIDI. Use Chrome or Edge on a computer.', true); return; }
+  say('The browser will ask to use MIDI devices with SysEx: choose Allow. The card shows up as “Mutagen”.');
+  try { link.access = await navigator.requestMIDIAccess({ sysex: true }); }
+  catch (e) { say('MIDI access was refused (' + (e && e.message || e) + '). Allow MIDI with SysEx for this page, then try again.', true); return; }
+  link.access.onstatechange = () => scanPorts();
+  $('btn-rescan').hidden = false;
+  scanPorts();
+}
+function scanPorts() {
+  const acc = link.access; if (!acc) return;
+  const ins = [...acc.inputs.values()].filter(p => p.state !== 'disconnected');
+  const outs = [...acc.outputs.values()].filter(p => p.state !== 'disconnected');
+  const cardIn = ins.find(p => isCardName(p.name)) || null, cardOut = outs.find(p => isCardName(p.name)) || null;
+  const muIns = ins.filter(is8mu), muOuts = outs.filter(is8mu);
+  const unrecognised = ins.filter(p => p !== cardIn && !muIns.includes(p));
+  for (const p of ins) p.onmidimessage = null;
+  if (cardIn) cardIn.onmidimessage = (ev) => onCardBytes(ev.data);
+  for (const p of muIns) p.onmidimessage = (ev) => eightmuMessage(ev.data);
+  const wasOnline = link.cardOnline;
+  link.card.in = cardIn; link.card.out = cardOut; link.muIns = muIns; link.muOuts = muOuts;
+  link.cardOnline = !!(cardIn && cardOut);
+  link.sysexBuf = []; link.sysexOn = false;
+  if (!muIns.length) mu.phys.fill(-1);
+  refreshOwner();
+  mu.lastBlinkOff = 0;
+  $('btn-read').disabled = $('btn-send').disabled = !link.cardOnline;
+  clearInterval(link.pingTimer);
+  const note = unrecognised.length ? ' Other MIDI inputs: ' + unrecognised.map(p => '“' + (p.name || '?') + '”').join(', ') + '.' : '';
+  const mus = muIns.length > 1 ? muIns.length + ' 8mus' : '8mu';
+  if (link.cardOnline) {
+    link.pingTimer = setInterval(() => sendRaw(sysex(CMD.PING, [])), 1000);
+    sendRaw(sysex(CMD.PING, []));
+    setStatus('ok', 'Connected: Mutagen card' + (muIns.length ? ' + ' + mus : ''));
+    say(muIns.length ? 'The ' + mus + ' drive' + (muIns.length > 1 ? '' : 's') + ' this page, and this page drives the card.' : 'Card connected. Drag the faders, or plug an 8mu into this computer.' + note);
+    if (!wasOnline) sendRaw(sysex(CMD.HELLO, []));
+  } else if (muIns.length) {
+    setStatus('warn', 'Connected: ' + mus + ' only (no card)');
+    say('No “Mutagen” card found, so editing here only. To reach the card, plug this computer into the Computer’s USB socket and power-cycle the module.', true);
+  } else {
+    setStatus('warn', 'No card or 8mu found');
+    say('Nothing found. Use a USB data cable, close other apps using the device, and power-cycle the module after plugging this computer in.' + note, true);
+  }
+  requestRender();
+}
+function onCardBytes(d) {
+  for (const b of d) {
+    if (b === 0xF0) { link.sysexOn = true; link.sysexBuf = []; continue; }
+    if (!link.sysexOn) continue;
+    if (b === 0xF7) { link.sysexOn = false; handleCardMessage(link.sysexBuf); link.sysexBuf = []; continue; }
+    if (b & 0x80) { if (b < 0xF8) link.sysexOn = false; continue; }
+    if (link.sysexBuf.length < 300) link.sysexBuf.push(b); else link.sysexOn = false;
+  }
+}
+const get14 = (p, i) => (p[i] << 7) | p[i + 1];
+function handleCardMessage(m) {
+  if (m.length < 3 || m[0] !== SYSEX_MFR || m[1] !== SYSEX_PRODUCT) return;
+  const cmd = m[2], p = m.slice(3);
+  if (cmd === CMD.STATE) {
+    if (p[0] !== PROTOCOL_VERSION) { say('The card speaks protocol version ' + p[0] + ' but this page speaks ' + PROTOCOL_VERSION + '. Use the matching editor and firmware.', true); return; }
+    if (p.length !== 2 + 2 * NPAGES * NF) { say('The card sent a state message of an unexpected size: is its firmware a different version?', true); return; }
+    for (let pg = 0; pg < NPAGES; pg++) for (let i = 0; i < NF; i++) state.values[pg][i] = clamp(get14(p, 2 + 2 * (pg * NF + i)), 0, 4095);
+    state.page = clamp(p[1], 0, NPAGES - 1);
+    reengage();
+    say('Read the faders from the card.');
+    changed();
+  } else if (cmd === CMD.STATUS && p.length >= 41) {
+    const f = p[0], f2 = p[1];
+    const st = (o) => ({ mode: p[o], depth: get14(p, o + 1) / 8191, lgr: get14(p, o + 3) / 2048, mix: Math.min(1, p[o + 5] / 127) });
+    const m1 = st(6), m2 = st(12);
+    state.live = {
+      muOnCard: !!(f & 1), switchUp: !!(f & 2), switchDown: !!(f & 4), waiting: !!(f & 8), syncing: !!(f & 16), audio2: !!(f & 32), lean: !!(f & 64),
+      waitX: !!(f2 & 1), waitY: !!(f2 & 2), waitMain: !!(f2 & 4),
+      pitch: get14(p, 2) / 1024, wave: get14(p, 4),
+      mode: [m1.mode, m2.mode], depth: [m1.depth, m2.depth], lgr: [m1.lgr, m2.lgr], mix: [m1.mix, m2.mix],
+      lfo: [(p[18] - 64) / 63.5, (p[19] - 64) / 63.5], tilt: [(p[34] - 64) / 63.5, (p[35] - 64) / 63.5],
+      busy: p[36], parts: p.slice(37, 41),
+    };
+    // The values the knobs set
+    const kv = [[P.MUT1, M.DEPTH], [P.MUT2, M.DEPTH], [P.MUT1, M.RATIO], [P.MUT2, M.RATIO], [P.MUT1, M.MODE], [P.MUT2, M.MODE], [P.OSC, O.WAVE]];
+    kv.forEach(([pg, i], n) => {
+      const v = clamp(get14(p, 20 + 2 * n), 0, 4095);
+      const el = faderEls[i];
+      const dragging = pg === state.page && el && document.activeElement === el.input;
+      if (!dragging && state.values[pg][i] !== v) { state.values[pg][i] = v; changed(); }
+    });
+    link.lastStatus = performance.now();
+  }
+}
+function sendAll() {
+  if (!link.cardOnline) return;
+  const payload = [PROTOCOL_VERSION];
+  for (let pg = 0; pg < NPAGES; pg++) for (let i = 0; i < NF; i++) payload.push(...put14(state.values[pg][i]));
+  sendRaw(sysex(CMD.SET_ALL, payload));
+}
+
+// ============================================================================
+// Drawing
+// ============================================================================
+function setupCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+let lastFrame = 0;
+const SPEC_N = 2048;   // samples over four cycles, for the harmonics
+function drawWave(now) {
+  const e = pageEngine;
+  const live = cardLive() ? state.live : null;
+  e.values = state.values;
+  e.knob = +$('pv-pitch').value;
+  e.control(Math.min(0.1, (now - lastFrame) / 1000), live);
+  lastFrame = now;
+  const cv = $('wave');
+  if (cv.closest('.folded')) return;
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H / 2 + 0.5); ctx.lineTo(W, H / 2 + 0.5); ctx.moveTo(W / 2 + 0.5, 0); ctx.lineTo(W / 2 + 0.5, H); ctx.stroke();
+  // Two cycles (four when a ratio below 1 stretches the pattern)
+  const slow = e.stages.some(s => s.active && s.r < 0.99);
+  const cycles = slow ? 4 : 2, n = Math.max(200, Math.floor(W * 2));
+  const y = (v) => H / 2 - v * (H / 2 - 6);
+  const lg = 1;    // bright tables (128 harmonics): the picture of the wave itself
+  const draw = (color, width, fn) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
+    for (let i = 0; i <= n; i++) { const S = i / n * cycles; const v = fn(S); const X = i / n * W; if (i) ctx.lineTo(X, y(v)); else ctx.moveTo(X, y(v)); }
+    ctx.stroke();
+  };
+  const keep = [e.stages[0].prev, e.stages[1].prev];
+  e.stages[0].prev = e.stages[1].prev = 0;
+  draw(cssVar('--muted'), 1, (S) => e.base(S % 4, lg));
+  if (e.stages[0].active && e.stages[1].active) draw(cssVar('--v2'), 1, (S) => e.eval1(S % 4, lg));
+  draw(cssVar('--v1'), 2, (S) => e.eval2(S % 4, lg));
+  // The harmonics: exactly four cycles, so every harmonic (and quarter)
+  // falls on a bin
+  const re = new Float64Array(SPEC_N);
+  for (let i = 0; i < SPEC_N; i++) re[i] = e.eval2(i / SPEC_N * 4, lg);
+  e.stages[0].prev = keep[0]; e.stages[1].prev = keep[1];
+  drawSpectrum(re);
+}
+function drawSpectrum(x) {
+  const cv = $('spectrum');
+  const { ctx, w: W, h: H } = setupCanvas(cv);
+  ctx.clearRect(0, 0, W, H);
+  const N = x.length, H_MAX = 64;
+  // DFT at the bins of quarter-harmonics up to 64
+  const mags = [];
+  let peak = 1e-9;
+  for (let k = 1; k <= H_MAX * 4; k++) {
+    let a = 0, b = 0;
+    for (let i = 0; i < N; i++) { const t = 2 * Math.PI * k * i / N; a += x[i] * Math.cos(t); b -= x[i] * Math.sin(t); }
+    const m = Math.sqrt(a * a + b * b) * 2 / N;
+    mags.push(m); peak = Math.max(peak, m);
+  }
+  const bw = W / (H_MAX * 4);
+  ctx.fillStyle = cssVar('--grid');
+  for (let db = -20; db >= -60; db -= 20) { const yy = Math.round(H * (-db / 60)) + 0.5; ctx.fillRect(0, yy, W, 1); }
+  for (let k = 0; k < mags.length; k++) {
+    const db = 20 * Math.log10(mags[k] / peak + 1e-12);
+    if (db < -60) continue;
+    const h = H * (1 + db / 60);
+    const whole = (k + 1) % 4 === 0;
+    ctx.fillStyle = whole ? cssVar('--v1') : cssVar('--v2');
+    ctx.fillRect(k * bw, H - h, Math.max(1, bw * (whole ? 3 : 2)), h);
+  }
+  ctx.fillStyle = cssVar('--muted'); ctx.font = '10px system-ui';
+  for (const h of [1, 8, 16, 32, 64]) ctx.fillText(String(h), (h * 4 - 1) * bw + 2, 10);
+}
+function drawReadouts() {
+  const e = pageEngine, card = cardLive(), Lv = card ? state.live : null;
+  const pitch = card ? Lv.pitch : e.pitch;
+  $('ro-pitch').textContent = noteText(pitch);
+  $('ro-pitch-sub').textContent = hzText(pitch) + (card ? '' : ' (this page)') + (card && Lv.syncing ? ' · synced to Audio In 1' : '');
+  const wave = card ? Lv.wave : e.wave;
+  $('ro-wave').textContent = waveText(wave);
+  $('ro-wave-sub').textContent = card && Lv.switchDown ? 'Main sets it now' : '';
+  for (let s = 0; s < 2; s++) {
+    const st = e.stages[s];
+    const mode = card ? Lv.mode[s] : st.mode, depth = card ? Lv.depth[s] : st.depth, lgr = card ? Lv.lgr[s] : st.lgr, mix = card ? Lv.mix[s] : st.mix;
+    $('ro-m' + (s + 1)).textContent = mix > 0 ? MODE_NAMES[mode] + ' ' + ratioText(lgr) : 'off (dry)';
+    $('ro-m' + (s + 1) + '-sub').textContent = mix > 0 ? pct(depth) + ' · ' + depthMeaning(mode, depth) + (mix < 0.995 ? ' · ' + pct(mix) + ' wet' : '') : '';
+    const bar = $('bar-m' + (s + 1)); bar.style.left = '0'; bar.style.width = (depth * 100).toFixed(1) + '%';
+  }
+  for (let l = 0; l < 2; l++) {
+    const v = card ? Lv.lfo[l] : e.lfo[l].out;
+    $('ro-l' + (l + 1)).textContent = describe(l ? P.LFO2 : P.LFO1, 0, state.values[l ? P.LFO2 : P.LFO1][0]) + ' ' + SHAPE_NAMES[ENG.zoneOf(state.values[l ? P.LFO2 : P.LFO1][1], 7)].toLowerCase();
+    const bar = $('bar-l' + (l + 1));
+    bar.style.left = (50 + Math.min(0, v) * 50).toFixed(1) + '%'; bar.style.width = (Math.abs(v) * 50).toFixed(1) + '%';
+  }
+  // Knobs waiting to pick up, in the switch position in use
+  const w = {};
+  if (card) {
+    if (Lv.switchDown) { if (Lv.waitX || Lv.waitY) { w['rb-m1'] = Lv.waitX; w['rb-m2'] = Lv.waitY; } w['rb-wave'] = Lv.waitMain; }
+    else { w['rb-m1'] = Lv.waitX; w['rb-m2'] = Lv.waitY; w['rb-pitch'] = Lv.waitMain; }
+  }
+  for (const id of ['rb-pitch', 'rb-wave', 'rb-m1', 'rb-m2']) $(id).classList.toggle('waiting', !!w[id]);
+  const b = card ? Lv.busy : -1;
+  const parts = card ? ' (sound ' + Lv.parts[0] + ', knobs ' + Lv.parts[1] + ', 8mu ' + Lv.parts[2] + ', LEDs & status ' + Lv.parts[3] + ')' : '';
+  $('busy').textContent = b < 0 ? '' : 'Card load: each sample took at most ' + b + ' µs of the ~20 µs it has' + parts + '.' + (Lv.lean ? ' Lean: this patch is too much to make twice a sample, so Out 1 is made once (a little rougher at high pitch).' : '');
+  $('busy').style.color = b >= 17 ? cssVar('--bad') : (card && Lv.lean ? cssVar('--warm') : '');
+}
+function frame(now) {
+  drawWave(now); drawReadouts(); drawLedRow();
+  serviceEightmuLeds(now);
+  requestAnimationFrame(frame);
+}
+
+// ============================================================================
+// Preview in the browser: the engine in an AudioWorklet
+// ============================================================================
+const preview = { ctx: null, node: null, gain: null, on: false, held: [], octave: 0 };
+const WORKLET_SRC = ENGINE_SRC + String.raw`
+class MutagenPreview extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.engine = makeEngine(buildTables(), sampleRate);
+    this.count = 0;
+    this.port.onmessage = (ev) => { const d = ev.data; if (d.values) this.engine.values = d.values; if (d.knob != null) this.engine.knob = d.knob; };
+  }
+  process(inputs, outputs) {
+    const e = this.engine, out = outputs[0];
+    if (!e.values) return true;
+    const n = out[0].length;
+    for (let i = 0; i < n; i++) {
+      if ((this.count++ & 15) === 0) e.control(16 / sampleRate, null);
+      const [a, b] = e.sample();
+      out[0][i] = a; if (out[1]) out[1][i] = b;
+    }
+    return true;
+  }
+}
+registerProcessor('mutagen-preview', MutagenPreview);
+`;
+// An AudioWorklet where the browser allows one (a page opened from a file
+// has no origin, and some browsers then refuse a worklet made on the spot:
+// a blob: URL first, then a data: URL), otherwise the older
+// ScriptProcessor, on the page's own thread
+async function makePreviewNode(ctx) {
+  for (const url of [URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' })),
+                     'data:application/javascript;charset=utf-8,' + encodeURIComponent(WORKLET_SRC)]) {
+    try {
+      await ctx.audioWorklet.addModule(url);
+      return new AudioWorkletNode(ctx, 'mutagen-preview', { outputChannelCount: [2] });
+    } catch (e) { /* try the next way */ }
+  }
+  const engine = ENG.makeEngine(tables, ctx.sampleRate);
+  const node = ctx.createScriptProcessor(1024, 0, 2);
+  let count = 0;
+  node.onaudioprocess = (ev) => {
+    if (!engine.values) return;
+    const a = ev.outputBuffer.getChannelData(0), b = ev.outputBuffer.getChannelData(1);
+    for (let i = 0; i < a.length; i++) {
+      if ((count++ & 15) === 0) engine.control(16 / ctx.sampleRate, null);
+      const y = engine.sample(); a[i] = y[0]; b[i] = y[1];
+    }
+  };
+  // the same messages as the worklet's port
+  node.port = { postMessage: (d) => { if (d.values) engine.values = d.values; if (d.knob != null) engine.knob = d.knob; } };
+  return node;
+}
+async function startPreview() {
+  if (!preview.ctx) {
+    preview.ctx = new AudioContext();
+    preview.node = await makePreviewNode(preview.ctx);
+    preview.gain = preview.ctx.createGain();
+    preview.node.connect(preview.gain).connect(preview.ctx.destination);
+  }
+  await preview.ctx.resume();
+  preview.on = true;
+  setVolume();
+  pushPreview();
+  $("btn-listen").classList.add("playing"); $('btn-listen').textContent = 'Stop';
+}
+function stopPreview() {
+  preview.on = false;
+  if (preview.ctx) preview.ctx.suspend();
+  $("btn-listen").classList.remove("playing"); $('btn-listen').textContent = 'Listen';
+}
+function setVolume() { if (preview.gain) { const v = +$('pv-vol').value / 100; preview.gain.gain.value = v * v; } }
+function pushPreview() {
+  if (!preview.on || !preview.node) return;
+  preview.node.port.postMessage({ values: state.values.map(r => r.slice()), knob: +$('pv-pitch').value });
+}
+function showPitchNote() {
+  const knob = +$('pv-pitch').value, v = state.values[P.OSC];
+  const oct = 1 + knob * 6 / 4095 + (ENG.zoneOf(v[O.SEMI], 49) - 24) / 12 + ENG.bipolar(v[O.FINE]) / 24;
+  $('pv-note').textContent = noteText(oct) + ' · ' + hzText(oct);
+}
+// The computer keyboard plays C4 to C5 (Main knob positions), Z and X shift octaves
+const KEYS = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
+function keyDown(ev) {
+  if (ev.target && /input|textarea|select/i.test(ev.target.tagName) && ev.target.type !== 'range') return;
+  const k = ev.key.toLowerCase();
+  if (k === 'z' || k === 'x') { preview.octave = clamp(preview.octave + (k === 'z' ? -1 : 1), -3, 2); say('Keyboard octave: C' + (4 + preview.octave) + '.'); return; }
+  if (!(k in KEYS) || ev.repeat) return;
+  const oct = 3 + preview.octave + KEYS[k] / 12;   // octaves above C1
+  $('pv-pitch').value = clamp(Math.round(oct / 6 * 4095), 0, 4095);
+  showPitchNote(); pushPreview();
+}
+
+// ============================================================================
+// Presets (localStorage)
+// ============================================================================
+const store = {
+  get(k, d) { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+};
+function cleanPreset(o) {
+  if (!o || typeof o !== 'object' || !Array.isArray(o.v) || o.v.length !== NPAGES) return null;
+  const v = o.v.map(r => Array.isArray(r) && r.length === NF ? r.map(x => clamp(Math.round(+x) || 0, 0, 4095)) : null);
+  if (v.some(r => !r)) return null;
+  return { name: String(o.name || 'Preset').slice(0, 60), v };
+}
+// Built-in presets: start from the defaults and change a few faders
+function patch(changes) {
+  const v = DEFAULTS.map(r => r.slice());
+  for (const [pg, f, x] of changes) v[pg][f] = x;
+  return v;
+}
+const Wv = (w) => Math.round(w * 4095 / 3);   // 0 sine, 1 triangle, 2 saw, 3 square
+const BUILTIN = [
+  { name: 'Default: saw, PULSE swept by LFO 1', v: DEFAULTS },
+  { name: 'Classic PWM square', v: patch([[P.OSC, O.WAVE, Wv(3)], [P.MUT1, M.DEPTH, 1400], [P.MUT1, M.LFO1, BV(55)],
+    [P.LFO1, L.RATE, 2200], [P.MUT2, M.MIX, 0]]) },
+  { name: 'PWM from two saws (PhaseDiff)', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(4, 6)], [P.MUT1, M.DEPTH, 1600], [P.MUT1, M.LFO1, BV(45)],
+    [P.LFO1, L.RATE, 1800], [P.MUT1, M.LFO2, BV(15)], [P.MUT2, M.MIX, 0]]) },
+  { name: 'Sync sweep', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.DEPTH, 1700], [P.MUT1, M.LFO1, 2048], [P.MUT1, M.LFO2, BV(60)],
+    [P.LFO2, L.RATE, 1400], [P.LFO2, L.SHAPE, ZV(1, 7)], [P.MUT2, M.MIX, 0]]) },
+  { name: 'Windowed sync formants', v: patch([[P.OSC, O.WAVE, Wv(0)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.DEPTH, 2300], [P.MUT1, M.WINDOW, 4095],
+    [P.MUT1, M.LFO1, BV(30)], [P.LFO1, L.RATE, 1300], [P.LFO1, L.SHAPE, ZV(6, 7)], [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 900], [P.MUT2, M.MIX, 2600]]) },
+  { name: 'Pulse sync, ratio 2', v: patch([[P.OSC, O.WAVE, Wv(3)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.RATIO, RV(2)], [P.MUT1, M.DEPTH, 1200], [P.MUT1, M.LFO1, 2048],
+    [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 1800], [P.MUT2, M.LFO1, BV(40)], [P.LFO1, L.RATE, 2000]]) },
+  { name: 'Mirror and squeeze', v: patch([[P.OSC, O.WAVE, Wv(1)], [P.MUT1, M.MODE, ZV(2, 6)], [P.MUT1, M.DEPTH, 2600], [P.MUT1, M.LFO1, BV(30)],
+    [P.MUT2, M.MODE, ZV(1, 6)], [P.MUT2, M.DEPTH, 1500], [P.MUT2, M.LFO2, BV(35)], [P.MUT2, M.MIX, 3000]]) },
+  { name: 'Warp bells, ratio 3', v: patch([[P.OSC, O.WAVE, Wv(0)], [P.MUT1, M.MODE, ZV(3, 6)], [P.MUT1, M.RATIO, RV(3)], [P.MUT1, M.DEPTH, 3000], [P.MUT1, M.LFO1, BV(20)],
+    [P.WARP1, 0, 4095], [P.WARP1, 1, 0], [P.WARP1, 2, 3000], [P.WARP1, 3, 1000], [P.WARP1, 4, 4095], [P.WARP1, 5, 2048], [P.WARP1, 6, 0], [P.WARP1, 7, 2500],
+    [P.MUT2, M.MIX, 0]]) },
+  { name: 'Squeeze bass with sub', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(1, 6)], [P.MUT1, M.DEPTH, 2400], [P.MUT1, M.LFO1, 2048],
+    [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 1500], [P.OSC, O.DRIVE, 1200], [P.OSC, O.OUT2, ZV(3, 5)]]) },
+  { name: 'Feedback grit', v: patch([[P.OSC, O.WAVE, Wv(3)], [P.MUT1, M.DEPTH, 2000], [P.MUT1, M.FB, 2200], [P.MUT2, M.DEPTH, 1300], [P.MUT2, M.FB, 1200],
+    [P.MUT2, M.MIX, 2800], [P.OSC, O.BITS, 1900]]) },
+  { name: 'Sub-harmonic ratio ⅔', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(0, 6)], [P.MUT1, M.RATIO, RV(2 / 3)], [P.MUT1, M.DEPTH, 2600], [P.MUT1, M.LFO1, BV(25)],
+    [P.MUT2, M.MIX, 0]]) },
+].map(cleanPreset);
+let userPresets = [];
+function loadPresets() { userPresets = (store.get('mutagen.presets.v1', []) || []).map(cleanPreset).filter(Boolean); }
+function savePresets() { if (!store.set('mutagen.presets.v1', userPresets)) say('Could not save presets: browser storage is unavailable or full.', true); }
+function applyPreset(pr) {
+  state.values = pr.v.map(r => r.slice());
+  pageEngine.values = state.values;
+  reengage();
+  sendAll();
+  say('Loaded “' + pr.name + '”' + (link.cardOnline ? ' and sent it to the card.' : '.'));
+  changed();
+}
+let presetsDirty = true, presetSig = '';
+function renderPresets() {
+  const sig = JSON.stringify(userPresets);
+  if (!presetsDirty && sig === presetSig) return;
+  presetsDirty = false; presetSig = sig;
+  const ul = $('presets'); ul.innerHTML = '';
+  const add = (pr, idx) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span'); name.className = 'pname'; name.textContent = pr.name; name.title = 'Load';
+    li.append(name);
+    name.addEventListener('click', () => applyPreset(pr));
+    if (idx < 0) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'built in'; li.append(t); }
+    else {
+      const mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.addEventListener('click', fn); li.append(b); };
+      mk('Update', 'Overwrite with what is on screen now', () => { userPresets[idx].v = state.values.map(r => r.slice()); savePresets(); presetsDirty = true; requestRender(); say('Updated “' + pr.name + '”.'); });
+      mk('Rename', 'Rename', () => { const n = prompt('New name', pr.name); if (n) { userPresets[idx].name = n.slice(0, 60); savePresets(); presetsDirty = true; requestRender(); } });
+      mk('✕', 'Delete', () => { if (confirm('Delete “' + pr.name + '”?')) { userPresets.splice(idx, 1); savePresets(); presetsDirty = true; requestRender(); } });
+    }
+    ul.append(li);
+  };
+  BUILTIN.forEach(pr => add(pr, -1));
+  userPresets.forEach((pr, i) => add(pr, i));
+}
+function saveCurrent() {
+  const n = prompt('Name for this preset', 'My mutant ' + (userPresets.length + 1));
+  if (!n) return;
+  userPresets.push({ name: n.slice(0, 60), v: state.values.map(r => r.slice()) });
+  savePresets(); presetsDirty = true; requestRender(); say('Saved “' + n + '”.');
+}
+function exportPresets() {
+  const blob = new Blob([JSON.stringify({ format: 'mutagen-presets', version: 1, presets: userPresets }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'mutagen-presets.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importPresets(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      const list = (Array.isArray(o) ? o : o.presets || []).map(cleanPreset).filter(Boolean);
+      if (!list.length) { say('No presets found in that file.', true); return; }
+      userPresets.push(...list); savePresets(); presetsDirty = true; requestRender();
+      say('Imported ' + list.length + ' preset' + (list.length > 1 ? 's' : '') + '.');
+    } catch (e) { say('That file isn’t a presets file: ' + e.message, true); }
+  };
+  r.readAsText(file);
+}
+function buildCollapsers() {
+  const folded = new Set(store.get('mutagen.folded.v1', []) || []);
+  document.querySelectorAll('section.card').forEach((card) => {
+    const h = card.querySelector(':scope > h2'); if (!h) return;
+    const name = h.textContent.trim();
+    const b = document.createElement('button'); b.className = 'fold'; b.type = 'button';
+    const show = (f) => {
+      card.classList.toggle('folded', f);
+      b.textContent = f ? '+' : '−';
+      b.title = (f ? 'Show ' : 'Hide ') + name; b.setAttribute('aria-label', b.title);
+      b.setAttribute('aria-expanded', String(!f));
+    };
+    show(folded.has(name));
+    b.addEventListener('click', () => {
+      const f = !card.classList.contains('folded');
+      show(f);
+      if (f) folded.add(name); else folded.delete(name);
+      store.set('mutagen.folded.v1', [...folded]);
+    });
+    h.appendChild(b);
+  });
+}
+
+// ============================================================================
+// Start
+// ============================================================================
+function init() {
+  const last = cleanPreset(Object.assign({ name: 'last' }, store.get('mutagen.last.v1', null) || {}));
+  if (last) state.values = last.v;
+  pageEngine.values = state.values;
+  loadPresets();
+  buildFaders(); buildCollapsers();
+  $('btn-connect').addEventListener('click', connect);
+  $('btn-rescan').addEventListener('click', connect);
+  $('btn-read').addEventListener('click', () => { sendRaw(sysex(CMD.HELLO, [])); say('Asked the card for its faders.'); });
+  $('btn-send').addEventListener('click', () => { sendAll(); say('Sent the faders to the card.'); });
+  $('btn-reset').addEventListener('click', () => {
+    if (!confirm('Reset every page to the default?')) return;
+    state.values = DEFAULTS.map(r => r.slice());
+    pageEngine.values = state.values;
+    reengage();
+    if (link.cardOnline) sendRaw(sysex(CMD.RESET, []));
+    changed();
+  });
+  $('btn-save').addEventListener('click', saveCurrent);
+  $('btn-export').addEventListener('click', exportPresets);
+  $('btn-import').addEventListener('click', () => $('import-file').click());
+  $('import-file').addEventListener('change', (e) => { if (e.target.files[0]) importPresets(e.target.files[0]); e.target.value = ''; });
+  $('btn-listen').addEventListener('click', () => preview.on ? stopPreview() : startPreview().catch(e => say('Could not start the preview: ' + e.message, true)));
+  $('pv-pitch').addEventListener('input', () => { showPitchNote(); pushPreview(); });
+  $('pv-vol').addEventListener('input', setVolume);
+  window.addEventListener('keydown', keyDown);
+  window.addEventListener('resize', () => requestRender());
+  if (!navigator.requestMIDIAccess) say('This browser can’t do WebMIDI, so it can’t reach the card or an 8mu. You can still edit, listen and keep presets here.');
+  else say('Press “Connect card & 8mu” to reach the card. Until then this page edits and previews on its own.');
+  showPitchNote();
+  changed();
+  setupOwnership();
+  requestAnimationFrame(frame);
+}
+init();
+</script>
+</body>
+</html>
