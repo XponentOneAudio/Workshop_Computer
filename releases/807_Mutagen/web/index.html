@@ -591,7 +591,7 @@ const state = {
   liveAt: 0,
 };
 const link = { access: null, card: { in: null, out: null }, muIns: [], muOuts: [], cardOnline: false,
-               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0 };
+               sysexBuf: [], sysexOn: false, lastStatus: 0, pingTimer: 0, knobSeen: {}, editedAt: {} };
 // 8mu on this computer: where its faders are (0-127), which have picked up
 const mu = { phys: new Array(NF).fill(-1), engaged: new Array(NF).fill(false), wrote: new Array(NF).fill(-1),
              ledSent: new Array(NF).fill(-1), lastBlinkOff: 0, cc: new Array(8).fill(0), motionTimer: 0 };
@@ -776,6 +776,7 @@ function setValue(page, i, v, send) {
   v = clamp(v | 0, 0, 4095);
   if (state.values[page][i] === v) return false;
   state.values[page][i] = v;
+  link.editedAt[page * NF + i] = performance.now();
   if (send) queueSend('v' + page + '.' + i, sysex(CMD.SET, [page, i, ...put14(v)]));
   changed();
   return true;
@@ -1008,10 +1009,19 @@ function handleCardMessage(m) {
       lfo: [(p[18] - 64) / 63.5, (p[19] - 64) / 63.5], tilt: [(p[34] - 64) / 63.5, (p[35] - 64) / 63.5],
       busy: p[36], parts: p.slice(37, 41),
     };
-    // The values the knobs set
+    // The values the knobs set.  Taken only when the card's value has
+    // changed since its last STATUS (a knob turned) and this page hasn't
+    // changed it lately: a STATUS sent before the card had this page's
+    // latest edit would otherwise pull the value back, and an 8mu fader on
+    // this computer would let go and fight it
     const kv = [[P.MUT1, M.DEPTH], [P.MUT2, M.DEPTH], [P.MUT1, M.RATIO], [P.MUT2, M.RATIO], [P.MUT1, M.MODE], [P.MUT2, M.MODE], [P.OSC, O.WAVE]];
+    const now = performance.now();
     kv.forEach(([pg, i], n) => {
-      const v = clamp(get14(p, 20 + 2 * n), 0, 4095);
+      const v = clamp(get14(p, 20 + 2 * n), 0, 4095), key = pg * NF + i;
+      const was = link.knobSeen[key];
+      link.knobSeen[key] = v;
+      if (was === undefined || was === v) return;
+      if (key in link.editedAt && now - link.editedAt[key] < 500) return;
       const el = faderEls[i];
       const dragging = pg === state.page && el && document.activeElement === el.input;
       if (!dragging && state.values[pg][i] !== v) { state.values[pg][i] = v; changed(); }

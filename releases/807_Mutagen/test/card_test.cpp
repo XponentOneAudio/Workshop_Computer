@@ -182,6 +182,35 @@ static void TestEightMu()
 	CHECK(c.ui.page == PageMut2, "button B: MUTANT 2 (%d)", c.ui.page);
 	CHECK(c.led[1] == 4095 && c.led[0] == 0, "Computer LED 2 shows button B");
 	CHECK(c.mu.led[MMix] > 4000, "8mu LED shows MUTANT 2 mix (full): %d", c.mu.led[MMix]);
+	// The knob that shares a value with a fader must not fight it.  Switch
+	// up, X is mutant 1's depth: a knob left alone still reads a count or
+	// two of noise, which mustn't take the depth back from the 8mu.
+	c.ui.SetPage(PageMut1);
+	c.sw = ComputerCard::Up;
+	c.knob[ComputerCard::X] = KnobFor(500);
+	Run(c, 48000);   // set, then left alone
+	c.mu.fader[MDepth] = (500 * 127 / 4095) << 5;   // where the knob put it
+	Run(c, 64);
+	{
+		bool followed = true;
+		for (int f = 16; f <= 127; f += 4)
+		{
+			c.mu.fader[MDepth] = f << 5;
+			for (int j = 0; j < 8; j++)
+			{
+				c.knob[ComputerCard::X] = KnobFor(500) + ((j & 1) ? 2 : -2);   // noise
+				Run(c, 32);
+			}
+			if (c.engine.values[PageMut1][MDepth] != (f * 4095) / 127) followed = false;
+		}
+		CHECK(followed, "8mu depth fader works while the X knob sits still (depth %d)", c.engine.values[PageMut1][MDepth]);
+		// and turning the knob takes it back, once picked up
+		c.knob[ComputerCard::X] = KnobFor(4095);   // reaches it: picked up
+		Run(c, 200);
+		c.knob[ComputerCard::X] = KnobFor(3000);
+		Run(c, 200);
+		CHECK(abs(c.engine.values[PageMut1][MDepth] - 3000) <= 2, "the knob takes over when turned: %d", c.engine.values[PageMut1][MDepth]);
+	}
 	// Tilt passes to the engine
 	c.mu.roll = 2032;
 	Run(c, 64);

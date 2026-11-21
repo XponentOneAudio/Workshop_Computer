@@ -208,6 +208,11 @@ private:
 	bool knobLatched[3] = {};
 	int32_t lastKnob[3] = {};
 	int32_t knobWrote[3] = {};
+	// Counts more than noise, and how long after the last such move a knob
+	// still writes (control ticks at 1.5kHz: half a second)
+	static constexpr int32_t kKnobMoved = 24, kTurningTicks = 750;
+	int32_t knobTurning[3] = {};
+	int32_t knobFrom[3] = {};    // where the knob was when it last wrote, or picked up
 
 	// A dead zone at each end, so the whole range is reached
 	static int32_t MapKnob(int32_t k)
@@ -260,7 +265,7 @@ private:
 			{
 				Put(kTargets[pos][i], k[i]);
 				knobLatched[i] = true;
-				knobWrote[i] = k[i];
+				knobWrote[i] = knobFrom[i] = k[i];
 				lastKnob[i] = k[i];
 			}
 			return;
@@ -287,12 +292,32 @@ private:
 				bool crossed = (lastKnob[i] - v < 0) != (d < 0);
 				int n = t.page == kPitch ? 0 : ZonesOf(t.page, t.fader);
 				if (n && ZoneOf(k[i], n) == ZoneOf(v, n)) near = true;
-				if (near || crossed) knobLatched[i] = true;
+				if (near || crossed)
+				{
+					// Picked up, but it writes only once turned on from
+					// here: a fader sweeping past an idle knob mustn't wake it
+					knobLatched[i] = true;
+					knobWrote[i] = v;
+					knobFrom[i] = k[i];
+				}
 			}
 			if (knobLatched[i])
 			{
-				if (v != k[i]) Put(t, k[i]);
-				knobWrote[i] = k[i];
+				// A knob that shares its value with an 8mu fader (or the
+				// web editor) only writes while it is being turned: one left
+				// alone still reads a count or two of noise, and writing
+				// that would take the value back from the fader each time
+				// the fader moved, the two taking turns.  The pitch shares
+				// with nothing, so Main follows every count.
+				bool shared = t.page != kPitch;
+				int32_t moved = k[i] - knobFrom[i];
+				if (!shared || moved >= kKnobMoved || moved <= -kKnobMoved) knobTurning[i] = kTurningTicks;
+				if (knobTurning[i] > 0)
+				{
+					knobTurning[i]--;
+					if (v != k[i]) Put(t, k[i]);
+					knobWrote[i] = knobFrom[i] = k[i];
+				}
 			}
 			lastKnob[i] = k[i];
 		}

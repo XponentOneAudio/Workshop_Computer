@@ -74,7 +74,10 @@ after modulation, and an LFO's rate LED pulses with the LFO.
 
 X and Y set the same values as the 8mu's faders. After the switch moves, or
 something else changes the value, a knob does nothing until it reaches it
-(LED 6 blinks fast meanwhile). At power-up the knobs take over at once.
+(LED 6 blinks fast meanwhile). A knob that shares its value with a fader
+only writes while it is being turned (and for half a second after), so a
+knob left alone never takes a value back from the 8mu. At power-up the
+knobs take over at once.
 Main is the pitch in both up and middle, so it only waits after the switch
 has been held down.
 
