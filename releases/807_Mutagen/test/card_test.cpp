@@ -131,13 +131,12 @@ static void TestJacks()
 {
 	Mutagen c;
 	Run(c, 100);
-	// Pulse In 1 restarts the wave: the sync out goes high at once
+	// Pulse In 1 clocks the LFOs' tempo sync (see TestClock)
 	Run(c, 333);
 	c.pulseIn1 = true;
-	Run(c, 1);
+	Run(c, 50);
 	c.pulseIn1 = false;
-	CHECK(c.pulseOut[1], "Pulse In 1 restarts the wave (sync out high)");
-	CHECK(c.engine.resetFlash > 0, "reset shown");
+	CHECK(c.engine.clockFlash > 0, "clock shown");
 	// Pulse In 2 restarts the LFOs
 	Run(c, 20000);
 	c.pulseIn2 = true;
@@ -157,6 +156,66 @@ static void TestJacks()
 	c.jack[0] = true;
 	Run(c, 10);
 	CHECK(c.engine.syncing, "Audio In 1 patched: sync");
+}
+
+// Run with a clock at Pulse In 1 (period in samples, 2ms high), counting
+// Pulse Out 1's rises (LFO 1's square) and how far each is from a clock
+static int RunClocked(Mutagen &c, int n, int period, int *worstOff)
+{
+	int rises = 0;
+	bool prev = c.pulseOut[0];
+	*worstOff = 0;
+	for (int i = 0; i < n; i++)
+	{
+		int at = int(gSamples % uint64_t(period));
+		c.pulseIn1 = at < 96;
+		Run(c, 1);
+		if (c.pulseOut[0] && !prev)
+		{
+			rises++;
+			int off = at < period / 2 ? at : period - at;
+			if (off > *worstOff) *worstOff = off;
+		}
+		prev = c.pulseOut[0];
+	}
+	return rises;
+}
+
+static void TestClock()
+{
+	Mutagen c;
+	// LFO 1 a square, synced: 1 beat a cycle
+	c.engine.values[PageLfo1][LShape] = uint16_t(ValueForZone(LSquare, kShapes));
+	c.engine.values[PageLfo1][LRate] = uint16_t(ValueForSync(6));
+	CHECK(kSyncN[6] == 1 && kSyncD[6] == 1, "choice 6 is one beat");
+	const int period = 23040;   // 125 BPM
+	int off;
+	RunClocked(c, period * 4, period, &off);
+	CHECK(c.engine.clocked && c.engine.clockPeriod == uint32_t(period), "follows the clock: %u", c.engine.clockPeriod);
+	int rises = RunClocked(c, period * 16, period, &off);
+	CHECK(rises == 16, "one LFO cycle a beat: %d in 16 beats", rises);
+	CHECK(off <= 48, "each cycle starts on the beat (within 1ms): %d samples off", off);
+	// 4 beats a cycle, and a third of a beat
+	c.engine.values[PageLfo1][LRate] = uint16_t(ValueForSync(2));
+	RunClocked(c, period * 4, period, &off);
+	rises = RunClocked(c, period * 16, period, &off);
+	CHECK(rises == 4, "4 beats a cycle: %d in 16 beats", rises);
+	c.engine.values[PageLfo1][LRate] = uint16_t(ValueForSync(9));
+	RunClocked(c, period * 4, period, &off);
+	rises = RunClocked(c, period * 16, period, &off);
+	CHECK(rises == 48, "a third of a beat: %d in 16 beats", rises);
+	// The top of the first third is the last choice; above it, free rates
+	CHECK(LfoSyncOf(kSyncTop - 1) == kSyncs - 1 && LfoSyncOf(kSyncTop) == -1, "sync zone ends at a third");
+	// The clock stops: back to 120 BPM, still one cycle a beat
+	c.engine.values[PageLfo1][LRate] = uint16_t(ValueForSync(6));
+	c.pulseIn1 = false;
+	Run(c, 48000 * 3);
+	CHECK(!c.engine.clocked && c.engine.clockPeriod == 24000, "back to 120 BPM without a clock");
+	Counts k = Run(c, 48000 * 4);
+	CHECK(k.rises[0] == 8, "120 BPM: 8 cycles in 4s (%d)", k.rises[0]);
+	// A noisy edge doesn't count twice
+	c.pulseIn1 = true; Run(c, 3); c.pulseIn1 = false; Run(c, 3); c.pulseIn1 = true; Run(c, 3); c.pulseIn1 = false;
+	CHECK(c.engine.beat < 48, "beat counter sane");
 }
 
 static void TestEightMu()
@@ -326,6 +385,7 @@ int main()
 {
 	TestPowerUpAndKnobs();
 	TestJacks();
+	TestClock();
 	TestEightMu();
 	TestProtocol();
 	TestGuard();

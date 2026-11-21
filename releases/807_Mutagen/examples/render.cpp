@@ -97,19 +97,19 @@ int main()
 	std::vector<Scene> scenes;
 	scenes.push_back(Scene{"01_default_saw_pulse.wav", {}, Phrase({48, 48, 55, 51, 53, 51, 46, 48}, 0.5f, 0.15f, 0, 2), 8, nullptr});
 	scenes.push_back(Scene{"02_classic_pwm_square.wav", {{PageOsc, OWave, Wv(3)}, {PageMut1, MDepth, 1400}, {PageMut1, MLfo1, BV(55)},
-			{PageLfo1, LRate, 2200}, {PageMut2, MMix, 0}}, Phrase(bass, 0.25f, 0.2f, 0, 4), 8, nullptr});
+			{PageLfo1, LRate, 2832}, {PageMut2, MMix, 0}}, Phrase(bass, 0.25f, 0.2f, 0, 4), 8, nullptr});
 	scenes.push_back(Scene{"03_pwm_from_two_saws.wav", {{PageOsc, OWave, Wv(2)}, {PageMut1, MMode, ZV(PhaseDiff, kModes)}, {PageMut1, MDepth, 1600},
-			{PageMut1, MLfo1, BV(45)}, {PageLfo1, LRate, 1800}, {PageMut1, MLfo2, BV(15)}, {PageMut2, MMix, 0}},
+			{PageMut1, MLfo1, BV(45)}, {PageLfo1, LRate, 2565}, {PageMut1, MLfo2, BV(15)}, {PageMut2, MMix, 0}},
 			{{0, 3.9f, 48}, {4, 3.9f, 51}}, 8, nullptr});
 	scenes.push_back(Scene{"04_sync_sweep_knob.wav", {{PageOsc, OWave, Wv(2)}, {PageMut1, MMode, ZV(Sync, kModes)}, {PageMut1, MLfo1, 2048},
 			{PageMut2, MMix, 0}}, Hold(43, 8), 8, [](Engine &e, float t) {e.values[PageMut1][MDepth] = uint16_t(4095 * Tri(t, 8));}});
 	scenes.push_back(Scene{"05_windowed_sync_formants.wav", {{PageOsc, OWave, Wv(0)}, {PageMut1, MMode, ZV(Sync, kModes)}, {PageMut1, MDepth, 2300},
-			{PageMut1, MWindow, 4095}, {PageMut1, MLfo1, BV(30)}, {PageLfo1, LRate, 1300}, {PageLfo1, LShape, ZV(LDrift, kShapes)},
+			{PageMut1, MWindow, 4095}, {PageMut1, MLfo1, BV(30)}, {PageLfo1, LRate, 2232}, {PageLfo1, LShape, ZV(LDrift, kShapes)},
 			{PageMut2, MMode, ZV(Pulse, kModes)}, {PageMut2, MDepth, 900}, {PageMut2, MMix, 2600}},
 			Phrase({45, 48, 52, 50, 48, 45, 43, 45}, 1.0f, 0.05f), 8, nullptr});
 	scenes.push_back(Scene{"06_pulse_sync_ratio2.wav", {{PageOsc, OWave, Wv(3)}, {PageMut1, MMode, ZV(Sync, kModes)}, {PageMut1, MRatio, RV(2)},
 			{PageMut1, MDepth, 1200}, {PageMut1, MLfo1, 2048}, {PageMut2, MMode, ZV(Pulse, kModes)}, {PageMut2, MDepth, 1800},
-			{PageMut2, MLfo1, BV(40)}, {PageLfo1, LRate, 2000}}, Phrase(bass, 0.25f, 0.2f, 0, 4), 8, nullptr});
+			{PageMut2, MLfo1, BV(40)}, {PageLfo1, LRate, 2698}}, Phrase(bass, 0.25f, 0.2f, 0, 4), 8, nullptr});
 	scenes.push_back(Scene{"07_mirror_and_squeeze.wav", {{PageOsc, OWave, Wv(1)}, {PageMut1, MMode, ZV(Mirror, kModes)}, {PageMut1, MDepth, 2600},
 			{PageMut1, MLfo1, BV(30)}, {PageMut2, MMode, ZV(Squeeze, kModes)}, {PageMut2, MDepth, 1500}, {PageMut2, MLfo2, BV(35)},
 			{PageMut2, MMix, 3000}}, Phrase({40, 47, 52, 47}, 1.0f, 0.05f, 0, 2), 8, nullptr});

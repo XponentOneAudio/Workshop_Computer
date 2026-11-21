@@ -230,6 +230,10 @@ static void TestHelpers()
 	// LFO rates
 	double lo = double(LfoIncFromValue(0)) * 3000.0 / 4294967296.0, hi = double(LfoIncFromValue(4095)) * 3000.0 / 4294967296.0;
 	CHECK(fabs(lo - 0.02) < 0.001 && fabs(hi - 40) < 1, "LFO range %f-%f Hz", lo, hi);
+	double at = double(LfoIncFromValue(ValueForLfoHz(0.5f))) * 3000.0 / 4294967296.0;
+	CHECK(fabs(at - 0.5) < 0.01, "LFO 0.5Hz: %f", at);
+	for (int z = 0; z < kSyncs; z++) CHECK(LfoSyncOf(ValueForSync(z)) == z, "sync choice %d", z);
+	CHECK(LfoSyncOf(0) == 0 && LfoSyncOf(4095) == -1, "sync at the bottom, free at the top");
 }
 
 static void TestPitch()

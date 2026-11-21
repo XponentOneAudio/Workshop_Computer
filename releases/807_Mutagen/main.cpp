@@ -21,7 +21,7 @@
 //
 //   MUTANT  mode, ratio, depth, window, feedback, mix, LFO 1 > depth, LFO 2 > depth
 //   OSC     wave, semitones, fine, bit crush, drive, Out 2, glide, level
-//   LFO     rate, shape, > ratio 1, > ratio 2, > wave, > pitch, > mix 1, > mix 2
+//   LFO     rate (first third: synced to Pulse In 1), shape, > ratio 1, > ratio 2, > wave, > pitch, > mix 1, > mix 2
 //   MOD     CV 2 > depth 1, > depth 2, > ratio 1, > ratio 2,
 //           Audio 2 > depth 1, > depth 2, tilt > depth 1, > depth 2
 //   WARP    eight points of a curve that pushes the phase
@@ -43,7 +43,8 @@
 //   CV In 2      modulation (MOD page; at first, mutant 1's depth)
 //   Audio In 1   hard sync from another oscillator (while patched)
 //   Audio In 2   audio-rate modulation of the depths (MOD page)
-//   Pulse In 1   restart the wave
+//   Pulse In 1   clock, for the LFOs' tempo sync (the first third of their
+//                RATE faders: 16 beats a cycle down to an eighth of a beat)
 //   Pulse In 2   restart the LFOs
 // Outputs
 //   Audio Out 1  the oscillator
@@ -113,7 +114,7 @@ public:
 		in.syncPatched = Connected(Audio1);
 		in.audio1 = in.syncPatched ? AudioIn1() : 0;
 		in.audio2 = Connected(Audio2) ? AudioIn2() : 0;
-		in.reset = PulseIn1RisingEdge();
+		in.clock = PulseIn1();
 		in.lfoReset = PulseIn2RisingEdge();
 		engine.Tick(in);
 
@@ -344,7 +345,7 @@ private:
 		// right.  Otherwise LEDs 1-4 show the 8mu page's button (A B / C D,
 		// lit for its first page, blinking for its second), or with no 8mu
 		// or editor, the two depths (1, 2), sync at Audio In 1 (3) and a
-		// restart at Pulse In 1 (4).  LEDs 5 and 6 follow the two LFOs;
+		// clock at Pulse In 1 (4).  LEDs 5 and 6 follow the two LFOs;
 		// LED 6 blinks fast while a knob is waiting to pick up.
 		blink = (blink + 1) % 600;
 		if (position == 2)
@@ -368,7 +369,7 @@ private:
 			LedBrightness(0, uint16_t(engine.stage[0].ShownDepth() >> 3));
 			LedBrightness(1, uint16_t(engine.stage[1].ShownDepth() >> 3));
 			LedOn(2, engine.syncing);
-			LedOn(3, engine.resetFlash > 0);
+			LedOn(3, engine.clockFlash > 0);
 		}
 		LedBrightness(4, uint16_t((engine.lfo[0].out + 32768) >> 4));
 		if (waiting) LedOn(5, blink % 150 < 75);
@@ -436,7 +437,8 @@ private:
 		int n = 0;
 		status[n++] = uint8_t((mu.Connected() ? 1 : 0) | (position == 0 ? 2 : 0) | (position == 2 ? 4 : 0)
 			| (waiting ? 8 : 0) | (engine.syncing ? 16 : 0) | (Connected(Audio2) ? 32 : 0) | (engine.lean ? 64 : 0));
-		status[n++] = uint8_t((knobLatched[0] ? 0 : 1) | (knobLatched[1] ? 0 : 2) | (knobLatched[2] ? 0 : 4));
+		status[n++] = uint8_t((knobLatched[0] ? 0 : 1) | (knobLatched[1] ? 0 : 2) | (knobLatched[2] ? 0 : 4)
+			| (engine.clocked ? 8 : 0));
 		Put14At(n, engine.pitch >> 6);
 		Put14At(n, engine.wavePos);
 		for (int s = 0; s < 2; s++)
@@ -458,6 +460,7 @@ private:
 		status[n++] = Bip7(engine.tiltQ[1]);
 		status[n++] = uint8_t(shownBusiestUs > 127 ? 127 : shownBusiestUs);
 		for (int i = 0; i < 4; i++) status[n++] = uint8_t(shownPart[i] > 127 ? 127 : shownPart[i]);
+		Put14At(n, int32_t(engine.clockPeriod / 48));
 	}
 
 	//------------------------------------------------------------------------

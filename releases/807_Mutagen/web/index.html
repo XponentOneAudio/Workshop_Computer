@@ -222,7 +222,7 @@
         <tr><th>CV In 2</th><td>Modulation, as the MOD page sets (at first: mutant 1's depth, +5 V for all of it)</td></tr>
         <tr><th>Audio In 1</th><td>Hard sync from another oscillator, while patched: the wave restarts at each rising zero crossing</td></tr>
         <tr><th>Audio In 2</th><td>Audio-rate modulation of the depths (MOD page, faders 5 and 6)</td></tr>
-        <tr><th>Pulse In 1</th><td>Restarts the wave</td></tr>
+        <tr><th>Pulse In 1</th><td>Clock for the LFOs' tempo sync (the first third of each LFO's Rate fader). Followed from its second pulse; with none for four beats, 120 BPM</td></tr>
         <tr><th>Pulse In 2</th><td>Restarts both LFOs</td></tr>
         <tr class="grp"><th colspan="2">Outputs</th></tr>
         <tr><th>Audio Out 1</th><td>The oscillator, after both mutants</td></tr>
@@ -241,7 +241,7 @@
           <tr><th>Mutant</th><td>Mode, ratio, depth, window, feedback, mix, LFO 1 &rarr; depth, LFO 2 &rarr; depth.</td></tr>
           <tr><th>Warp</th><td>Eight points of a curve that pushes the phase back and forth, for that mutant's WARP mode.</td></tr>
           <tr><th>Osc</th><td>Wave, semitones, fine, bit crush, drive, Out 2, glide, level.</td></tr>
-          <tr><th>LFO</th><td>Rate, shape, then where it goes: ratio 1, ratio 2, wave, pitch, mix 1, mix 2.</td></tr>
+          <tr><th>LFO</th><td>Rate (its first third synced to the clock at Pulse In 1: 16, 8, 4, 3, 2, 1½, 1, ⅔, ½, ⅓, ¼, ⅛ beats a cycle; above, free), shape, then where it goes: ratio 1, ratio 2, wave, pitch, mix 1, mix 2.</td></tr>
           <tr><th>Mod</th><td>CV In 2 &rarr; depth 1, depth 2, ratio 1, ratio 2; Audio In 2 &rarr; depth 1, depth 2; tilt &rarr; depth 1 (left-right), depth 2 (front-back).</td></tr>
           <tr><th>Centre zero</th><td>Faders that go either way (the amounts, SEMI, FINE, the warp points) are zero in the middle, with a small dead zone.</td></tr>
           <tr><th>Pickup</th><td>After a page change a fader does nothing until it reaches (or passes) the stored value; the same after a knob or this page changes it. A dashed line on the on-screen fader shows where a waiting 8mu fader is.</td></tr>
@@ -258,7 +258,7 @@
           <tr><th>Switch middle</th><td>Main <b>pitch</b>, X <b>mutant 1 ratio</b>, Y <b>mutant 2 ratio</b></td></tr>
           <tr><th>Switch down</th><td>Hold it: Main the <b>wave</b>, X <b>mutant 1 mode</b>, Y <b>mutant 2 mode</b>. The LEDs show the modes in binary (mutant 1 down the left, mutant 2 down the right)</td></tr>
           <tr><th>Knobs</th><td>X and Y set the same values as the 8mu's faders. After the switch moves, or something else changes the value, a knob does nothing until it reaches it; that setting's box above has a dotted outline until then, and the Computer's bottom right LED blinks fast</td></tr>
-          <tr><th>LEDs</th><td>Top four: the 8mu page's button (lit for its first page, blinking for its second), or with no 8mu or editor, the two depths, sync and restart. Bottom two: the LFOs</td></tr>
+          <tr><th>LEDs</th><td>Top four: the 8mu page's button (lit for its first page, blinking for its second), or with no 8mu or editor, the two depths, sync, and a flash at each clock. Bottom two: the LFOs</td></tr>
         </table>
       </div>
     </section>
@@ -313,6 +313,10 @@ function ratioOctaves(v) {     // octaves above 1/4, settling on the detents
   for (const d of DETENT_LOG) if (Math.abs(lg - d) < 0.025) return d;
   return lg;
 }
+// LFO RATE: the first third tempo sync (beats a cycle, n / d), the rest free
+const SYNC_TOP = 1365, SYNC_N = [16, 8, 4, 3, 2, 3, 1, 2, 1, 1, 1, 1], SYNC_D = [1, 1, 1, 1, 1, 2, 1, 3, 2, 3, 4, 8];
+const syncOf = (v) => v < SYNC_TOP ? Math.floor(v * 12 / SYNC_TOP) : -1;
+const freeHz = (v) => 0.02 * Math.pow(2, 10.966 * (Math.max(v, SYNC_TOP) - SYNC_TOP) / (4095 - SYNC_TOP));
 const TS = 1024, LEVELS = 9;
 function buildTables() {
   const sine = new Float32Array(TS + 1);
@@ -413,7 +417,8 @@ function makeEngine(tables, sampleRate) {
       default: o.out = o.from + (o.to - o.from) * (1 - Math.cos(Math.PI * p)) / 2;
     }
   }
-  e.lfoRate = (v) => 0.02 * Math.pow(2, 10.966 * v / 4095);
+  e.beatSec = 0.5;   // the card's beat, or 120 BPM
+  e.lfoRate = (v) => { const z = syncOf(v); return z >= 0 ? SYNC_D[z] / (SYNC_N[z] * e.beatSec) : freeHz(v); };
   // Control: every modulation target, dt seconds since the last
   e.control = function (dt, live) {
     const l = [0, 1].map(i => { const pg = i ? P.LFO2 : P.LFO1; if (!live) lfoStep(i, e.lfoRate(V(pg, L.RATE)), zoneOf(V(pg, L.SHAPE), SHAPES), dt); return e.lfo[i].out; });
@@ -510,7 +515,7 @@ function makeEngine(tables, sampleRate) {
   return e;
 }
 `;
-const ENG = new Function(ENGINE_SRC + '; return { P, M, O, L, MODES, SHAPES, OUT2S, SEMIS, zoneOf, zoneValue, bipolar, ratioOctaves, buildTables, makeEngine, lookup };')();
+const ENG = new Function(ENGINE_SRC + '; return { P, M, O, L, MODES, SHAPES, OUT2S, SEMIS, syncOf, freeHz, SYNC_N, SYNC_D, zoneOf, zoneValue, bipolar, ratioOctaves, buildTables, makeEngine, lookup };')();
 const { P, M, O, L } = ENG;
 
 // ============================================================================
@@ -553,7 +558,7 @@ const PAGE_HINT = {
   mut: 'Mode: how this mutant bends the wave. Ratio: how many times a cycle (whole numbers keep the pitch; below 1 or in between adds sub-harmonics and sync-like edges). Depth: how far (X with the switch up). Window: fades the mutated wave at each restart, softening edges into formants. Feedback: the output pushes its own phase. Mix: dry to mutated. Then how much each LFO moves the depth.',
   warp: 'Eight points of a curve, centre zero, that push the phase back (below the centre) and forth (above) through each run of this mutant, in its WARP mode: a drawn FM. The depth scales the whole curve.',
   osc: 'Wave: sine, triangle, saw, square and every blend between neighbours (Main with the switch down). Semi ±24, fine ±50 cents. Bits: a bit crusher, off at the bottom. Drive into a soft clip. Out 2: what Audio Out 2 plays. Glide on the pitch. Level of both outputs.',
-  lfo: 'Rate 0.02 Hz to 40 Hz, the shape, then how much this LFO moves each mutant’s ratio (up to two octaves either way), the wave, the pitch (up to an octave, finer near the centre) and each mutant’s mix. Each LFO is on a CV Out; LFO 1’s square is on Pulse Out 1.',
+  lfo: 'Rate: the first third is tempo sync to the clock at Pulse In 1 (120 BPM without one), from 16 beats a cycle down to ⅛ of a beat, each cycle starting on the beat; above that, free, 0.02 Hz to 40 Hz. Then the shape, then how much this LFO moves each mutant’s ratio (up to two octaves either way), the wave, the pitch (up to an octave, finer near the centre) and each mutant’s mix. Each LFO is on a CV Out; LFO 1’s square is on Pulse Out 1.',
   mod: 'How much CV In 2 (+5 V for all of it), Audio In 2 (at audio rate) and the 8mu’s tilt move each mutant’s depth or ratio. Centre is none; down is the other way.',
 };
 // What the knobs set (main.cpp kTargets): page, fader
@@ -573,11 +578,11 @@ const DEFAULTS = [
   [ZV(0, 6), RV(1), 0, 0, 0, 4095, BV(35), 2048],
   [ZV(5, 6), RV(1), 0, 0, 0, 4095, 2048, 2048],
   [2730, ZV(24, 49), 2048, 0, 0, ZV(1, 5), 0, 3276],
-  [1983, ZV(1, 7), 2048, 2048, 2048, 2048, 2048, 2048],
+  [2521, ZV(1, 7), 2048, 2048, 2048, 2048, 2048, 2048],
   [2048, 3496, 4095, 3496, 2048, 600, 0, 600],
   [2048, 4095, 2048, 0, 2048, 4095, 2048, 0],
   [4095, 2048, 2048, 2048, 2048, 2048, 2048, 2048],
-  [1194, ZV(0, 7), 2048, 2048, 2048, 2048, 2048, 2048],
+  [2089, ZV(0, 7), 2048, 2048, 2048, 2048, 2048, 2048],
 ];
 
 // ============================================================================
@@ -630,6 +635,12 @@ function waveText(v) {
   if (f > 0.992) return WAVE_NAMES[a + 1];
   return WAVE_NAMES[a] + '→' + WAVE_NAMES[a + 1] + ' ' + pct(f);
 }
+// n/d beats a cycle, as words
+function beatsText(n, d) {
+  const frac = { '1/2': '½', '1/3': '⅓', '1/4': '¼', '1/8': '⅛', '2/3': '⅔', '3/2': '1½' }[n + '/' + d];
+  const t = d === 1 ? String(n) : frac;
+  return t + (n / d > 1 ? ' beats' : ' beat');
+}
 const fmtTime = (s) => s >= 1 ? s.toFixed(2) + ' s' : Math.round(s * 1000) + ' ms';
 // What depth does in each mode
 function depthMeaning(mode, d) {
@@ -669,7 +680,11 @@ function describe(pg, f, v) {
     }
   }
   if (k === 'lfo') {
-    if (f === L.RATE) { const hz = 0.02 * Math.pow(2, 10.966 * v / 4095); return hz < 1 ? (1 / hz).toFixed(1) + ' s' : hz.toFixed(hz < 10 ? 2 : 1) + ' Hz'; }
+    if (f === L.RATE) {
+      const z = ENG.syncOf(v);
+      if (z >= 0) return '♩ ' + beatsText(ENG.SYNC_N[z], ENG.SYNC_D[z]);
+      const hz = ENG.freeHz(v); return hz < 1 ? (1 / hz).toFixed(1) + ' s' : hz.toFixed(hz < 10 ? 2 : 1) + ' Hz';
+    }
     if (f === L.SHAPE) return SHAPE_NAMES[ENG.zoneOf(v, 7)];
     const b = ENG.bipolar(v);
     if (f === L.RATIO1 || f === L.RATIO2) return b ? (b > 0 ? '±' : '∓') + Math.abs(2 * b).toFixed(2) + ' oct' : 'none';
@@ -814,7 +829,7 @@ function changed() {
   requestRender();
   pushPreview();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => store.set('mutagen.last.v1', { v: state.values }), 400);
+  saveTimer = setTimeout(() => store.set('mutagen.last.v1', { v: state.values, lfoSync: true }), 400);
 }
 
 // ---- 8mu plugged into this computer -----------------------------------------
@@ -1007,8 +1022,10 @@ function handleCardMessage(m) {
       pitch: get14(p, 2) / 1024, wave: get14(p, 4),
       mode: [m1.mode, m2.mode], depth: [m1.depth, m2.depth], lgr: [m1.lgr, m2.lgr], mix: [m1.mix, m2.mix],
       lfo: [(p[18] - 64) / 63.5, (p[19] - 64) / 63.5], tilt: [(p[34] - 64) / 63.5, (p[35] - 64) / 63.5],
-      busy: p[36], parts: p.slice(37, 41),
+      busy: p[36], parts: p.slice(37, 41), clocked: !!(f2 & 8),
+      beatMs: p.length >= 43 ? get14(p, 41) : 500,
     };
+    pageEngine.beatSec = Math.max(0.01, state.live.beatMs / 1000);
     // The values the knobs set.  Taken only when the card's value has
     // changed since its last STATUS (a knob turned) and this page hasn't
     // changed it lately: a STATUS sent before the card had this page's
@@ -1141,7 +1158,8 @@ function drawReadouts() {
   for (const id of ['rb-pitch', 'rb-wave', 'rb-m1', 'rb-m2']) $(id).classList.toggle('waiting', !!w[id]);
   const b = card ? Lv.busy : -1;
   const parts = card ? ' (sound ' + Lv.parts[0] + ', knobs ' + Lv.parts[1] + ', 8mu ' + Lv.parts[2] + ', LEDs & status ' + Lv.parts[3] + ')' : '';
-  $('busy').textContent = b < 0 ? '' : 'Card load: each sample took at most ' + b + ' µs of the ~20 µs it has' + parts + '.' + (Lv.lean ? ' Lean: this patch is too much to make twice a sample, so Out 1 is made once (a little rougher at high pitch).' : '');
+  const tempo = card ? (Lv.clocked ? ' Clock at Pulse In 1: ' + Math.round(60000 / Lv.beatMs) + ' BPM.' : ' No clock at Pulse In 1: synced LFOs at 120 BPM.') : '';
+  $('busy').textContent = b < 0 ? '' : 'Card load: each sample took at most ' + b + ' µs of the ~20 µs it has' + parts + '.' + tempo + (Lv.lean ? ' Lean: this patch is too much to make twice a sample, so Out 1 is made once (a little rougher at high pitch).' : '');
   $('busy').style.color = b >= 17 ? cssVar('--bad') : (card && Lv.lean ? cssVar('--warm') : '');
 }
 function frame(now) {
@@ -1254,7 +1272,10 @@ function cleanPreset(o) {
   if (!o || typeof o !== 'object' || !Array.isArray(o.v) || o.v.length !== NPAGES) return null;
   const v = o.v.map(r => Array.isArray(r) && r.length === NF ? r.map(x => clamp(Math.round(+x) || 0, 0, 4095)) : null);
   if (v.some(r => !r)) return null;
-  return { name: String(o.name || 'Preset').slice(0, 60), v };
+  // Saved before the LFOs' tempo sync took the first third of RATE: the
+  // same speed on the new scale
+  if (!o.lfoSync) for (const pg of [P.LFO1, P.LFO2]) v[pg][L.RATE] = Math.round(1365 + v[pg][L.RATE] * 2730 / 4095);
+  return { name: String(o.name || 'Preset').slice(0, 60), v, lfoSync: true };
 }
 // Built-in presets: start from the defaults and change a few faders
 function patch(changes) {
@@ -1266,15 +1287,15 @@ const Wv = (w) => Math.round(w * 4095 / 3);   // 0 sine, 1 triangle, 2 saw, 3 sq
 const BUILTIN = [
   { name: 'Default: saw, PULSE swept by LFO 1', v: DEFAULTS },
   { name: 'Classic PWM square', v: patch([[P.OSC, O.WAVE, Wv(3)], [P.MUT1, M.DEPTH, 1400], [P.MUT1, M.LFO1, BV(55)],
-    [P.LFO1, L.RATE, 2200], [P.MUT2, M.MIX, 0]]) },
+    [P.LFO1, L.RATE, 2832], [P.MUT2, M.MIX, 0]]) },
   { name: 'PWM from two saws (PhaseDiff)', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(4, 6)], [P.MUT1, M.DEPTH, 1600], [P.MUT1, M.LFO1, BV(45)],
-    [P.LFO1, L.RATE, 1800], [P.MUT1, M.LFO2, BV(15)], [P.MUT2, M.MIX, 0]]) },
+    [P.LFO1, L.RATE, 2565], [P.MUT1, M.LFO2, BV(15)], [P.MUT2, M.MIX, 0]]) },
   { name: 'Sync sweep', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.DEPTH, 1700], [P.MUT1, M.LFO1, 2048], [P.MUT1, M.LFO2, BV(60)],
-    [P.LFO2, L.RATE, 1400], [P.LFO2, L.SHAPE, ZV(1, 7)], [P.MUT2, M.MIX, 0]]) },
+    [P.LFO2, L.RATE, 2298], [P.LFO2, L.SHAPE, ZV(1, 7)], [P.MUT2, M.MIX, 0]]) },
   { name: 'Windowed sync formants', v: patch([[P.OSC, O.WAVE, Wv(0)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.DEPTH, 2300], [P.MUT1, M.WINDOW, 4095],
-    [P.MUT1, M.LFO1, BV(30)], [P.LFO1, L.RATE, 1300], [P.LFO1, L.SHAPE, ZV(6, 7)], [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 900], [P.MUT2, M.MIX, 2600]]) },
+    [P.MUT1, M.LFO1, BV(30)], [P.LFO1, L.RATE, 2232], [P.LFO1, L.SHAPE, ZV(6, 7)], [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 900], [P.MUT2, M.MIX, 2600]]) },
   { name: 'Pulse sync, ratio 2', v: patch([[P.OSC, O.WAVE, Wv(3)], [P.MUT1, M.MODE, ZV(5, 6)], [P.MUT1, M.RATIO, RV(2)], [P.MUT1, M.DEPTH, 1200], [P.MUT1, M.LFO1, 2048],
-    [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 1800], [P.MUT2, M.LFO1, BV(40)], [P.LFO1, L.RATE, 2000]]) },
+    [P.MUT2, M.MODE, ZV(0, 6)], [P.MUT2, M.DEPTH, 1800], [P.MUT2, M.LFO1, BV(40)], [P.LFO1, L.RATE, 2698]]) },
   { name: 'Mirror and squeeze', v: patch([[P.OSC, O.WAVE, Wv(1)], [P.MUT1, M.MODE, ZV(2, 6)], [P.MUT1, M.DEPTH, 2600], [P.MUT1, M.LFO1, BV(30)],
     [P.MUT2, M.MODE, ZV(1, 6)], [P.MUT2, M.DEPTH, 1500], [P.MUT2, M.LFO2, BV(35)], [P.MUT2, M.MIX, 3000]]) },
   { name: 'Warp bells, ratio 3', v: patch([[P.OSC, O.WAVE, Wv(0)], [P.MUT1, M.MODE, ZV(3, 6)], [P.MUT1, M.RATIO, RV(3)], [P.MUT1, M.DEPTH, 3000], [P.MUT1, M.LFO1, BV(20)],
@@ -1286,7 +1307,7 @@ const BUILTIN = [
     [P.MUT2, M.MIX, 2800], [P.OSC, O.BITS, 1900]]) },
   { name: 'Sub-harmonic ratio ⅔', v: patch([[P.OSC, O.WAVE, Wv(2)], [P.MUT1, M.MODE, ZV(0, 6)], [P.MUT1, M.RATIO, RV(2 / 3)], [P.MUT1, M.DEPTH, 2600], [P.MUT1, M.LFO1, BV(25)],
     [P.MUT2, M.MIX, 0]]) },
-].map(cleanPreset);
+].map(pr => cleanPreset(Object.assign({ lfoSync: true }, pr)));
 let userPresets = [];
 function loadPresets() { userPresets = (store.get('mutagen.presets.v1', []) || []).map(cleanPreset).filter(Boolean); }
 function savePresets() { if (!store.set('mutagen.presets.v1', userPresets)) say('Could not save presets: browser storage is unavailable or full.', true); }
@@ -1324,7 +1345,7 @@ function renderPresets() {
 function saveCurrent() {
   const n = prompt('Name for this preset', 'My mutant ' + (userPresets.length + 1));
   if (!n) return;
-  userPresets.push({ name: n.slice(0, 60), v: state.values.map(r => r.slice()) });
+  userPresets.push({ name: n.slice(0, 60), v: state.values.map(r => r.slice()), lfoSync: true });
   savePresets(); presetsDirty = true; requestRender(); say('Saved “' + n + '”.');
 }
 function exportPresets() {

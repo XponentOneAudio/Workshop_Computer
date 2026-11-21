@@ -25,7 +25,7 @@
 // Card -> web
 //   STATE     02 version page values(2)[64]
 //   STATUS    07 flags flags2 pitch(2) wave(2) mutant1[6] mutant2[6] lfo1 lfo2
-//                knobs(2)[7] tilt1 tilt2 busy parts[4]
+//                knobs(2)[7] tilt1 tilt2 busy parts[4] beat(2)
 //             flags      bit 0 8mu on the card, bit 1 switch up (X and Y are
 //                        the depths, not the ratios), bit 2 switch held down
 //                        (Main the wave, X and Y the modes), bit 3 a knob is
@@ -33,7 +33,8 @@
 //                        jack in Audio In 1 (sync) and 2, bit 6 lean: the
 //                        patch is too much for the processor to make
 //                        twice a sample, so Out 1 is made once
-//             flags2     bits 0-2 the X, Y and Main knob is waiting
+//             flags2     bits 0-2 the X, Y and Main knob is waiting, bit 3
+//                        following a clock at Pulse In 1
 //             pitch      as playing, 1/1024 octaves above C0 (16.35Hz)
 //             wave       0-4095 across sine, triangle, saw, square, after
 //                        modulation
@@ -49,6 +50,8 @@
 //             parts      the same for each part of the work: the sound
 //                        alone, and with the knobs, the 8mu, and the LEDs
 //                        and this status
+//             beat       milliseconds a beat, for the LFOs' tempo sync: the
+//                        clock at Pulse In 1's, or 500 (120 BPM) without one
 
 #ifndef MUTAGEN_SYSEX_H
 #define MUTAGEN_SYSEX_H
@@ -146,7 +149,7 @@ inline int32_t Get14(const uint8_t *in)
 
 static constexpr int kStatePayload = 2 + 2 * kNumValues;
 static constexpr int kStateLen = 4 + kStatePayload + 1;
-static constexpr int kStatusPayload = 2 + 2 + 2 + 6 + 6 + 2 + 14 + 2 + 1 + 4;
+static constexpr int kStatusPayload = 2 + 2 + 2 + 6 + 6 + 2 + 14 + 2 + 1 + 4 + 2;
 static constexpr int kStatusLen = 4 + kStatusPayload + 1;
 
 } // namespace sysex

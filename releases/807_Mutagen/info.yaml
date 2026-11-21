@@ -3,12 +3,12 @@ Name: Mutagen
 short-description: "A pulse-width and sync oscillator: two 'mutants' bend any wave's timing, edited from a Music Thing 8mu, with a web editor"
 Language: C++ (ComputerCard)
 Creator: XponentOneAudio
-Version: "0.1.0"
+Version: "0.2.0"
 Status: Beta
 License: MIT
 Editor: web
 date-created: 2026-11-21
-date-updated: 2026-11-21
+date-updated: 2026-11-22
 
 contact:
   email: XponentOneAudio@gmail.com
@@ -20,7 +20,7 @@ contact:
 
 uf2:
   - path: UF2/mutagen.uf2
-    name: Mutagen 0.1.0
+    name: Mutagen 0.2.0
 
 tags:
   - oscillator
@@ -46,7 +46,7 @@ summary: |
   it happens, 1/4 to 16, settling on whole numbers - a DEPTH, a WINDOW that
   softens restarts into formants, FEEDBACK and a dry/wet MIX.<br><br>
 
-  Two LFOs, CV In 2, Audio In 2 (at audio rate) and an 8mu's tilt modulate
+  Two LFOs (tempo-synced to a clock at Pulse In 1, or free), CV In 2, Audio In 2 (at audio rate) and an 8mu's tilt modulate
   the depths, ratios, mixes, wave and pitch. Audio In 1 hard-syncs it to
   another oscillator, and Pulse Out 2 is a sync out.<br><br>
 
@@ -81,13 +81,17 @@ panel:
       type: cv
       description: Modulation by the MOD page's amounts; at first mutant 1's depth, +5V for all of it.
     - id: PulseIn1
-      name: Restart
+      name: Clock
       type: pulse
-      description: Restarts the wave.
+      description: >
+        Clock for the LFOs' tempo sync - the first third of each LFO's RATE
+        fader picks how many beats a cycle lasts, 16 down to an eighth, each
+        cycle starting on the beat. Followed from its second pulse; with none
+        for four beats (at least 2s), 120 BPM.
     - id: PulseIn2
       name: LFO reset
       type: pulse
-      description: Restarts both LFOs.
+      description: Restarts both LFOs and the beat count.
   outputs:
     - id: AudioOut1
       name: Oscillator
@@ -164,8 +168,8 @@ controls:
           name: Page C / sync
           description: Or lit while Audio In 1 is patched (sync).
         - id: LED3
-          name: Page D / restart
-          description: Or flashes at a restart from Pulse In 1.
+          name: Page D / clock
+          description: Or flashes at each clock at Pulse In 1.
         - id: LED4
           name: LFO 1
           description: Follows LFO 1.

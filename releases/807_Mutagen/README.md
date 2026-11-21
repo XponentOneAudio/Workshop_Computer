@@ -47,7 +47,16 @@ The buttons choose the page; press the same button again for its second.
 | A | **MUTANT 1**: mode, ratio, depth, window, feedback, mix, LFO 1 → depth, LFO 2 → depth | **WARP 1**: eight points of mutant 1's curve |
 | B | **MUTANT 2** (the same) | **WARP 2** |
 | C | **OSC**: wave, semitones (±24), fine (±50¢), bit crush, drive, Out 2, glide, level | **MOD**: CV In 2 → depth 1, depth 2, ratio 1, ratio 2; Audio In 2 → depth 1, depth 2; tilt (left-right) → depth 1, tilt (front-back) → depth 2 |
-| D | **LFO 1**: rate (0.02-40 Hz), shape, → ratio 1, → ratio 2, → wave, → pitch, → mix 1, → mix 2 | **LFO 2** (the same) |
+| D | **LFO 1**: rate (tempo sync, or 0.02-40 Hz), shape, → ratio 1, → ratio 2, → wave, → pitch, → mix 1, → mix 2 | **LFO 2** (the same) |
+
+**LFO rate and tempo sync.** The first third of each LFO's RATE fader is
+synced to the clock at **Pulse In 1**: twelve choices of how many beats one
+cycle lasts, 16, 8, 4, 3, 2, 1½, 1, ⅔, ½, ⅓, ¼ and ⅛ (bottom to top), each
+cycle starting on the beat. A clock is followed from its second pulse (a
+rising edge counts only after 2 ms low, and at most every 4 ms); with none
+for four beats (and at least 2 s), the synced LFOs carry on at 120 BPM.
+Pulse In 2 restarts both LFOs and the beat count. Above the first third the
+rate is free, 0.02 Hz to 40 Hz.
 
 LFO shapes: sine, triangle, ramp up, ramp down, square, sample & hold,
 drift (eased random). The amounts, SEMI, FINE and the warp points are zero
@@ -87,7 +96,7 @@ has been held down.
 | CV In 2 | Modulation, as the MOD page sets; at first mutant 1's depth (+5 V for all of it) |
 | Audio In 1 | **Hard sync** from another oscillator, while patched: the wave restarts at each rising zero crossing, placed between samples |
 | Audio In 2 | Audio-rate modulation of the depths (MOD faders 5 and 6) |
-| Pulse In 1 | Restarts the wave |
+| Pulse In 1 | **Clock** for the LFOs' tempo sync (see above) |
 | Pulse In 2 | Restarts both LFOs |
 | Audio Out 1 | The oscillator |
 | Audio Out 2 | OSC fader 6: the same, the dry wave, after mutant 1 only, a square an octave down, or two |
@@ -97,7 +106,7 @@ has been held down.
 
 **LEDs.** With an 8mu or the editor, LEDs 1-4 (A B / C D) show the page's
 button, lit for its first page and blinking for its second; without, the
-two depths, sync patched, and a restart. LEDs 5 and 6 follow the LFOs.
+two depths, sync patched, and a flash at each clock. LEDs 5 and 6 follow the LFOs.
 
 Like an analogue pulse output, a narrow pulse keeps its two levels and sits
 mostly at the low one: there is no DC blocker (it would push the pulse's

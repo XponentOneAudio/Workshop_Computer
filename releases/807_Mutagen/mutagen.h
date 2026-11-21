@@ -359,6 +359,20 @@ struct Lfo
 
 	void Reset() {phase = 0;}
 
+	// Tempo sync: put the phase where the beat says it should be.  Moving
+	// it back past the start of a cycle counts as a new cycle (a new random
+	// value for S&H and drift).
+	void Align(uint32_t to)
+	{
+		if (to < phase && phase - to > 0x80000000u)
+		{
+			held = Random();
+			from = this->to;
+			this->to = Random();
+		}
+		phase = to;
+	}
+
 	void Step(const int16_t *sine)
 	{
 		uint32_t before = phase;
@@ -367,7 +381,7 @@ struct Lfo
 		if (wrapped)
 		{
 			held = Random();
-			from = to;
+			from = this->to;
 			to = Random();
 		}
 		uint32_t p16 = phase >> 16;
@@ -394,13 +408,30 @@ struct Lfo
 		out = v > 32767 ? 32767 : (v < -32767 ? -32767 : v);
 	}
 };
-// 0.02Hz to 40Hz, for a control rate of 3kHz
+// The RATE fader: its first third is tempo sync, to the clock at Pulse In 1
+// (or 120 BPM without one), twelve choices of how many beats a cycle lasts,
+// slowest first; the rest is free, 0.02Hz to 40Hz
+static constexpr int32_t kSyncTop = 1365;
+static constexpr int kSyncs = 12;
+// Beats a cycle, as n / d
+static constexpr uint8_t kSyncN[kSyncs] = {16, 8, 4, 3, 2, 3, 1, 2, 1, 1, 1, 1};
+static constexpr uint8_t kSyncD[kSyncs] = {1, 1, 1, 1, 1, 2, 1, 3, 2, 3, 4, 8};
+// The choice for a RATE value, or -1 for a free rate
+inline int LfoSyncOf(int32_t v) {return v < kSyncTop ? (v * kSyncs) / kSyncTop : -1;}
+inline int32_t ValueForSync(int z) {return ((2 * z + 1) * kSyncTop) / (2 * kSyncs);}
+// A free rate, for a control rate of 3kHz
 inline uint32_t LfoIncFromValue(int32_t v)
 {
+	if (v < kSyncTop) v = kSyncTop;
 	// 0.02Hz * 2^32 / 3000
 	static constexpr uint32_t kSlowest = 28634;
-	int32_t lg = int32_t((uint32_t(v) * 718845u) >> 12);   // v * 10.966 octaves / 4095
+	int32_t lg = int32_t((uint32_t(v - kSyncTop) * 1078272u) >> 12);   // 10.966 octaves over the rest
 	return ((kSlowest * (Exp2Frac(uint32_t(lg) & 0xFFFF) >> 1)) >> 15) << (lg >> 16);
+}
+// The RATE value for a free rate in Hz, for defaults
+inline int32_t ValueForLfoHz(float hz)
+{
+	return kSyncTop + int32_t(lroundf(log2f(hz / 0.02f) / 10.966f * float(4095 - kSyncTop)));
 }
 
 //----------------------------------------------------------------------------
@@ -645,7 +676,7 @@ struct Inputs
 	int32_t cv1 = 0, cv2 = 0;          // -2048 ... 2047
 	int32_t audio1 = 0, audio2 = 0;    // -2048 ... 2047
 	bool syncPatched = false;          // a jack in Audio In 1
-	bool reset = false;                // Pulse In 1 rising edge
+	bool clock = false;                // Pulse In 1, high or low
 	bool lfoReset = false;             // Pulse In 2 rising edge
 };
 
@@ -672,7 +703,9 @@ public:
 	Stage stage[2];
 	Lfo lfo[2];
 	bool syncing = false;              // following Audio In 1
-	int32_t resetFlash = 0;            // samples left of showing a reset
+	int32_t clockFlash = 0;            // samples left of showing a clock
+	bool clocked = false;              // following a clock at Pulse In 1
+	uint32_t clockPeriod = 24000;      // samples a beat: the clock's, or 120 BPM
 	int32_t tiltQ[2] = {};             // tilt after the dead zone, Q15
 
 	Tables *tables = nullptr;
@@ -714,14 +747,14 @@ public:
 			// glide, 80% level
 			{2730, int16_t(ValueForZone(24, kSemiZones)), 2048, 0, 0, int16_t(ValueForZone(Out2Dry, kOut2Modes)), 0, 3276},
 			// LFO 1: 0.5Hz triangle, nothing else
-			{1983, int16_t(ValueForZone(LTriangle, kShapes)), 2048, 2048, 2048, 2048, 2048, 2048},
+			{int16_t(ValueForLfoHz(0.5f)), int16_t(ValueForZone(LTriangle, kShapes)), 2048, 2048, 2048, 2048, 2048, 2048},
 			// WARP 1, 2: a sine's worth of push
 			{2048, 3496, 4095, 3496, 2048, 600, 0, 600},
 			{2048, 4095, 2048, 0, 2048, 4095, 2048, 0},
 			// MOD: CV In 2 sweeps mutant 1's depth, nothing else
 			{4095, 2048, 2048, 2048, 2048, 2048, 2048, 2048},
 			// LFO 2: 0.15Hz sine
-			{1194, int16_t(ValueForZone(LSine, kShapes)), 2048, 2048, 2048, 2048, 2048, 2048},
+			{int16_t(ValueForLfoHz(0.15f)), int16_t(ValueForZone(LSine, kShapes)), 2048, 2048, 2048, 2048, 2048, 2048},
 		};
 		for (int p = 0; p < kPages; p++)
 			for (int f = 0; f < kFaders; f++) values[p][f] = uint16_t(kDefaults[p][f]);
@@ -747,11 +780,29 @@ public:
 			for (int l = 0; l < 2; l++)
 			{
 				const int pg = l ? PageLfo2 : PageLfo1;
-				lfo[l].inc = LfoIncFromValue(Value(pg, LRate));
+				const int32_t rate = Value(pg, LRate);
+				const int sync = LfoSyncOf(rate);
+				if (sync < 0) lfo[l].inc = LfoIncFromValue(rate);
+				else
+				{
+					// A beat of clockPeriod samples, n/d beats a cycle: 2^32
+					// a cycle, a step every 16 samples
+					const uint32_t n = kSyncN[sync], d = kSyncD[sync];
+					if (sync != syncMade[l] || clockPeriod != periodMade[l])
+					{
+						syncMade[l] = sync;
+						periodMade[l] = clockPeriod;
+						lfo[l].inc = uint32_t(((uint64_t(1) << 36) * d) / (uint64_t(clockPeriod) * n));
+					}
+					// At each clock, where this beat falls in the cycle
+					if (beatPending) lfo[l].Align(uint32_t(((uint64_t((beat * d) % n)) << 32) / n));
+				}
+				if (sync < 0) syncMade[l] = -1;
 				lfo[l].shape = ZoneOf(Value(pg, LShape), kShapes);
 				if (lfoResetPending) lfo[l].Reset();
 				if (sine) lfo[l].Step(sine);
 			}
+			beatPending = false;
 			lfoResetPending = false;
 			tiltQ[0] = TiltQ(tiltRoll);
 			tiltQ[1] = TiltQ(tiltPitch);
@@ -882,13 +933,35 @@ public:
 		else if ((controlCount & 3) == 1) stage[0].Prepare(audio2, 4);
 		else if ((controlCount & 3) == 3) stage[1].Prepare(audio2, 4);
 
-		// Pulse In 1 restarts the wave
-		if (in.reset)
+		// Pulse In 1: the clock for the LFOs' tempo sync.  A rising edge
+		// counts only after 2ms low, and at most every 4ms, so noise and slow
+		// edges aren't taken for extra clocks.  Followed from its second
+		// edge; with none for four beats (and at least 2s), back to 120 BPM.
+		if (sinceClock < 0x7FFFFFFF) sinceClock++;
+		if (!in.clock) {if (clockLow < 96) clockLow++;}
+		else if (!clockWas && clockLow >= 96 && sinceClock >= 192)
 		{
-			acc = 0;
-			resetFlash = 4800;
+			if (clockSeen && sinceClock <= 48000u * 60)
+			{
+				clockPeriod = sinceClock;
+				clocked = true;
+			}
+			clockSeen = true;
+			sinceClock = 0;
+			beat = (beat + 1) % 48;     // 48: every choice's cycle lines up again
+			beatPending = true;
+			clockFlash = 2400;
 		}
-		if (resetFlash > 0) resetFlash--;
+		if (in.clock) clockLow = 0;
+		clockWas = in.clock;
+		if (clocked && sinceClock > (clockPeriod * 4 > 96000 ? clockPeriod * 4 : 96000))
+		{
+			clocked = false;
+			clockSeen = false;
+			clockPeriod = 24000;
+		}
+		if (in.lfoReset) beat = 0;
+		if (clockFlash > 0) clockFlash--;
 
 		// Audio In 1: hard sync from another oscillator, at each rising
 		// zero crossing, placed between the samples where it happened
@@ -986,6 +1059,12 @@ private:
 	uint32_t acc = 0, inc = 0;
 	int controlCount = kControlEvery - 1;
 	bool lfoResetPending = false;
+	// The clock at Pulse In 1
+	uint32_t sinceClock = 0, beat = 0;
+	int32_t clockLow = 0;
+	bool clockWas = false, clockSeen = false, beatPending = false;
+	int syncMade[2] = {-1, -1};
+	uint32_t periodMade[2] = {0, 0};
 	const int16_t *tabA[kLevels] = {}, *tabB[kLevels] = {};
 	int32_t pitchT = 0, pitchS = 0, pitchMod = 0, glideK = 65536;
 	int32_t cvPitch = 0;
