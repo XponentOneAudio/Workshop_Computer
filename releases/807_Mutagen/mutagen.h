@@ -1046,10 +1046,9 @@ private:
 		return L < 0 ? 0 : (L >= kLevels ? kLevels - 1 : L);
 	}
 
-	// Level, drive and bit crush, to the output's range
+	// Drive, level and bit crush, to the output's range
 	int32_t Finish(int32_t x)
 	{
-		x = (x * level) >> 15;
 		if (drive > 0)
 		{
 			// Up to 8x into a soft clip, y = (3n - n^3) / 2 for n = 2/3 of
@@ -1061,6 +1060,8 @@ private:
 			int32_t n3 = (((n * n) >> 15) * n) >> 15;
 			x = (3 * n - n3) >> 1;
 		}
+		// Level after the drive, so it still sets how loud a driven wave is
+		x = (x * level) >> 15;
 		// No DC blocker: like an analogue pulse wave, a narrow pulse keeps
 		// its two levels and sits mostly at the low one.  (Taking the DC
 		// out would push its short peak far past full scale.)

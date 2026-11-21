@@ -478,8 +478,8 @@ function makeEngine(tables, sampleRate) {
   e.eval1 = eval1; e.eval2 = eval2; e.base = base;
   e.hz = () => 16.3516 * Math.pow(2, e.pitch);
   function finish(x) {
-    x *= e.level;
     if (e.drive > 0) { const n = Math.max(-1, Math.min(1, x * (1 + 7 * e.drive) * 2 / 3)); x = (3 * n - n * n * n) / 2; }
+    x *= e.level;
     if (e.bits) { const q = Math.pow(2, e.bits - 1); x = Math.floor(x * q) / q; }
     return Math.max(-1, Math.min(1, x));
   }
