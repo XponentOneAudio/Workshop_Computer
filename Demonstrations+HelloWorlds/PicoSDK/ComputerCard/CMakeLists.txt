@@ -58,6 +58,12 @@ add_example(midi_host)
 target_sources(midi_host PUBLIC ${CMAKE_CURRENT_LIST_DIR}/examples/midi_host/usb_midi_host.c  ${CMAKE_CURRENT_LIST_DIR}/examples/midi_host/usb_midi_host_app_driver.c)
 target_link_libraries(midi_host pico_multicore tinyusb_host tinyusb_board  )
 
+# Workshop Link: USB host connection to an M-VAVE FM1 (MIDI + screen readout).
+# The library is WorkshopLinkHost.h + WorkshopLink.h in this directory.
+# Uses TinyUSB's built-in MIDI host class, so no extra driver sources.
+add_example(fm1_link)
+target_link_libraries(fm1_link pico_multicore tinyusb_host tinyusb_board  )
+
 add_example(normalisation_probe)
   
 add_example(passthrough)
